@@ -4,7 +4,10 @@ namespace Dynamic\ContentApi\Tests;
 
 use Dynamic\ContentApi\Auth\TokenAuthenticator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
@@ -22,7 +25,10 @@ abstract class ContentApiTestCase extends FunctionalTest
 
     protected static $extra_dataobjects = [
         ApiTestObject::class,
+        ApiTestChildObject::class,
+        ApiTestTag::class,
         ApiTestVersionedObject::class,
+        ApiTestPage::class,
     ];
 
     protected function setUp(): void
@@ -31,13 +37,19 @@ abstract class ContentApiTestCase extends FunctionalTest
 
         Config::modify()->set(ClassRegistry::class, 'models', [
             'ApiTest' => ApiTestObject::class,
+            'ApiTestChild' => ApiTestChildObject::class,
+            'ApiTestTag' => ApiTestTag::class,
             'ApiTestVersioned' => ApiTestVersionedObject::class,
+            'ApiTestPage' => ApiTestPage::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
         // classes in vendored module runs aren't reliably in the config manifest.
         Config::modify()->set(ApiTestObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestChildObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestTag::class, 'api_access', true);
         Config::modify()->set(ApiTestVersionedObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestPage::class, 'api_access', true);
     }
 
     protected function mintTokenFor(string $fixtureName = 'apiUser'): string
@@ -57,13 +69,29 @@ abstract class ContentApiTestCase extends FunctionalTest
 
     protected function apiPost(string $path, array $body = [], ?string $token = null): HTTPResponse
     {
+        return $this->apiSend('POST', $path, $body, $token);
+    }
+
+    protected function apiPatch(string $path, array $body = [], ?string $token = null): HTTPResponse
+    {
+        return $this->apiSend('PATCH', $path, $body, $token);
+    }
+
+    protected function apiDelete(string $path, ?string $token = null): HTTPResponse
+    {
+        return $this->apiSend('DELETE', $path, [], $token);
+    }
+
+    protected function apiSend(string $method, string $path, array $body = [], ?string $token = null): HTTPResponse
+    {
         $headers = ['Content-Type' => 'application/json'];
 
         if ($token) {
             $headers['X-Silverstripe-Apitoken'] = $token;
         }
 
-        return $this->post(
+        return $this->mainSession->sendRequest(
+            $method,
             "content-api/v1/{$path}",
             [],
             $headers,

@@ -1,11 +1,19 @@
 SilverStripe\Security\Group:
   apiGroup:
     Title: 'API Users'
+  adminGroup:
+    Title: 'Admins'
 
 SilverStripe\Security\Permission:
   apiAccess:
     Code: CONTENT_API_ACCESS
     Group: =>SilverStripe\Security\Group.apiGroup
+  adminPerm:
+    Code: ADMIN
+    Group: =>SilverStripe\Security\Group.adminGroup
+  populatePerm:
+    Code: CONTENT_API_POPULATE
+    Group: =>SilverStripe\Security\Group.adminGroup
 
 SilverStripe\Security\Member:
   apiUser:
@@ -13,6 +21,11 @@ SilverStripe\Security\Member:
     Surname: Account
     Email: agent@example.com
     Groups: =>SilverStripe\Security\Group.apiGroup
+  adminUser:
+    FirstName: Admin
+    Surname: Account
+    Email: admin@example.com
+    Groups: =>SilverStripe\Security\Group.adminGroup
   noAccessUser:
     FirstName: Nobody
     Surname: Outside
@@ -41,7 +54,30 @@ Dynamic\ContentApi\Tests\Stub\ApiTestObject:
     Rank: 99
     FixtureIdentifier: secret
 
+Dynamic\ContentApi\Tests\Stub\ApiTestTag:
+  tagOne:
+    Title: 'Tag One'
+  tagTwo:
+    Title: 'Tag Two'
+
+Dynamic\ContentApi\Tests\Stub\ApiTestChildObject:
+  childOne:
+    Title: 'Child One'
+  childTwo:
+    Title: 'Child Two'
+
 Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject:
   draftOnly:
     Title: 'Draft Only'
     FixtureIdentifier: draft-only
+
+SilverStripe\CMS\Model\SiteTree:
+  aboutPage:
+    Title: 'About'
+    URLSegment: about
+  contactPage:
+    Title: 'Contact'
+    URLSegment: contact
+  homePage:
+    Title: 'Home'
+    URLSegment: home

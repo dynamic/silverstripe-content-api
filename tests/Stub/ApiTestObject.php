@@ -3,13 +3,14 @@
 namespace Dynamic\ContentApi\Tests\Stub;
 
 use Dynamic\ContentApi\Identity\ExternalIdentifierExtension;
+use SilverStripe\Core\Validation\ValidationResult;
 use SilverStripe\Dev\TestOnly;
 use SilverStripe\ORM\DataObject;
-use SilverStripe\Security\Member;
 
 /**
  * Unversioned test model. Records titled "Secret" refuse canView so list
- * filtering and record-level 403s can be exercised.
+ * filtering and record-level 403s can be exercised; titling a record
+ * "Invalid" fails validate() for VALIDATION_FAILED mapping tests.
  */
 class ApiTestObject extends DataObject implements TestOnly
 {
@@ -24,11 +25,36 @@ class ApiTestObject extends DataObject implements TestOnly
         'Buddy' => ApiTestObject::class,
     ];
 
+    private static array $has_many = [
+        'Children' => ApiTestChildObject::class,
+    ];
+
+    private static array $many_many = [
+        'Tags' => ApiTestTag::class,
+    ];
+
+    private static array $many_many_extraFields = [
+        'Tags' => [
+            'SortOrder' => 'Int',
+        ],
+    ];
+
     private static array $extensions = [
         ExternalIdentifierExtension::class,
     ];
 
     private static bool $api_access = true;
+
+    public function validate(): ValidationResult
+    {
+        $result = parent::validate();
+
+        if ($this->Title === 'Invalid') {
+            $result->addFieldError('Title', 'Title may not be "Invalid".');
+        }
+
+        return $result;
+    }
 
     public function canView($member = null): bool
     {

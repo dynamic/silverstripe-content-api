@@ -5,11 +5,14 @@ namespace Dynamic\ContentApi\Control;
 use Dynamic\ContentApi\Auth\AuthContext;
 use Dynamic\ContentApi\Auth\TokenAuthenticator;
 use Dynamic\ContentApi\Control\Handlers\AuthHandler;
+use Dynamic\ContentApi\Control\Handlers\PageHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
+use Dynamic\ContentApi\Control\Handlers\RecordsWriteHandler;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
+use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Injector\Injector;
@@ -29,8 +32,13 @@ class ContentApiController extends Controller
 
     private static array $url_handlers = [
         'auth/$Action!' => 'handleAuth',
+        'POST records/$ClassRef!/$ID!/$RecordAction!' => 'handleRecordAction',
         'GET records/$ClassRef!/$ID!' => 'handleReadOne',
+        'PATCH records/$ClassRef!/$ID!' => 'handleUpdate',
+        'DELETE records/$ClassRef!/$ID!' => 'handleDelete',
+        'POST records/$ClassRef!' => 'handleCreate',
         'GET records/$ClassRef!' => 'handleReadList',
+        'POST pages/$ID!/$PageAction!' => 'handlePageAction',
         '' => 'handleIndex',
     ];
 
@@ -38,6 +46,11 @@ class ContentApiController extends Controller
         'handleAuth',
         'handleReadOne',
         'handleReadList',
+        'handleCreate',
+        'handleUpdate',
+        'handleDelete',
+        'handleRecordAction',
+        'handlePageAction',
         'handleIndex',
     ];
 
@@ -45,6 +58,8 @@ class ContentApiController extends Controller
         'authenticator' => '%$' . TokenAuthenticator::class,
         'authHandler' => '%$' . AuthHandler::class,
         'recordsHandler' => '%$' . RecordsHandler::class,
+        'recordsWriteHandler' => '%$' . RecordsWriteHandler::class,
+        'pageHandler' => '%$' . PageHandler::class,
     ];
 
     public ?TokenAuthenticator $authenticator = null;
@@ -52,6 +67,10 @@ class ContentApiController extends Controller
     public ?AuthHandler $authHandler = null;
 
     public ?RecordsHandler $recordsHandler = null;
+
+    public ?RecordsWriteHandler $recordsWriteHandler = null;
+
+    public ?PageHandler $pageHandler = null;
 
     protected ?AuthContext $authContext = null;
 
@@ -77,6 +96,51 @@ class ContentApiController extends Controller
             $this->requireAuth($request);
 
             return $this->recordsHandler->readList($request, $this->authContext);
+        });
+    }
+
+    public function handleCreate(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->recordsWriteHandler->create($request, $this->authContext);
+        });
+    }
+
+    public function handleUpdate(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->recordsWriteHandler->update($request, $this->authContext);
+        });
+    }
+
+    public function handleDelete(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->recordsWriteHandler->delete($request, $this->authContext);
+        });
+    }
+
+    public function handleRecordAction(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->recordsWriteHandler->recordAction($request, $this->authContext);
+        });
+    }
+
+    public function handlePageAction(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->pageHandler->handle($request, $this->authContext);
         });
     }
 
@@ -135,10 +199,13 @@ class ContentApiController extends Controller
                 ['exception' => $exception]
             );
 
-            return $this->errorResponse(new ApiError(
-                ErrorCode::SERVER_ERROR,
-                'Internal server error.'
-            ));
+            // Surface the real error in dev so agents can self-diagnose;
+            // production callers get an opaque message.
+            $message = Director::isDev() || Director::isTest()
+                ? sprintf('%s: %s', get_class($exception), $exception->getMessage())
+                : 'Internal server error.';
+
+            return $this->errorResponse(new ApiError(ErrorCode::SERVER_ERROR, $message));
         }
     }
 

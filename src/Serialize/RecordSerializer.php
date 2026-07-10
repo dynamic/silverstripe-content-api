@@ -9,6 +9,7 @@ use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
+use Throwable;
 
 /**
  * Serializes a DataObject to the API's record shape:
@@ -132,7 +133,14 @@ class RecordSerializer
             }
 
             if (isset($hasMany[$name]) || isset($manyMany[$name])) {
-                $relations[$name] = array_map('intval', $record->{$name}()->column('ID'));
+                // Guarded: a misconfigured third-party relation (e.g. a
+                // has_many whose target lacks the has_one in this manifest)
+                // must not take down the whole record read.
+                try {
+                    $relations[$name] = array_map('intval', $record->{$name}()->column('ID'));
+                } catch (Throwable) {
+                    $relations[$name] = null;
+                }
                 continue;
             }
 

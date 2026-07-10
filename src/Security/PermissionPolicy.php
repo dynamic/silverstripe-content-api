@@ -88,6 +88,55 @@ class PermissionPolicy
     }
 
     /**
+     * Gate record creation via the model's canCreate(), passing a context
+     * built from the payload's has_one keys — tenant-scoped canCreate()
+     * implementations need the hydrated parent records (the
+     * project-feedback ApiPermissionManager lesson, generalized).
+     *
+     * @param array<string, mixed> $fields the payload's fields block
+     * @throws ApiError FORBIDDEN_RECORD
+     */
+    public function checkCreateAccess(string $className, Member $member, array $fields = []): void
+    {
+        $context = $this->buildCreateContext($className, $fields);
+
+        if (!DataObject::singleton($className)->canCreate($member, $context)) {
+            throw new ApiError(
+                ErrorCode::FORBIDDEN_RECORD,
+                sprintf('Not allowed to create %s.', $className)
+            );
+        }
+    }
+
+    /**
+     * Hydrate has_one relations named in the payload (either `Relation` or
+     * `RelationID` form) into a canCreate() context array.
+     *
+     * @return array<string, mixed>
+     */
+    protected function buildCreateContext(string $className, array $fields): array
+    {
+        $context = ['Payload' => $fields];
+        $hasOne = (array) DataObject::singleton($className)->hasOne();
+
+        foreach ($hasOne as $relationName => $relationClass) {
+            $value = $fields[$relationName] ?? $fields[$relationName . 'ID'] ?? null;
+
+            $id = match (true) {
+                is_int($value), is_string($value) && ctype_digit((string) $value) => (int) $value,
+                is_array($value) && isset($value['id']) => (int) $value['id'],
+                default => 0,
+            };
+
+            if ($id > 0) {
+                $context[$relationName] = DataObject::get_by_id($relationClass, $id);
+            }
+        }
+
+        return $context;
+    }
+
+    /**
      * Gate population-domain endpoints (batch, compositions, assets, page
      * actions).
      *
