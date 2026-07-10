@@ -6,6 +6,8 @@ use Dynamic\ContentApi\Auth\AuthContext;
 use Dynamic\ContentApi\Auth\TokenAuthenticator;
 use Dynamic\ContentApi\Control\Handlers\AssetHandler;
 use Dynamic\ContentApi\Control\Handlers\AuthHandler;
+use Dynamic\ContentApi\Control\Handlers\BatchHandler;
+use Dynamic\ContentApi\Control\Handlers\CompositionHandler;
 use Dynamic\ContentApi\Control\Handlers\PageHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsWriteHandler;
@@ -42,6 +44,8 @@ class ContentApiController extends Controller
         'POST pages/$ID!/$PageAction!' => 'handlePageAction',
         'POST assets' => 'handleAssetUpload',
         'GET assets/$ID!' => 'handleAssetRead',
+        'POST batch' => 'handleBatch',
+        'POST compositions/page' => 'handleComposition',
         '' => 'handleIndex',
     ];
 
@@ -56,6 +60,8 @@ class ContentApiController extends Controller
         'handlePageAction',
         'handleAssetUpload',
         'handleAssetRead',
+        'handleBatch',
+        'handleComposition',
         'handleIndex',
     ];
 
@@ -66,6 +72,8 @@ class ContentApiController extends Controller
         'recordsWriteHandler' => '%$' . RecordsWriteHandler::class,
         'pageHandler' => '%$' . PageHandler::class,
         'assetHandler' => '%$' . AssetHandler::class,
+        'batchHandler' => '%$' . BatchHandler::class,
+        'compositionHandler' => '%$' . CompositionHandler::class,
     ];
 
     public ?TokenAuthenticator $authenticator = null;
@@ -79,6 +87,10 @@ class ContentApiController extends Controller
     public ?PageHandler $pageHandler = null;
 
     public ?AssetHandler $assetHandler = null;
+
+    public ?BatchHandler $batchHandler = null;
+
+    public ?CompositionHandler $compositionHandler = null;
 
     protected ?AuthContext $authContext = null;
 
@@ -167,6 +179,24 @@ class ContentApiController extends Controller
             $this->requireAuth($request);
 
             return $this->assetHandler->read($request, $this->authContext);
+        });
+    }
+
+    public function handleBatch(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->batchHandler->handle($request, $this->authContext);
+        });
+    }
+
+    public function handleComposition(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->compositionHandler->composePage($request, $this->authContext);
         });
     }
 

@@ -4,7 +4,10 @@ namespace Dynamic\ContentApi\Tests;
 
 use Dynamic\ContentApi\Auth\TokenAuthenticator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
@@ -29,6 +32,9 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestTag::class,
         ApiTestVersionedObject::class,
         ApiTestPage::class,
+        ApiTestBlockPage::class,
+        ApiTestElement::class,
+        ApiTestElementItem::class,
     ];
 
     protected function setUp(): void
@@ -41,6 +47,9 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestTag' => ApiTestTag::class,
             'ApiTestVersioned' => ApiTestVersionedObject::class,
             'ApiTestPage' => ApiTestPage::class,
+            'BlockPageStub' => ApiTestBlockPage::class,
+            'ApiTestElement' => ApiTestElement::class,
+            'ElementContent' => \DNADesign\Elemental\Models\ElementContent::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
@@ -50,6 +59,9 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestTag::class, 'api_access', true);
         Config::modify()->set(ApiTestVersionedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestPage::class, 'api_access', true);
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,create,update,action');
+        Config::modify()->set(ApiTestElement::class, 'api_access', true);
+        Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
     }
 
     protected function mintTokenFor(string $fixtureName = 'apiUser'): string

@@ -81,3 +81,8 @@ SilverStripe\CMS\Model\SiteTree:
   homePage:
     Title: 'Home'
     URLSegment: home
+
+Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage:
+  blockPage:
+    Title: 'Block Page'
+    URLSegment: block-page

@@ -1,0 +1,9 @@
+---
+Name: content-api-linkfield
+Only:
+  classexists: SilverStripe\LinkField\Models\Link
+After: '#content-api'
+---
+Dynamic\ContentApi\Write\WriteApplicator:
+  transformers:
+    - 'Dynamic\ContentApi\Write\Transformers\LinkTransformer'
