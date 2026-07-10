@@ -67,7 +67,8 @@ composer require dynamic/silverstripe-content-api
   `create`/`upsert` op; `PATCH records/$Class/$ID` → `PUT api/$Class/$ID` or a batch
   `update` op; `DELETE records/$Class/$ID` → `DELETE api/$Class/$ID` (hard delete!) or a
   batch `delete` op / archive stage action. `POST auth/login|logout|refresh` →
-  `api/auth/login|logout` (email/pwd request vars) + `autoRefreshLifetime`.
+  `api/auth/login|logout` (email/pwd request vars); there is no refresh endpoint —
+  set a longer `tokenLife` and re-mint (auto-refresh is off, see Authentication).
 - Injector note: `RecordsWriteHandler` was replaced by `RecordActionsHandler`.
 
 ## Quick start
@@ -141,8 +142,10 @@ curl -H "X-Silverstripe-Apitoken: $TOKEN" https://site.test/api/ElementContent
   Service accounts: the `MintContentApiToken` task (resetToken + getToken).
 - Defaults hardened by this module's config: `authentication_policy: true` (tokens
   required on `/api` including GET), `access_control_policy: ACL_CHECK_CONFIG_AND_MODEL`
-  (config verbs AND the model's `can*()`), CORS off, `tokenLife` 7 days with activity
-  refresh.
+  (config verbs AND the model's `can*()`), CORS off, `tokenLife` 7 days and
+  **`autoRefreshLifetime: false`** — tokens have a fixed, predictable, revocable lifetime
+  rather than silently self-renewing on use. Long-lived service accounts should raise
+  `tokenLife` (e.g. `31536000` for a year) in project config and re-mint on that cadence.
 - **This module's `/content-api/v1` surface hardens the token check**: it resolves the
   member via colymba's `getOwner()` (no session login), accepts the token **header-only**
   (colymba's `?token=` query-var fallback is refused here), and enforces **strict expiry**
@@ -151,9 +154,11 @@ curl -H "X-Silverstripe-Apitoken: $TOKEN" https://site.test/api/ElementContent
 - **colymba's `/api` surface keeps upstream semantics** (documented + being addressed in
   [docs/en/upstream-issues.md](docs/en/upstream-issues.md)): tokens stored **in plaintext**
   on the Member; the `?token=` query-var fallback is always active (keep tokens out of
-  URLs); a token is valid while `ApiTokenExpire > now − tokenLife` with auto-refresh; every
-  authenticated request logs the member into the session IdentityStore. Treat `/api` as a
-  trusted server-to-server surface until those land upstream.
+  URLs); colymba's own `authenticate()` treats a token as valid while
+  `ApiTokenExpire > now − tokenLife` (a grace window past the advertised expiry — this
+  module's own surface does not, see above); every authenticated request logs the member
+  into the session IdentityStore. Treat `/api` as a trusted server-to-server surface until
+  those land upstream.
 - ⚠️ **`api/auth/logout?email=…` is unauthenticated upstream** — any caller can expire a
   known service account's token (a DoS on integrations). Restrict `/api/auth/*` at the
   network edge, or provision service tokens with the `MintContentApiToken` task and don't

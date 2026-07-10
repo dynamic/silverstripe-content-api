@@ -62,8 +62,12 @@ class ApiTestCascadeObject extends DataObject implements TestOnly
         }
 
         ApiTestCascadeObject::$cascading = true;
-        $follower->Marker = $follower->Marker + 5;
-        $follower->write();
-        ApiTestCascadeObject::$cascading = false;
+
+        try {
+            $follower->Marker = $follower->Marker + 5;
+            $follower->write();
+        } finally {
+            ApiTestCascadeObject::$cascading = false;
+        }
     }
 }

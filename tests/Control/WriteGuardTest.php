@@ -242,8 +242,10 @@ class WriteGuardTest extends ContentApiTestCase
             'precondition: onAfterWrite cascade bumps the follower on a direct write'
         );
 
-        // Payload names Marker (denied) — the lead's own Marker would revert,
-        // but the follower's cascade bump must survive.
+        // Payload names Marker (denied) — the lead's own Marker reverts, but
+        // the follower's cascade bump (15 -> 20) during the request must
+        // survive: the follower is a different owner object, so it is not in
+        // the payload WeakMap and the guard skips it.
         $response = $this->colymba('PUT', "Cascade/{$lead->ID}", [
             'Title' => 'Lead updated',
             'Marker' => 999,
@@ -251,10 +253,37 @@ class WriteGuardTest extends ContentApiTestCase
 
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame(
-            15,
+            20,
             (int) ApiTestCascadeObject::get()->byID($follower->ID)->Marker,
-            'follower cascade bump (10 + 5) persisted — not reverted by the lead payload policy'
+            'follower cascade bump persisted — not reverted by the lead payload policy'
         );
+        $this->assertSame(
+            0,
+            (int) ApiTestCascadeObject::get()->byID($lead->ID)->Marker,
+            'the lead\'s own denied Marker was reverted'
+        );
+    }
+
+    public function testGlobalAllowlistPolicyIsEnforced(): void
+    {
+        // A project-wide WriteApplicator.policy: allowlist (no per-class
+        // config) must also gate colymba writes — parity with WriteApplicator.
+        Config::modify()->set(
+            \Dynamic\ContentApi\Write\WriteApplicator::class,
+            'policy',
+            'allowlist'
+        );
+        Config::modify()->set(ApiTestObject::class, 'api_writable_fields', ['Title']);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Title' => 'Allowed',
+            'Rank' => 77,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(1, (int) ApiTestObject::get()->byID($record->ID)->Rank, 'global allowlist gated Rank');
     }
 
     public function testCmsContextWriteIsUntouched(): void

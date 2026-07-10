@@ -259,6 +259,13 @@ class WriteApplicator
             return false;
         }
 
+        // The population path (batch/compositions) is the trusted, permission-
+        // and environment-gated surface: it stays in guarded mode unless a
+        // project explicitly opts a class (or globally) into allowlist mode.
+        // Per-class `api_writable_fields` alone does NOT restrict this path —
+        // that key restricts the untrusted colymba /api surface via
+        // WriteGuardExtension (compositions legitimately write structural
+        // fields like ParentID/Sort that are not in a human-content allowlist).
         $policy = Config::inst()->get($className, 'api_write_policy')
             ?: static::config()->get('policy');
 

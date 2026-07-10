@@ -250,7 +250,10 @@ class ContentApiController extends Controller
             throw new ApiError(ErrorCode::UNAUTHENTICATED, 'Token invalid.');
         }
 
-        $expires = (int) $member->ApiTokenExpire;
+        // Read the expiry from colymba's configured column (it derives the
+        // name from TokenAuthExtension's $db spec), not a hardcoded field —
+        // a renamed column must not make every token read as expired.
+        $expires = (int) $member->getField($this->expiryColumn());
 
         if ($expires <= time()) {
             throw new ApiError(ErrorCode::TOKEN_EXPIRED, 'Token expired.');
@@ -259,6 +262,20 @@ class ContentApiController extends Controller
         Security::setCurrentUser($member);
 
         return $this->authContext = new AuthContext($member, $expires);
+    }
+
+    /**
+     * colymba's expiry column name, derived from TokenAuthExtension's $db
+     * spec exactly as its TokenAuthenticator does (falls back to the default).
+     */
+    protected function expiryColumn(): string
+    {
+        $db = (array) Config::inst()->get(
+            'Colymba\\RESTfulAPI\\Extensions\\TokenAuthExtension',
+            'db'
+        );
+
+        return (string) (array_search('Int', $db, true) ?: 'ApiTokenExpire');
     }
 
     /**

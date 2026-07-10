@@ -43,32 +43,16 @@ class AuthTest extends ContentApiTestCase
         $this->assertErrorCode($response, 'UNAUTHENTICATED', 401);
     }
 
-    public function testExpiredTokenMapsToTokenExpired(): void
+    public function testStrictExpiryRejectsInsideColymbaGraceWindow(): void
     {
         $token = $this->mintTokenFor('apiUser');
 
         /** @var Member $member */
         $member = $this->objFromFixture(Member::class, 'apiUser');
-        // Our surface enforces STRICT expiry — a merely-past ApiTokenExpire is
-        // expired, not colymba's now - tokenLife grace window.
-        $member->ApiTokenExpire = time() - 60;
-        $member->write();
-
-        $response = $this->apiGet('auth/session', $token);
-
-        $this->assertErrorCode($response, 'TOKEN_EXPIRED', 401);
-    }
-
-    public function testTokenInColymbaGraceWindowIsStillRejected(): void
-    {
-        $token = $this->mintTokenFor('apiUser');
-
-        /** @var Member $member */
-        $member = $this->objFromFixture(Member::class, 'apiUser');
-        // now - 60 is INSIDE colymba's validity window (ApiTokenExpire >
-        // now - tokenLife, i.e. > now - 7 days), so colymba's authenticate()
-        // would accept it — but it is past the advertised expiry, and our
-        // strict adapter rejects it.
+        // now - 60 is past the advertised expiry but still INSIDE colymba's
+        // validity window (ApiTokenExpire > now - tokenLife, i.e. > now - 7d),
+        // so colymba's own authenticate() would accept it. Our strict adapter
+        // rejects it at the advertised expiry.
         $graceTimestamp = time() - 60;
         $member->ApiTokenExpire = $graceTimestamp;
         $member->write();
@@ -76,7 +60,7 @@ class AuthTest extends ContentApiTestCase
         $this->assertGreaterThan(
             $this->expiredTokenTimestamp(),
             $graceTimestamp,
-            'sanity: now-60 is inside colymba grace window'
+            'sanity: now-60 is inside colymba grace window (would authenticate upstream)'
         );
         $this->assertErrorCode($this->apiGet('auth/session', $token), 'TOKEN_EXPIRED', 401);
     }
@@ -133,16 +117,16 @@ class AuthTest extends ContentApiTestCase
     public function testAuthenticatingDoesNotEstablishASession(): void
     {
         // getOwner() (not authenticate()) resolves the member with no
-        // IdentityStore login — the API stays stateless.
+        // IdentityStore login — the API stays stateless. Assert on the session
+        // itself: an IdentityStore login sets 'loggedInAs' to the member id.
         $token = $this->mintTokenFor('apiUser');
 
         $response = $this->apiGet('auth/session', $token);
 
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
-        $this->assertStringNotContainsStringIgnoringCase(
-            'set-cookie',
-            implode("\n", array_keys($response->getHeaders())),
-            'authenticated API responses must not set a session cookie'
+        $this->assertEmpty(
+            $this->mainSession->session()->get('loggedInAs'),
+            'authenticated API request must not establish a CMS session'
         );
     }
 }

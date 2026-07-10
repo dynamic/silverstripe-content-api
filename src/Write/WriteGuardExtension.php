@@ -11,12 +11,15 @@ use SilverStripe\Core\Extension;
  * write path (POST/PUT /api/$Model), which natively applies EVERY key in the
  * JSON payload. Productized from project-feedback's ApiFieldGuardExtension.
  *
- * Respects the same config keys as WriteApplicator, so one policy covers
- * both surfaces:
- * - `api_writable_fields` (or `api_write_policy: allowlist`): only listed
- *   fields may change via the API
+ * Config keys (shared vocabulary with WriteApplicator):
+ * - `api_writable_fields`: on THIS untrusted colymba surface a non-empty list
+ *   is an allowlist — only listed fields may change. (The trusted population
+ *   path — batch/compositions — is not restricted by this key; it stays
+ *   guarded so it can write structural fields like ParentID/Sort. Use
+ *   `api_write_policy: allowlist` or the global `WriteApplicator.policy` to
+ *   restrict that path too — both are honoured here.)
  * - `api_protected_fields` + global WriteApplicator `protected_fields`:
- *   never writable
+ *   never writable, and always win over the allowlist.
  * - `api_writable_relations`: has_many/many_many keys not listed are
  *   stripped from the payload before colymba applies them (its relation
  *   handling is removeAll()+add() straight to the DB, invisible to
@@ -43,13 +46,13 @@ use SilverStripe\Core\Extension;
 class WriteGuardExtension extends Extension
 {
     /**
-     * Payload captured by onBeforeDeserialize for the same request.
-     */
-    private ?array $apiRequestBody = null;
-
-    /**
      * colymba broadcasts this with the raw JSON before deserializing.
      * Strip many-relation keys that are not writable.
+     *
+     * The payload is recorded in WriteGuardPayloads keyed by the owner object,
+     * not on this extension instance: extension instances are effectively
+     * shared per class, so an instance property would leak the target's
+     * payload onto sibling/cascade writes of the same class.
      *
      * @param string $rawJson passed by reference through extend()
      */
@@ -81,7 +84,7 @@ class WriteGuardExtension extends Extension
             }
         }
 
-        $this->apiRequestBody = $body;
+        WriteGuardPayloads::store($this->getOwner(), $body);
 
         if ($filtered) {
             $rawJson = json_encode($body) ?: $rawJson;
@@ -99,22 +102,28 @@ class WriteGuardExtension extends Extension
             return;
         }
 
-        // Only the record colymba deserialized the payload into carries
-        // apiRequestBody. A null here means this write is a cascade/sibling
-        // write triggered during the API request (e.g. a Sort renumber in the
-        // target's onAfterWrite) — NOT the API-targeted record. Applying the
-        // target's field policy to it would silently revert legitimate
-        // programmatic changes, so leave it alone.
-        $body = $this->apiRequestBody;
+        $owner = $this->getOwner();
+
+        // Only the exact record colymba deserialized the payload into is in
+        // the map. A miss means this write is a cascade/sibling write during
+        // the API request (e.g. a Sort renumber in the target's onAfterWrite)
+        // — NOT the API-targeted record. Applying the target's field policy to
+        // it would silently revert legitimate programmatic changes.
+        $body = WriteGuardPayloads::get($owner);
 
         if (!is_array($body)) {
             return;
         }
 
-        $owner = $this->getOwner();
+        // Allowlist mode on this (untrusted) surface: the resolved policy
+        // (per-class api_write_policy, else the global WriteApplicator.policy —
+        // both honoured) OR simply a non-empty api_writable_fields. The trusted
+        // population path handles the first two identically but ignores a bare
+        // api_writable_fields (see WriteApplicator::isWritable).
+        $policy = $owner->config()->get('api_write_policy')
+            ?: (string) Config::inst()->get(WriteApplicator::class, 'policy');
         $allowlist = (array) $owner->config()->get('api_writable_fields');
-        $allowlistMode = $allowlist !== []
-            || $owner->config()->get('api_write_policy') === 'allowlist';
+        $allowlistMode = $policy === 'allowlist' || $allowlist !== [];
 
         $protected = array_merge(
             (array) Config::inst()->get(WriteApplicator::class, 'protected_fields'),
