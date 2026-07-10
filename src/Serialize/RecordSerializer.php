@@ -49,8 +49,8 @@ class RecordSerializer
         'TempIDExpired',
         'SessionData',
         'ShareTokenSalt',
-        'ContentApiTokenHash',
-        'ContentApiTokenExpire',
+        'ApiToken',
+        'ApiTokenExpire',
     ];
 
     private static array $dependencies = [

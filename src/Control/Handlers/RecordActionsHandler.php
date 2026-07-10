@@ -9,23 +9,19 @@ use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
-use Dynamic\ContentApi\Write\RecordWriter;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Versioned\Versioned;
 
 /**
- * Write endpoints (thin HTTP layer over RecordWriter):
+ * `POST records/$ClassRef/$ID/publish|unpublish|archive` — the versioned
+ * stage actions colymba's generic CRUD has no concept of.
  *
- * - `POST records/$ClassRef` — create (or upsert with `"mode": "upsert"`)
- * - `PATCH records/$ClassRef/$ID` — sparse update (numeric or ext: id)
- * - `DELETE records/$ClassRef/$ID?mode=archive|unpublish|hard`
- * - `POST records/$ClassRef/$ID/publish|unpublish|archive` — stage actions
- *
- * Payload: `{ "fields": {}, "relations": {}, "externalId": "", "mode": "",
- * "publish": "none|single|recursive" }`. All writes run against DRAFT.
+ * (Generic create/update/delete live on colymba's `/api` surface; population
+ * writes go through batch/compositions, which share the same internal
+ * RecordWriter pipeline.)
  */
-class RecordsWriteHandler
+class RecordActionsHandler
 {
     use Injectable;
 
@@ -33,7 +29,6 @@ class RecordsWriteHandler
         'registry' => '%$' . ClassRegistry::class,
         'policy' => '%$' . PermissionPolicy::class,
         'serializer' => '%$' . RecordSerializer::class,
-        'writer' => '%$' . RecordWriter::class,
         'publisher' => '%$' . PublishOrchestrator::class,
         'reader' => '%$' . RecordsHandler::class,
     ];
@@ -44,52 +39,9 @@ class RecordsWriteHandler
 
     public ?RecordSerializer $serializer = null;
 
-    public ?RecordWriter $writer = null;
-
     public ?PublishOrchestrator $publisher = null;
 
     public ?RecordsHandler $reader = null;
-
-    public function create(HTTPRequest $request, AuthContext $context): array
-    {
-        $className = $this->registry->resolve((string) $request->param('ClassRef'));
-        $body = $this->jsonBody($request);
-        $mode = (string) ($body['mode'] ?? 'create');
-
-        return $this->inDraft(function () use ($className, $body, $mode, $context) {
-            $result = $this->writer->upsert($className, $body, $context->member, $mode);
-
-            return $this->writeResponse($result, $result['operation'] === 'created' ? 201 : 200);
-        });
-    }
-
-    public function update(HTTPRequest $request, AuthContext $context): array
-    {
-        $className = $this->registry->resolve((string) $request->param('ClassRef'));
-        $body = $this->jsonBody($request);
-
-        return $this->inDraft(function () use ($request, $className, $body, $context) {
-            $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
-
-            return $this->writeResponse($this->writer->update($record, $body, $context->member));
-        });
-    }
-
-    public function delete(HTTPRequest $request, AuthContext $context): array
-    {
-        $className = $this->registry->resolve((string) $request->param('ClassRef'));
-        $mode = (string) ($request->getVar('mode') ?: 'archive');
-
-        return $this->inDraft(function () use ($request, $className, $mode, $context) {
-            $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
-            $result = $this->writer->delete($record, $mode, $context->member);
-
-            return [
-                'data' => $result['data'],
-                'meta' => ['operation' => $result['operation']],
-            ];
-        });
-    }
 
     public function recordAction(HTTPRequest $request, AuthContext $context): array
     {
@@ -138,25 +90,7 @@ class RecordsWriteHandler
     }
 
     /**
-     * @param array{record: \SilverStripe\ORM\DataObject, operation: string, warnings: array} $result
-     */
-    protected function writeResponse(array $result, int $status = 200): array
-    {
-        $meta = ['operation' => $result['operation']];
-
-        if ($result['warnings'] !== []) {
-            $meta['warnings'] = $result['warnings'];
-        }
-
-        return [
-            'data' => $this->serializer->serialize($result['record']),
-            'meta' => $meta,
-            'status' => $status,
-        ];
-    }
-
-    /**
-     * All write operations run against the draft stage.
+     * Stage actions run against the draft stage.
      */
     protected function inDraft(callable $callback): mixed
     {

@@ -5,64 +5,14 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use SilverStripe\Security\Member;
 
+/**
+ * Authentication is colymba/silverstripe-restfulapi's TokenAuthenticator;
+ * these tests cover our adapter (error mapping, session introspection) and
+ * the cross-surface contract with colymba's own auth endpoints.
+ */
 class AuthTest extends ContentApiTestCase
 {
     private const PASSWORD = 'ap1-T3st-passw0rd!';
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        /** @var Member $member */
-        $member = $this->objFromFixture(Member::class, 'apiUser');
-        $member->changePassword(self::PASSWORD);
-    }
-
-    public function testLoginReturnsToken(): void
-    {
-        $response = $this->apiPost('auth/login', [
-            'email' => 'agent@example.com',
-            'password' => self::PASSWORD,
-        ]);
-
-        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
-
-        $body = $this->decode($response);
-
-        $this->assertNull($body['error']);
-        $this->assertSame(64, strlen($body['data']['token']));
-        $this->assertGreaterThan(time(), $body['data']['expires']);
-        $this->assertSame('agent@example.com', $body['data']['member']['email']);
-
-        // Plaintext token must not be stored.
-        $member = $this->objFromFixture(Member::class, 'apiUser');
-        $this->assertNotSame($body['data']['token'], $member->ContentApiTokenHash);
-        $this->assertSame(hash('sha256', $body['data']['token']), $member->ContentApiTokenHash);
-    }
-
-    public function testLoginRejectsBadCredentials(): void
-    {
-        $response = $this->apiPost('auth/login', [
-            'email' => 'agent@example.com',
-            'password' => 'wrong',
-        ]);
-
-        $this->assertErrorCode($response, 'UNAUTHENTICATED', 401);
-    }
-
-    public function testLoginRejectsMissingBody(): void
-    {
-        $response = $this->apiPost('auth/login', []);
-
-        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
-    }
-
-    public function testLoginRequiresPost(): void
-    {
-        $response = $this->apiGet('auth/login');
-
-        $this->assertErrorCode($response, 'METHOD_NOT_ALLOWED', 405);
-    }
 
     public function testSessionReportsMemberAndPermissions(): void
     {
@@ -71,10 +21,12 @@ class AuthTest extends ContentApiTestCase
         $response = $this->apiGet('auth/session', $token);
         $body = $this->decode($response);
 
-        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame('agent@example.com', $body['data']['email']);
         $this->assertContains('CONTENT_API_ACCESS', $body['data']['permissions']);
         $this->assertNotContains('CONTENT_API_POPULATE', $body['data']['permissions']);
+        $this->assertGreaterThan(time(), $body['data']['expires']);
+        $this->assertSame('colymba/silverstripe-restfulapi', $body['meta']['tokenProvider']);
     }
 
     public function testRequestWithoutTokenIsRejected(): void
@@ -86,57 +38,95 @@ class AuthTest extends ContentApiTestCase
 
     public function testRequestWithInvalidTokenIsRejected(): void
     {
-        $response = $this->apiGet('auth/session', str_repeat('0', 64));
+        $response = $this->apiGet('auth/session', 'not-a-real-token');
 
         $this->assertErrorCode($response, 'UNAUTHENTICATED', 401);
     }
 
-    public function testExpiredTokenIsRejected(): void
+    public function testStrictExpiryRejectsInsideColymbaGraceWindow(): void
     {
         $token = $this->mintTokenFor('apiUser');
 
         /** @var Member $member */
         $member = $this->objFromFixture(Member::class, 'apiUser');
-        $member->ContentApiTokenExpire = time() - 60;
+        // now - 60 is past the advertised expiry but still INSIDE colymba's
+        // validity window (ApiTokenExpire > now - tokenLife, i.e. > now - 7d),
+        // so colymba's own authenticate() would accept it. Our strict adapter
+        // rejects it at the advertised expiry.
+        $graceTimestamp = time() - 60;
+        $member->ApiTokenExpire = $graceTimestamp;
         $member->write();
 
-        $response = $this->apiGet('auth/session', $token);
-
-        $this->assertErrorCode($response, 'TOKEN_EXPIRED', 401);
+        $this->assertGreaterThan(
+            $this->expiredTokenTimestamp(),
+            $graceTimestamp,
+            'sanity: now-60 is inside colymba grace window (would authenticate upstream)'
+        );
+        $this->assertErrorCode($this->apiGet('auth/session', $token), 'TOKEN_EXPIRED', 401);
     }
 
-    public function testLogoutRevokesToken(): void
+    public function testOurLoginEndpointIsGone(): void
     {
+        $response = $this->apiPost('auth/login', [
+            'email' => 'agent@example.com',
+            'password' => AuthTest::PASSWORD,
+        ]);
+
+        $this->assertSame(404, $response->getStatusCode(), 'login moved to colymba api/auth/login');
+    }
+
+    public function testColymbaLoginTokenWorksOnOurSurface(): void
+    {
+        /** @var Member $member */
+        $member = $this->objFromFixture(Member::class, 'apiUser');
+        $member->changePassword(AuthTest::PASSWORD);
+
+        // Colymba login uses email/pwd REQUEST VARS (not a JSON body).
+        $response = $this->get(
+            'api/auth/login?email=' . urlencode('agent@example.com')
+            . '&pwd=' . urlencode(AuthTest::PASSWORD)
+        );
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $login = json_decode((string) $response->getBody(), true);
+        $this->assertTrue($login['result'], (string) $response->getBody());
+        $this->assertNotEmpty($login['token']);
+
+        // The colymba-issued token authenticates on content-api/v1.
+        $session = $this->apiGet('auth/session', $login['token']);
+        $this->assertSame(200, $session->getStatusCode(), (string) $session->getBody());
+        $this->assertSame(
+            'agent@example.com',
+            $this->decode($session)['data']['email']
+        );
+    }
+
+    public function testQueryVarTokenIsRejectedOnOurSurface(): void
+    {
+        // Header-only: our adapter does NOT honour colymba's ?token= query-var
+        // fallback (tokens in URLs leak into logs; combined with colymba's
+        // session login it would mint a CMS session from a shared link).
         $token = $this->mintTokenFor('apiUser');
 
-        $response = $this->apiPost('auth/logout', [], $token);
-        $this->assertSame(200, $response->getStatusCode());
+        $response = $this->get('content-api/v1/auth/session?token=' . urlencode($token));
 
-        $response = $this->apiGet('auth/session', $token);
         $this->assertErrorCode($response, 'UNAUTHENTICATED', 401);
     }
 
-    public function testRefreshRotatesToken(): void
+    public function testAuthenticatingDoesNotEstablishASession(): void
     {
+        // getOwner() (not authenticate()) resolves the member with no
+        // IdentityStore login — the API stays stateless. Assert on the session
+        // itself: an IdentityStore login sets 'loggedInAs' to the member id.
         $token = $this->mintTokenFor('apiUser');
 
-        $response = $this->apiPost('auth/refresh', [], $token);
-        $body = $this->decode($response);
+        $response = $this->apiGet('auth/session', $token);
 
-        $this->assertSame(200, $response->getStatusCode());
-
-        $newToken = $body['data']['token'];
-        $this->assertNotSame($token, $newToken);
-
-        // Old token is dead, new token works.
-        $this->assertErrorCode($this->apiGet('auth/session', $token), 'UNAUTHENTICATED', 401);
-        $this->assertSame(200, $this->apiGet('auth/session', $newToken)->getStatusCode());
-    }
-
-    public function testUnknownAuthActionIs404(): void
-    {
-        $response = $this->apiPost('auth/bogus', []);
-
-        $this->assertErrorCode($response, 'NOT_FOUND', 404);
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertEmpty(
+            $this->mainSession->session()->get('loggedInAs'),
+            'authenticated API request must not establish a CMS session'
+        );
     }
 }

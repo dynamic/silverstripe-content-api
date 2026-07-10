@@ -34,7 +34,15 @@ class SchemaTest extends ContentApiTestCase
 
         $this->assertTrue($body['data']['integrations']['elemental']);
         $this->assertTrue($body['data']['integrations']['linkfield']);
+        $this->assertTrue($body['data']['integrations']['restfulapi']);
         $this->assertArrayHasKey('populationEnabled', $body['data']);
+
+        // Generic CRUD pointer: the colymba surface.
+        $crud = $body['data']['crud'];
+        $this->assertSame('colymba/silverstripe-restfulapi', $crud['provider']);
+        $this->assertSame('api', $crud['route']);
+        $this->assertSame('api/auth/login', $crud['auth']);
+        $this->assertIsArray($crud['models']);
     }
 
     public function testSiteSchemaOmitsUnexposedClasses(): void

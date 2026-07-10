@@ -16,7 +16,7 @@ A Million Dreamz and dynamicagency-essentials) onto content API calls.
 | `$palette(N)` / `$button(N, Label)` via PopulateColorResolver | Same tokens; resolution built into the write path, unresolvable tokens fail the write |
 | `Populate.enable_publish_recursive` + attach-task `publishRecursive()` | `"publish": "recursive"` per request — publishes page + each element/child explicitly |
 | `truncate_objects` (destructive, both stages) | `prune: {enabled: true, scope: managed}` — archives only managed (externalId-bearing) elements missing from the payload |
-| Orphan-cleanup tasks (`CleanupAmdStaffOrphansTask`, `remove_elements`) | Same prune, or explicit `DELETE records/...?mode=archive` |
+| Orphan-cleanup tasks (`CleanupAmdStaffOrphansTask`, `remove_elements`) | Same prune, or the archive stage action / a batch `delete` op |
 | Scoped Populate re-runs (`Config::modify` + `requireRecords(true)`) | Just re-POST the composition — sparse upserts, no duplicate generations |
 | Direct-ORM QA tasks (draft-only writes, unresolved color literals) | Any API write: publish semantics explicit, tokens always resolve |
 

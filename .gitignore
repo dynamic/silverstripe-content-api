@@ -14,3 +14,8 @@
 # npm (none expected, defensive)
 node_modules/
 npm-debug.log
+
+# silverstripe/recipe-plugin scaffolding (generated on composer install; not module code)
+/app/
+/behat.yml
+/mysite/

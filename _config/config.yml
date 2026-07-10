@@ -1,22 +1,34 @@
 ---
 Name: content-api
+After: '#restfulapi'
 ---
 SilverStripe\Control\Director:
   rules:
     'content-api/v1': Dynamic\ContentApi\Control\ContentApiController
 
+# colymba/silverstripe-restfulapi does NOT auto-apply its Member extension.
 SilverStripe\Security\Member:
   extensions:
-    - Dynamic\ContentApi\Auth\ApiTokenExtension
+    - Colymba\RESTfulAPI\Extensions\TokenAuthExtension
+
+# Hardened defaults for the colymba /api surface (its own defaults are open:
+# authentication_policy null, CORS *). Projects may relax these deliberately.
+Colymba\RESTfulAPI\RESTfulAPI:
+  authentication_policy: true
+  access_control_policy: 'ACL_CHECK_CONFIG_AND_MODEL'
+  cors:
+    Enabled: false
+
+# Predictable, revocable tokens: a fixed lifetime (default 7 days) with NO
+# activity auto-refresh — a self-renewing token effectively never expires, and
+# our /content-api/v1 surface enforces this expiry strictly (colymba's own
+# /api surface otherwise allows a token up to a full tokenLife past expiry).
+# Long-lived service accounts should raise tokenLife in project config
+# (e.g. 31536000 for a year) rather than rely on refresh.
+Colymba\RESTfulAPI\Authenticators\TokenAuthenticator:
+  tokenLife: 604800
+  autoRefreshLifetime: false
 
 Dynamic\ContentApi\Control\ContentApiController:
   # CORS is off by default: the API is designed for server-to-server / agent callers.
   cors_enabled: false
-
-Dynamic\ContentApi\Auth\TokenAuthenticator:
-  token_life: 604800
-  auto_refresh: true
-  header_name: 'X-Silverstripe-Apitoken'
-  # Query-var token fallback is disabled by default (tokens in URLs leak into logs).
-  allow_query_var: false
-  query_var: 'token'

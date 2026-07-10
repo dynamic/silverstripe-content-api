@@ -3,8 +3,11 @@
 namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\Core\Config\Config;
 
 class BatchTest extends ContentApiTestCase
 {
@@ -112,6 +115,209 @@ class BatchTest extends ContentApiTestCase
 
         $record = ApiTestVersionedObject::get()->filter('FixtureIdentifier', 'b-live')->first();
         $this->assertTrue($record->isPublished());
+    }
+
+    /**
+     * Write-pipeline coverage absorbed from the removed HTTP CRUD endpoints —
+     * batch ops run the same RecordWriter/WriteApplicator path.
+     */
+    public function testUpsertIsSparse(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'upsert', 'class' => 'ApiTest', 'externalId' => 'alpha', 'fields' => ['Rank' => 42]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $this->assertSame(42, (int) $record->Rank);
+        $this->assertSame('Alpha', $record->Title, 'unsent fields untouched');
+    }
+
+    public function testCreateWithDuplicateExternalIdConflicts(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'alpha', 'fields' => ['Title' => 'Dupe']],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('ALREADY_EXISTS', $body['data']['results'][0]['error']['code']);
+    }
+
+    public function testProtectedFieldRejected(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'upsert', 'class' => 'ApiTest', 'externalId' => 'alpha', 'fields' => ['ID' => 999]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('READONLY_FIELD', $body['data']['results'][0]['error']['code']);
+    }
+
+    public function testAllowlistPolicy(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_write_policy', 'allowlist');
+        Config::modify()->set(ApiTestObject::class, 'api_writable_fields', ['Title']);
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'upsert', 'class' => 'ApiTest', 'externalId' => 'alpha', 'fields' => ['Rank' => 5]],
+                ['op' => 'upsert', 'class' => 'ApiTest', 'externalId' => 'alpha', 'fields' => ['Title' => 'Renamed']],
+            ],
+        ], $this->adminToken));
+
+        $results = $body['data']['results'];
+        $this->assertSame('READONLY_FIELD', $results[0]['error']['code']);
+        $this->assertSame('updated', $results[1]['status']);
+        $this->assertSame('Renamed', $this->objFromFixture(ApiTestObject::class, 'one')->Title);
+    }
+
+    public function testValidationFailureMapsPerField(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'upsert', 'class' => 'ApiTest', 'externalId' => 'alpha', 'fields' => ['Title' => 'Invalid']],
+            ],
+        ], $this->adminToken));
+
+        $error = $body['data']['results'][0]['error'];
+        $this->assertSame('VALIDATION_FAILED', $error['code']);
+        $this->assertSame('Title', $error['details'][0]['field']);
+    }
+
+    public function testHasOneWriteVariants(): void
+    {
+        $one = $this->objFromFixture(ApiTestObject::class, 'one');
+        $two = $this->objFromFixture(ApiTestObject::class, 'two');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                // integer ID form
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $one->ID,
+                    'fields' => ['Buddy' => (int) $two->ID],
+                ],
+                // externalId object form (idempotent — same target)
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $one->ID,
+                    'fields' => ['Buddy' => ['externalId' => 'beta']],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame((int) $two->ID, (int) ApiTestObject::get()->byID($one->ID)->BuddyID);
+
+        // null clears
+        $this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'update', 'class' => 'ApiTest', 'id' => (int) $one->ID, 'fields' => ['Buddy' => null]],
+            ],
+        ], $this->adminToken);
+        $this->assertSame(0, (int) ApiTestObject::get()->byID($one->ID)->BuddyID);
+    }
+
+    public function testRelationModesAndExtraFields(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children', 'Tags']);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $childOne = $this->objFromFixture(ApiTestChildObject::class, 'childOne');
+        $childTwo = $this->objFromFixture(ApiTestChildObject::class, 'childTwo');
+        $tag = $this->objFromFixture(ApiTestTag::class, 'tagOne');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => [
+                        'Children' => ['mode' => 'set', 'items' => [(int) $childOne->ID, (int) $childTwo->ID]],
+                        'Tags' => [
+                            'mode' => 'add',
+                            'items' => [['id' => (int) $tag->ID, 'extraFields' => ['SortOrder' => 3]]],
+                        ],
+                    ],
+                ],
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => [
+                        'Children' => ['mode' => 'remove', 'items' => [(int) $childOne->ID]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(1, $record->Children()->count());
+        $this->assertSame(3, (int) $record->Tags()->first()->SortOrder);
+    }
+
+    public function testUnlistedAndUnknownRelations(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', []);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Children' => ['mode' => 'set', 'items' => []]],
+                ],
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Nope' => ['mode' => 'set', 'items' => []]],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $results = $body['data']['results'];
+        $this->assertSame('READONLY_FIELD', $results[0]['error']['code']);
+        $this->assertSame('UNKNOWN_RELATION', $results[1]['error']['code']);
+    }
+
+    public function testCreateVerbDenied(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_access', 'read,update');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'nope', 'fields' => ['Title' => 'X']],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('FORBIDDEN_CLASS', $body['data']['results'][0]['error']['code']);
+    }
+
+    public function testCanCreateDenied(): void
+    {
+        // populateUser holds POPULATE (batch gate) but not ADMIN —
+        // ApiTestVersionedObject's default canCreate() requires admin.
+        $token = $this->mintTokenFor('populateUser');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTestVersioned', 'fields' => ['Title' => 'Nope']],
+            ],
+        ], $token));
+
+        $this->assertSame('FORBIDDEN_RECORD', $body['data']['results'][0]['error']['code']);
     }
 
     public function testBatchRequiresPopulatePermission(): void

@@ -1,6 +1,6 @@
 {
   "$comment": "MCP-style tool definitions for every content API endpoint. A future MCP server maps one tool per entry onto the REST endpoint, injecting the X-Silverstripe-Apitoken header. Class payload contracts are discovered at runtime via the schema_class tool.",
-  "version": "v1",
+  "version": "v1.1",
   "baseRoute": "content-api/v1",
   "tools": [
     {
@@ -8,14 +8,22 @@
       "description": "Verify the current API token: member, held permissions, expiry.",
       "method": "GET",
       "path": "auth/session",
-      "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
     },
     {
       "name": "content_schema_site",
       "description": "Discover the site's content API surface: exposed classes with verbs/capabilities, detected integrations (elemental, linkfield, Essentials palette + button labels), environment and whether population endpoints are enabled. Call this first.",
       "method": "GET",
       "path": "schema/site",
-      "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
     },
     {
       "name": "content_schema_class",
@@ -24,8 +32,15 @@
       "path": "schema/{classRef}",
       "inputSchema": {
         "type": "object",
-        "properties": { "classRef": { "type": "string", "description": "Short class reference from schema/site" } },
-        "required": ["classRef"],
+        "properties": {
+          "classRef": {
+            "type": "string",
+            "description": "Short class reference from schema/site"
+          }
+        },
+        "required": [
+          "classRef"
+        ],
         "additionalProperties": false
       }
     },
@@ -37,14 +52,35 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "classRef": { "type": "string" },
-          "filters": { "type": "object", "description": "Field or Field__Modifier keys; modifiers: ExactMatch, PartialMatch, StartsWith, EndsWith, GreaterThan(OrEqual), LessThan(OrEqual), not, nocase, case" },
-          "sort": { "type": "string" },
-          "limit": { "type": "integer", "maximum": 500 },
-          "offset": { "type": "integer" },
-          "_stage": { "type": "string", "enum": ["draft", "live"], "default": "draft" }
+          "classRef": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "object",
+            "description": "Field or Field__Modifier keys; modifiers: ExactMatch, PartialMatch, StartsWith, EndsWith, GreaterThan(OrEqual), LessThan(OrEqual), not, nocase, case"
+          },
+          "sort": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "maximum": 500
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "_stage": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "live"
+            ],
+            "default": "draft"
+          }
         },
-        "required": ["classRef"],
+        "required": [
+          "classRef"
+        ],
         "additionalProperties": false
       }
     },
@@ -56,65 +92,26 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "classRef": { "type": "string" },
-          "id": { "type": "string", "description": "Numeric id or ext:<external-id>" },
-          "_stage": { "type": "string", "enum": ["draft", "live"], "default": "draft" }
+          "classRef": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Numeric id or ext:<external-id>"
+          },
+          "_stage": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "live"
+            ],
+            "default": "draft"
+          }
         },
-        "required": ["classRef", "id"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "content_records_create",
-      "description": "Create a record (draft by default). With mode=upsert, updates sparsely when externalId matches an existing record. has_one values accept int, null, {id}, {externalId} or a link payload; color tokens $palette(N)/$button(N,Label) resolve on write.",
-      "method": "POST",
-      "path": "records/{classRef}",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "classRef": { "type": "string" },
-          "fields": { "type": "object" },
-          "relations": { "type": "object", "description": "RelationName: {mode: set|add|remove, items: [id | {id} | {externalId, extraFields?}]}" },
-          "externalId": { "type": "string" },
-          "mode": { "type": "string", "enum": ["create", "upsert"], "default": "create" },
-          "publish": { "type": "string", "enum": ["none", "single", "recursive"], "default": "none" }
-        },
-        "required": ["classRef", "fields"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "content_records_update",
-      "description": "Sparse PATCH: only sent keys change; everything else is untouched (URLSegment collisions surface as warnings).",
-      "method": "PATCH",
-      "path": "records/{classRef}/{id}",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "classRef": { "type": "string" },
-          "id": { "type": "string" },
-          "fields": { "type": "object" },
-          "relations": { "type": "object" },
-          "externalId": { "type": "string" },
-          "publish": { "type": "string", "enum": ["none", "single", "recursive"], "default": "none" }
-        },
-        "required": ["classRef", "id"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "content_records_delete",
-      "description": "Delete a record. Versioned classes: archive (both stages, recoverable) or unpublish (live only); hard is unversioned-only.",
-      "method": "DELETE",
-      "path": "records/{classRef}/{id}",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "classRef": { "type": "string" },
-          "id": { "type": "string" },
-          "mode": { "type": "string", "enum": ["archive", "unpublish", "hard"], "default": "archive" }
-        },
-        "required": ["classRef", "id"],
+        "required": [
+          "classRef",
+          "id"
+        ],
         "additionalProperties": false
       }
     },
@@ -126,12 +123,30 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "classRef": { "type": "string" },
-          "id": { "type": "string" },
-          "action": { "type": "string", "enum": ["publish", "unpublish", "archive"] },
-          "recursive": { "type": "boolean", "default": false }
+          "classRef": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "publish",
+              "unpublish",
+              "archive"
+            ]
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": false
+          }
         },
-        "required": ["classRef", "id", "action"],
+        "required": [
+          "classRef",
+          "id",
+          "action"
+        ],
         "additionalProperties": false
       }
     },
@@ -143,28 +158,72 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "atomic": { "type": "boolean", "default": false },
-          "defaultPublish": { "type": "string", "enum": ["none", "single", "recursive"], "default": "none" },
+          "atomic": {
+            "type": "boolean",
+            "default": false
+          },
+          "defaultPublish": {
+            "type": "string",
+            "enum": [
+              "none",
+              "single",
+              "recursive"
+            ],
+            "default": "none"
+          },
           "operations": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
               "properties": {
-                "op": { "type": "string", "enum": ["create", "upsert", "update", "delete"] },
-                "class": { "type": "string" },
-                "id": { "description": "update/delete target: numeric or ext:<external-id>" },
-                "externalId": { "type": "string" },
-                "fields": { "type": "object" },
-                "relations": { "type": "object" },
-                "publish": { "type": "string", "enum": ["none", "single", "recursive"] },
-                "mode": { "type": "string", "description": "delete mode: archive|unpublish|hard" }
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "create",
+                    "upsert",
+                    "update",
+                    "delete"
+                  ]
+                },
+                "class": {
+                  "type": "string"
+                },
+                "id": {
+                  "description": "update/delete target: numeric or ext:<external-id>"
+                },
+                "externalId": {
+                  "type": "string"
+                },
+                "fields": {
+                  "type": "object"
+                },
+                "relations": {
+                  "type": "object"
+                },
+                "publish": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "single",
+                    "recursive"
+                  ]
+                },
+                "mode": {
+                  "type": "string",
+                  "description": "delete mode: archive|unpublish|hard"
+                }
               },
-              "required": ["op", "class"]
+              "required": [
+                "op",
+                "class"
+              ]
             }
           }
         },
-        "required": ["operations"],
+        "required": [
+          "operations"
+        ],
         "additionalProperties": false
       }
     },
@@ -179,21 +238,57 @@
           "page": {
             "type": "object",
             "properties": {
-              "match": { "type": "object", "description": "{id} | {urlSegment} | {externalId}" },
-              "createIfMissing": { "type": "object", "description": "{title, parentId, className?}" },
-              "convertTo": { "type": "string" },
-              "force": { "type": "boolean", "description": "Required to convert the site home page" },
-              "areaRelation": { "type": "string", "default": "ElementalArea", "description": "'ElementalHomePage' for HomePage-style types" },
-              "fields": { "type": "object", "description": "Sparse page field updates" }
+              "match": {
+                "type": "object",
+                "description": "{id} | {urlSegment} | {externalId}"
+              },
+              "createIfMissing": {
+                "type": "object",
+                "description": "{title, parentId, className?}"
+              },
+              "convertTo": {
+                "type": "string"
+              },
+              "force": {
+                "type": "boolean",
+                "description": "Required to convert the site home page"
+              },
+              "areaRelation": {
+                "type": "string",
+                "default": "ElementalArea",
+                "description": "'ElementalHomePage' for HomePage-style types"
+              },
+              "fields": {
+                "type": "object",
+                "description": "Sparse page field updates"
+              }
             },
-            "required": ["match"]
+            "required": [
+              "match"
+            ]
           },
-          "publish": { "type": "string", "enum": ["none", "recursive"], "default": "none" },
+          "publish": {
+            "type": "string",
+            "enum": [
+              "none",
+              "recursive"
+            ],
+            "default": "none"
+          },
           "prune": {
             "type": "object",
             "properties": {
-              "enabled": { "type": "boolean" },
-              "scope": { "type": "string", "enum": ["managed", "all"], "default": "managed" }
+              "enabled": {
+                "type": "boolean"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "managed",
+                  "all"
+                ],
+                "default": "managed"
+              }
             }
           },
           "assets": {
@@ -201,16 +296,43 @@
             "items": {
               "type": "object",
               "properties": {
-                "ref": { "type": "string", "description": "Per-request alias usable as {\"$ref\": …} in element fields" },
-                "externalId": { "type": "string" },
-                "folder": { "type": "string" },
-                "filename": { "type": "string" },
-                "base64": { "type": "string" },
-                "title": { "type": "string" },
-                "conflict": { "type": "string", "enum": ["overwrite", "skip", "rename"], "default": "overwrite" },
-                "publish": { "type": "boolean", "default": true }
+                "ref": {
+                  "type": "string",
+                  "description": "Per-request alias usable as {\"$ref\": \u2026} in element fields"
+                },
+                "externalId": {
+                  "type": "string"
+                },
+                "folder": {
+                  "type": "string"
+                },
+                "filename": {
+                  "type": "string"
+                },
+                "base64": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "conflict": {
+                  "type": "string",
+                  "enum": [
+                    "overwrite",
+                    "skip",
+                    "rename"
+                  ],
+                  "default": "overwrite"
+                },
+                "publish": {
+                  "type": "boolean",
+                  "default": true
+                }
               },
-              "required": ["filename", "base64"]
+              "required": [
+                "filename",
+                "base64"
+              ]
             }
           },
           "elements": {
@@ -218,18 +340,37 @@
             "items": {
               "type": "object",
               "properties": {
-                "ref": { "type": "string" },
-                "class": { "type": "string" },
-                "externalId": { "type": "string", "description": "Required — the idempotency/prune key" },
-                "fields": { "type": "object" },
-                "children": { "type": "object", "description": "hasManyRelation: [{externalId, fields, class?}] — owned records under the element's aggregate" },
-                "relations": { "type": "object" }
+                "ref": {
+                  "type": "string"
+                },
+                "class": {
+                  "type": "string"
+                },
+                "externalId": {
+                  "type": "string",
+                  "description": "Required \u2014 the idempotency/prune key"
+                },
+                "fields": {
+                  "type": "object"
+                },
+                "children": {
+                  "type": "object",
+                  "description": "hasManyRelation: [{externalId, fields, class?}] \u2014 owned records under the element's aggregate"
+                },
+                "relations": {
+                  "type": "object"
+                }
               },
-              "required": ["class", "externalId"]
+              "required": [
+                "class",
+                "externalId"
+              ]
             }
           }
         },
-        "required": ["page"],
+        "required": [
+          "page"
+        ],
         "additionalProperties": false
       }
     },
@@ -241,15 +382,39 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "filename": { "type": "string" },
-          "folder": { "type": "string" },
-          "base64": { "type": "string" },
-          "title": { "type": "string" },
-          "externalId": { "type": "string" },
-          "conflict": { "type": "string", "enum": ["overwrite", "skip", "rename"], "default": "overwrite" },
-          "publish": { "type": "boolean", "default": true }
+          "filename": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "base64": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "externalId": {
+            "type": "string"
+          },
+          "conflict": {
+            "type": "string",
+            "enum": [
+              "overwrite",
+              "skip",
+              "rename"
+            ],
+            "default": "overwrite"
+          },
+          "publish": {
+            "type": "boolean",
+            "default": true
+          }
         },
-        "required": ["filename", "base64"],
+        "required": [
+          "filename",
+          "base64"
+        ],
         "additionalProperties": false
       }
     },
@@ -260,25 +425,49 @@
       "path": "assets/{id}",
       "inputSchema": {
         "type": "object",
-        "properties": { "id": { "type": "string" } },
-        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
         "additionalProperties": false
       }
     },
     {
       "name": "content_page_convert",
-      "description": "Change a page's class via newClassInstance (e.g. Page → BlockPage). Refuses the site home page without force=true.",
+      "description": "Change a page's class via newClassInstance (e.g. Page \u2192 BlockPage). Refuses the site home page without force=true.",
       "method": "POST",
       "path": "pages/{id}/convert",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "id": { "type": "integer" },
-          "className": { "type": "string" },
-          "publish": { "type": "string", "enum": ["none", "single", "recursive"], "default": "none" },
-          "force": { "type": "boolean", "default": false }
+          "id": {
+            "type": "integer"
+          },
+          "className": {
+            "type": "string"
+          },
+          "publish": {
+            "type": "string",
+            "enum": [
+              "none",
+              "single",
+              "recursive"
+            ],
+            "default": "none"
+          },
+          "force": {
+            "type": "boolean",
+            "default": false
+          }
         },
-        "required": ["id", "className"],
+        "required": [
+          "id",
+          "className"
+        ],
         "additionalProperties": false
       }
     },
@@ -290,13 +479,32 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "id": { "type": "integer" },
-          "templateId": { "type": "integer" },
-          "publish": { "type": "string", "enum": ["none", "recursive"], "default": "none" }
+          "id": {
+            "type": "integer"
+          },
+          "templateId": {
+            "type": "integer"
+          },
+          "publish": {
+            "type": "string",
+            "enum": [
+              "none",
+              "recursive"
+            ],
+            "default": "none"
+          }
         },
-        "required": ["id", "templateId"],
+        "required": [
+          "id",
+          "templateId"
+        ],
         "additionalProperties": false
       }
     }
-  ]
+  ],
+  "genericCrud": {
+    "provider": "colymba/silverstripe-restfulapi",
+    "baseRoute": "api",
+    "note": "Generic CRUD: GET/POST/PUT/DELETE api/$Model(/$ID) with the same token. Stage-unaware (writes land unpublished on the current stage; no _stage, no ext:). Discover model refs via content_schema_site .crud.models. Auth: POST api/auth/login with email/pwd request vars."
+  }
 }
