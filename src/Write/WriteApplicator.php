@@ -47,8 +47,8 @@ class WriteApplicator
         'PasswordEncryption',
         'AutoLoginHash',
         'TempIDHash',
-        'ContentApiTokenHash',
-        'ContentApiTokenExpire',
+        'ApiToken',
+        'ApiTokenExpire',
     ];
 
     /**

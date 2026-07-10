@@ -1,6 +1,6 @@
 {
     "name": "dynamic/silverstripe-content-api",
-    "description": "Token-authenticated REST content API: generic CRUD + batch page-composition population for SilverStripe 6",
+    "description": "Content population layer on colymba/silverstripe-restfulapi: atomic page compositions, batch operations, assets and stage-aware reads for SilverStripe 6",
     "license": "BSD-3-Clause",
     "type": "silverstripe-vendormodule",
     "keywords": [
@@ -24,7 +24,8 @@
         "silverstripe/framework": "^6",
         "silverstripe/cms": "^6",
         "silverstripe/versioned": "^3",
-        "silverstripe/asset-admin": "^3"
+        "silverstripe/asset-admin": "^3",
+        "colymba/silverstripe-restfulapi": "dev-feature/cms-6-compatibility"
     },
     "require-dev": {
         "silverstripe/recipe-testing": "^4",
@@ -68,5 +69,11 @@
             "silverstripe/vendor-plugin": true,
             "phpstan/extension-installer": true
         }
-    }
+    },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/silverstripeltd/silverstripe-restfulapi"
+        }
+    ]
 }

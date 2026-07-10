@@ -2,15 +2,16 @@
 
 namespace Dynamic\ContentApi\Control;
 
+use Colymba\RESTfulAPI\Authenticators\TokenAuthenticator as ColymbaTokenAuthenticator;
+use Colymba\RESTfulAPI\RESTfulAPIError;
 use Dynamic\ContentApi\Auth\AuthContext;
-use Dynamic\ContentApi\Auth\TokenAuthenticator;
 use Dynamic\ContentApi\Control\Handlers\AssetHandler;
 use Dynamic\ContentApi\Control\Handlers\AuthHandler;
 use Dynamic\ContentApi\Control\Handlers\BatchHandler;
 use Dynamic\ContentApi\Control\Handlers\CompositionHandler;
 use Dynamic\ContentApi\Control\Handlers\PageHandler;
+use Dynamic\ContentApi\Control\Handlers\RecordActionsHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
-use Dynamic\ContentApi\Control\Handlers\RecordsWriteHandler;
 use Dynamic\ContentApi\Control\Handlers\SchemaHandler;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
@@ -20,6 +21,7 @@ use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Security\Member;
 use SilverStripe\Security\Security;
 use Throwable;
 
@@ -28,6 +30,12 @@ use Throwable;
  * gate and ApiError-to-response conversion; all endpoint logic lives in the
  * handler services (Injector-swappable).
  *
+ * Authentication is colymba/silverstripe-restfulapi's TokenAuthenticator —
+ * the same token works on this surface and on colymba's generic `/api` CRUD.
+ * Generic single-record writes live there; this controller provides what
+ * colymba lacks: stage-aware reads, stage actions, batch, compositions,
+ * assets, schema introspection.
+ *
  * Envelope: `{ "data": ..., "meta": { ... }, "error": null }`.
  */
 class ContentApiController extends Controller
@@ -35,12 +43,9 @@ class ContentApiController extends Controller
     private static bool $cors_enabled = false;
 
     private static array $url_handlers = [
-        'auth/$Action!' => 'handleAuth',
+        'GET auth/session' => 'handleAuthSession',
         'POST records/$ClassRef!/$ID!/$RecordAction!' => 'handleRecordAction',
         'GET records/$ClassRef!/$ID!' => 'handleReadOne',
-        'PATCH records/$ClassRef!/$ID!' => 'handleUpdate',
-        'DELETE records/$ClassRef!/$ID!' => 'handleDelete',
-        'POST records/$ClassRef!' => 'handleCreate',
         'GET records/$ClassRef!' => 'handleReadList',
         'POST pages/$ID!/$PageAction!' => 'handlePageAction',
         'POST assets' => 'handleAssetUpload',
@@ -53,12 +58,9 @@ class ContentApiController extends Controller
     ];
 
     private static array $allowed_actions = [
-        'handleAuth',
+        'handleAuthSession',
         'handleReadOne',
         'handleReadList',
-        'handleCreate',
-        'handleUpdate',
-        'handleDelete',
         'handleRecordAction',
         'handlePageAction',
         'handleAssetUpload',
@@ -70,10 +72,10 @@ class ContentApiController extends Controller
     ];
 
     private static array $dependencies = [
-        'authenticator' => '%$' . TokenAuthenticator::class,
+        'authenticator' => '%$' . ColymbaTokenAuthenticator::class,
         'authHandler' => '%$' . AuthHandler::class,
         'recordsHandler' => '%$' . RecordsHandler::class,
-        'recordsWriteHandler' => '%$' . RecordsWriteHandler::class,
+        'recordActionsHandler' => '%$' . RecordActionsHandler::class,
         'pageHandler' => '%$' . PageHandler::class,
         'assetHandler' => '%$' . AssetHandler::class,
         'batchHandler' => '%$' . BatchHandler::class,
@@ -81,13 +83,13 @@ class ContentApiController extends Controller
         'schemaHandler' => '%$' . SchemaHandler::class,
     ];
 
-    public ?TokenAuthenticator $authenticator = null;
+    public ?ColymbaTokenAuthenticator $authenticator = null;
 
     public ?AuthHandler $authHandler = null;
 
     public ?RecordsHandler $recordsHandler = null;
 
-    public ?RecordsWriteHandler $recordsWriteHandler = null;
+    public ?RecordActionsHandler $recordActionsHandler = null;
 
     public ?PageHandler $pageHandler = null;
 
@@ -101,10 +103,12 @@ class ContentApiController extends Controller
 
     protected ?AuthContext $authContext = null;
 
-    public function handleAuth(HTTPRequest $request): HTTPResponse
+    public function handleAuthSession(HTTPRequest $request): HTTPResponse
     {
         return $this->withEnvelope(function () use ($request) {
-            return $this->authHandler->handle($request, $this);
+            $this->requireAuth($request);
+
+            return $this->authHandler->session($request, $this->authContext);
         });
     }
 
@@ -126,39 +130,12 @@ class ContentApiController extends Controller
         });
     }
 
-    public function handleCreate(HTTPRequest $request): HTTPResponse
-    {
-        return $this->withEnvelope(function () use ($request) {
-            $this->requireAuth($request);
-
-            return $this->recordsWriteHandler->create($request, $this->authContext);
-        });
-    }
-
-    public function handleUpdate(HTTPRequest $request): HTTPResponse
-    {
-        return $this->withEnvelope(function () use ($request) {
-            $this->requireAuth($request);
-
-            return $this->recordsWriteHandler->update($request, $this->authContext);
-        });
-    }
-
-    public function handleDelete(HTTPRequest $request): HTTPResponse
-    {
-        return $this->withEnvelope(function () use ($request) {
-            $this->requireAuth($request);
-
-            return $this->recordsWriteHandler->delete($request, $this->authContext);
-        });
-    }
-
     public function handleRecordAction(HTTPRequest $request): HTTPResponse
     {
         return $this->withEnvelope(function () use ($request) {
             $this->requireAuth($request);
 
-            return $this->recordsWriteHandler->recordAction($request, $this->authContext);
+            return $this->recordActionsHandler->recordAction($request, $this->authContext);
         });
     }
 
@@ -234,19 +211,45 @@ class ContentApiController extends Controller
     }
 
     /**
-     * Authenticate the request and scope the current user to it. No session
-     * or IdentityStore involvement — Security::setCurrentUser() only.
+     * Authenticate via colymba's TokenAuthenticator and adapt the result to
+     * our error contract: upstream returns HTTP 403 for every auth failure
+     * with the reason in body['code'] (2 invalid, 3 expired); we keep the
+     * 401 UNAUTHENTICATED / TOKEN_EXPIRED contract on this surface.
+     *
+     * validateAPIToken() logs the member into the IdentityStore (session),
+     * but that does not set the current user for THIS request — the explicit
+     * Security::setCurrentUser() stays.
      *
      * @throws ApiError
      */
     protected function requireAuth(HTTPRequest $request): AuthContext
     {
-        if (!$this->authContext) {
-            $this->authContext = $this->authenticator->authenticate($request);
-            Security::setCurrentUser($this->authContext->member);
+        if ($this->authContext) {
+            return $this->authContext;
         }
 
-        return $this->authContext;
+        $result = $this->authenticator->authenticate($request);
+
+        if ($result instanceof RESTfulAPIError) {
+            $authCode = is_array($result->body) ? ($result->body['code'] ?? null) : null;
+
+            throw new ApiError(
+                $authCode === ColymbaTokenAuthenticator::AUTH_CODE_TOKEN_EXPIRED
+                    ? ErrorCode::TOKEN_EXPIRED
+                    : ErrorCode::UNAUTHENTICATED,
+                $result->message ?: 'Authentication failed.'
+            );
+        }
+
+        $member = $this->authenticator->getOwner($request);
+
+        if (!$member instanceof Member) {
+            throw new ApiError(ErrorCode::UNAUTHENTICATED, 'Token owner not found.');
+        }
+
+        Security::setCurrentUser($member);
+
+        return $this->authContext = new AuthContext($member, (int) $member->ApiTokenExpire);
     }
 
     /**

@@ -76,8 +76,35 @@ class SchemaService
             'api' => 'silverstripe-content-api/v1',
             'environment' => Director::get_environment_type(),
             'populationEnabled' => $populationAllowed,
+            'crud' => $this->crudSurface(),
             'integrations' => $this->detectIntegrations(),
             'classes' => $classes,
+        ];
+    }
+
+    /**
+     * Where generic CRUD lives: the colymba/silverstripe-restfulapi surface.
+     */
+    protected function crudSurface(): array
+    {
+        $restfulApiClass = 'Colymba\\RESTfulAPI\\RESTfulAPI';
+        $route = 'api';
+
+        foreach ((array) Config::inst()->get(Director::class, 'rules') as $pattern => $handler) {
+            if ($handler === $restfulApiClass) {
+                $route = $pattern;
+                break;
+            }
+        }
+
+        return [
+            'provider' => 'colymba/silverstripe-restfulapi',
+            'route' => $route,
+            'auth' => "{$route}/auth/login",
+            'models' => array_keys((array) Config::inst()->get(
+                'Colymba\\RESTfulAPI\\QueryHandlers\\DefaultQueryHandler',
+                'models'
+            )),
         ];
     }
 
@@ -179,6 +206,7 @@ class SchemaService
     protected function detectIntegrations(): array
     {
         $integrations = [
+            'restfulapi' => class_exists('Colymba\\RESTfulAPI\\RESTfulAPI'),
             'elemental' => class_exists('DNADesign\\Elemental\\Models\\ElementalArea'),
             'linkfield' => class_exists('SilverStripe\\LinkField\\Models\\Link'),
             'elementalTemplates' => class_exists('Dynamic\\ElementalTemplates\\Models\\Template'),

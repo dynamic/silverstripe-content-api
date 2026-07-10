@@ -1,22 +1,28 @@
 ---
 Name: content-api
+After: '#restfulapi'
 ---
 SilverStripe\Control\Director:
   rules:
     'content-api/v1': Dynamic\ContentApi\Control\ContentApiController
 
+# colymba/silverstripe-restfulapi does NOT auto-apply its Member extension.
 SilverStripe\Security\Member:
   extensions:
-    - Dynamic\ContentApi\Auth\ApiTokenExtension
+    - Colymba\RESTfulAPI\Extensions\TokenAuthExtension
+
+# Hardened defaults for the colymba /api surface (its own defaults are open:
+# authentication_policy null, CORS *). Projects may relax these deliberately.
+Colymba\RESTfulAPI\RESTfulAPI:
+  authentication_policy: true
+  access_control_policy: 'ACL_CHECK_CONFIG_AND_MODEL'
+  cors:
+    Enabled: false
+
+Colymba\RESTfulAPI\Authenticators\TokenAuthenticator:
+  tokenLife: 604800
+  autoRefreshLifetime: true
 
 Dynamic\ContentApi\Control\ContentApiController:
   # CORS is off by default: the API is designed for server-to-server / agent callers.
   cors_enabled: false
-
-Dynamic\ContentApi\Auth\TokenAuthenticator:
-  token_life: 604800
-  auto_refresh: true
-  header_name: 'X-Silverstripe-Apitoken'
-  # Query-var token fallback is disabled by default (tokens in URLs leak into logs).
-  allow_query_var: false
-  query_var: 'token'

@@ -2,7 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests;
 
-use Dynamic\ContentApi\Auth\TokenAuthenticator;
+use Colymba\RESTfulAPI\Authenticators\TokenAuthenticator as ColymbaTokenAuthenticator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
@@ -64,12 +64,32 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
     }
 
+    /**
+     * Write a colymba-style token directly onto the member (plaintext
+     * ApiToken + ApiTokenExpire — the upstream storage model).
+     */
     protected function mintTokenFor(string $fixtureName = 'apiUser'): string
     {
         /** @var Member $member */
         $member = $this->objFromFixture(Member::class, $fixtureName);
 
-        return TokenAuthenticator::singleton()->mintToken($member);
+        $member->ApiToken = 'test-' . bin2hex(random_bytes(16));
+        $member->ApiTokenExpire = time() + 3600;
+        $member->write();
+
+        return $member->ApiToken;
+    }
+
+    /**
+     * A timestamp colymba treats as truly expired: its validity window is
+     * `ApiTokenExpire > now - tokenLife`, so an idle token survives up to
+     * 2x tokenLife — merely "< now" is NOT expired upstream.
+     */
+    protected function expiredTokenTimestamp(): int
+    {
+        $life = (int) Config::inst()->get(ColymbaTokenAuthenticator::class, 'tokenLife');
+
+        return time() - $life - 60;
     }
 
     protected function apiGet(string $path, ?string $token = null): HTTPResponse

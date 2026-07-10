@@ -3,6 +3,8 @@ SilverStripe\Security\Group:
     Title: 'API Users'
   adminGroup:
     Title: 'Admins'
+  populateGroup:
+    Title: 'Populators'
 
 SilverStripe\Security\Permission:
   apiAccess:
@@ -14,6 +16,12 @@ SilverStripe\Security\Permission:
   populatePerm:
     Code: CONTENT_API_POPULATE
     Group: =>SilverStripe\Security\Group.adminGroup
+  populateAccess:
+    Code: CONTENT_API_ACCESS
+    Group: =>SilverStripe\Security\Group.populateGroup
+  populateOnly:
+    Code: CONTENT_API_POPULATE
+    Group: =>SilverStripe\Security\Group.populateGroup
 
 SilverStripe\Security\Member:
   apiUser:
@@ -26,6 +34,11 @@ SilverStripe\Security\Member:
     Surname: Account
     Email: admin@example.com
     Groups: =>SilverStripe\Security\Group.adminGroup
+  populateUser:
+    FirstName: Populate
+    Surname: Account
+    Email: populate@example.com
+    Groups: =>SilverStripe\Security\Group.populateGroup
   noAccessUser:
     FirstName: Nobody
     Surname: Outside

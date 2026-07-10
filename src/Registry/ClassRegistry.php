@@ -12,7 +12,12 @@ use SilverStripe\Core\Injector\Injectable;
  * Maps short class references used in URLs/payloads to FQCNs and resolves each
  * exposed class's allowed API verbs.
  *
- * Exposure is deny-by-default: a class must be in the `models` map AND carry an
+ * One map drives both surfaces: colymba's `DefaultQueryHandler.models` is the
+ * base (define your models there so `/api` and `/content-api/v1` expose the
+ * same refs); this class's own `models` config overlays it (ours wins per
+ * key) for refs that should exist only on the content-api surface.
+ *
+ * Exposure is deny-by-default: a class must be in the merged map AND carry an
  * `api_access` (or `content_api_access`) config value before any endpoint will
  * touch it.
  *
@@ -26,10 +31,23 @@ class ClassRegistry
     public const VERBS = ['read', 'create', 'update', 'delete', 'action'];
 
     /**
-     * Short reference => FQCN, e.g. `BlockPage: Dynamic\Base\Page\BlockPage`.
-     * Projects define this in YAML.
+     * Content-api-only refs (or overrides of colymba refs):
+     * `ElementalArea: DNADesign\Elemental\Models\ElementalArea`.
      */
     private static array $models = [];
+
+    /**
+     * The unified map: colymba's models base + our overlay.
+     */
+    protected function mergedModels(): array
+    {
+        $base = (array) Config::inst()->get(
+            'Colymba\\RESTfulAPI\\QueryHandlers\\DefaultQueryHandler',
+            'models'
+        );
+
+        return array_merge($base, (array) static::config()->get('models'));
+    }
 
     /**
      * Maps HTTP-method style access tokens to verbs for config compatibility
@@ -50,7 +68,7 @@ class ClassRegistry
      */
     public function resolve(string $classRef): string
     {
-        $models = (array) static::config()->get('models');
+        $models = $this->mergedModels();
         $className = $models[$classRef] ?? null;
 
         if (!$className || !class_exists($className)) {
@@ -70,8 +88,7 @@ class ClassRegistry
      */
     public function refFor(string $className): ?string
     {
-        $models = (array) static::config()->get('models');
-        $byClass = array_flip($models);
+        $byClass = array_flip($this->mergedModels());
 
         $candidate = $className;
         while ($candidate) {
@@ -133,7 +150,7 @@ class ClassRegistry
     {
         $exposed = [];
 
-        foreach ((array) static::config()->get('models') as $ref => $className) {
+        foreach ($this->mergedModels() as $ref => $className) {
             if (!class_exists($className)) {
                 continue;
             }

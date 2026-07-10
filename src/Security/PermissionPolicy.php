@@ -17,6 +17,11 @@ use SilverStripe\Security\Permission;
  * Class-level checks never call can*() on singletons — a lesson from
  * project-feedback, where tenant-scoped can*() methods 403 on unhydrated
  * records. Record checks always run on real, loaded records.
+ *
+ * Deliberately does NOT call colymba's RESTfulAPI::api_access_control()
+ * static: its model-permission path resolves the member via
+ * RESTfulAPI::$instance, which is only set when the request went through
+ * colymba's own controller — from this surface it would be null.
  */
 class PermissionPolicy
 {

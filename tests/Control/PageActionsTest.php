@@ -30,15 +30,20 @@ class PageActionsTest extends ContentApiTestCase
     {
         $contact = $this->objFromFixture(SiteTree::class, 'contactPage');
 
-        $response = $this->apiPatch("records/SiteTree/{$contact->ID}", [
-            'fields' => ['URLSegment' => 'about'],
-        ], $this->adminToken);
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'SiteTree',
+                    'id' => (int) $contact->ID,
+                    'fields' => ['URLSegment' => 'about'],
+                ],
+            ],
+        ], $this->adminToken));
 
-        $body = $this->decode($response);
+        $this->assertNull($body['error']);
 
-        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
-
-        $warnings = $body['meta']['warnings'] ?? [];
+        $warnings = $body['data']['results'][0]['warnings'] ?? [];
         $this->assertNotEmpty($warnings, 'Expected a URLSEGMENT_COLLISION warning.');
         $this->assertSame('URLSEGMENT_COLLISION', $warnings[0]['code']);
 
