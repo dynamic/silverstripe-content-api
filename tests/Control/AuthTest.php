@@ -49,14 +49,36 @@ class AuthTest extends ContentApiTestCase
 
         /** @var Member $member */
         $member = $this->objFromFixture(Member::class, 'apiUser');
-        // Colymba's validity window is ApiTokenExpire > now - tokenLife, so a
-        // merely-past expiry is still valid upstream — use the helper.
-        $member->ApiTokenExpire = $this->expiredTokenTimestamp();
+        // Our surface enforces STRICT expiry — a merely-past ApiTokenExpire is
+        // expired, not colymba's now - tokenLife grace window.
+        $member->ApiTokenExpire = time() - 60;
         $member->write();
 
         $response = $this->apiGet('auth/session', $token);
 
         $this->assertErrorCode($response, 'TOKEN_EXPIRED', 401);
+    }
+
+    public function testTokenInColymbaGraceWindowIsStillRejected(): void
+    {
+        $token = $this->mintTokenFor('apiUser');
+
+        /** @var Member $member */
+        $member = $this->objFromFixture(Member::class, 'apiUser');
+        // now - 60 is INSIDE colymba's validity window (ApiTokenExpire >
+        // now - tokenLife, i.e. > now - 7 days), so colymba's authenticate()
+        // would accept it — but it is past the advertised expiry, and our
+        // strict adapter rejects it.
+        $graceTimestamp = time() - 60;
+        $member->ApiTokenExpire = $graceTimestamp;
+        $member->write();
+
+        $this->assertGreaterThan(
+            $this->expiredTokenTimestamp(),
+            $graceTimestamp,
+            'sanity: now-60 is inside colymba grace window'
+        );
+        $this->assertErrorCode($this->apiGet('auth/session', $token), 'TOKEN_EXPIRED', 401);
     }
 
     public function testOurLoginEndpointIsGone(): void
@@ -96,14 +118,31 @@ class AuthTest extends ContentApiTestCase
         );
     }
 
-    public function testQueryVarTokenWorksOnOurSurface(): void
+    public function testQueryVarTokenIsRejectedOnOurSurface(): void
     {
-        // Documents upstream behavior: colymba's authenticator always accepts
-        // the token query-var fallback (no config to disable it).
+        // Header-only: our adapter does NOT honour colymba's ?token= query-var
+        // fallback (tokens in URLs leak into logs; combined with colymba's
+        // session login it would mint a CMS session from a shared link).
         $token = $this->mintTokenFor('apiUser');
 
         $response = $this->get('content-api/v1/auth/session?token=' . urlencode($token));
 
+        $this->assertErrorCode($response, 'UNAUTHENTICATED', 401);
+    }
+
+    public function testAuthenticatingDoesNotEstablishASession(): void
+    {
+        // getOwner() (not authenticate()) resolves the member with no
+        // IdentityStore login — the API stays stateless.
+        $token = $this->mintTokenFor('apiUser');
+
+        $response = $this->apiGet('auth/session', $token);
+
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertStringNotContainsStringIgnoringCase(
+            'set-cookie',
+            implode("\n", array_keys($response->getHeaders())),
+            'authenticated API responses must not set a session cookie'
+        );
     }
 }

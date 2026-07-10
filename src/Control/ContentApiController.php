@@ -3,7 +3,6 @@
 namespace Dynamic\ContentApi\Control;
 
 use Colymba\RESTfulAPI\Authenticators\TokenAuthenticator as ColymbaTokenAuthenticator;
-use Colymba\RESTfulAPI\RESTfulAPIError;
 use Dynamic\ContentApi\Auth\AuthContext;
 use Dynamic\ContentApi\Control\Handlers\AssetHandler;
 use Dynamic\ContentApi\Control\Handlers\AuthHandler;
@@ -20,6 +19,7 @@ use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Security\Member;
 use SilverStripe\Security\Security;
@@ -211,16 +211,24 @@ class ContentApiController extends Controller
     }
 
     /**
-     * Authenticate via colymba's TokenAuthenticator and adapt the result to
-     * our error contract: upstream returns HTTP 403 for every auth failure
-     * with the reason in body['code'] (2 invalid, 3 expired); we keep the
-     * 401 UNAUTHENTICATED / TOKEN_EXPIRED contract on this surface.
+     * Authenticate against colymba's token store, but WITHOUT the security
+     * side effects of its authenticate() path. We deliberately do not call
+     * authenticate() here, because it (a) logs the member into the CMS
+     * session IdentityStore on every request and (b) accepts a token up to a
+     * full tokenLife past its advertised expiry. Instead:
      *
-     * validateAPIToken() logs the member into the IdentityStore (session),
-     * but that does not set the current user for THIS request — the explicit
-     * Security::setCurrentUser() stays.
+     * - header-only: colymba's `?token=` query-var fallback is not honoured on
+     *   this surface — tokens in URLs leak into logs, and combined with the
+     *   session login would mint a CMS session from a shared link;
+     * - getOwner() resolves the member by token with NO session login — the
+     *   API stays stateless (Security::setCurrentUser only);
+     * - strict expiry: rejected at the advertised ApiTokenExpire, not
+     *   colymba's `now - tokenLife` grace window.
      *
-     * @throws ApiError
+     * colymba still owns token storage, minting (resetToken/getToken), the
+     * api/auth/* endpoints, generic CRUD, the serializer and ACL.
+     *
+     * @throws ApiError UNAUTHENTICATED | TOKEN_EXPIRED
      */
     protected function requireAuth(HTTPRequest $request): AuthContext
     {
@@ -228,28 +236,29 @@ class ContentApiController extends Controller
             return $this->authContext;
         }
 
-        $result = $this->authenticator->authenticate($request);
+        $headerName = (string) Config::inst()->get(ColymbaTokenAuthenticator::class, 'tokenHeader');
 
-        if ($result instanceof RESTfulAPIError) {
-            $authCode = is_array($result->body) ? ($result->body['code'] ?? null) : null;
-
-            throw new ApiError(
-                $authCode === ColymbaTokenAuthenticator::AUTH_CODE_TOKEN_EXPIRED
-                    ? ErrorCode::TOKEN_EXPIRED
-                    : ErrorCode::UNAUTHENTICATED,
-                $result->message ?: 'Authentication failed.'
-            );
+        if (!$request->getHeader($headerName)) {
+            throw new ApiError(ErrorCode::UNAUTHENTICATED, 'No API token provided.');
         }
 
+        // Header is present, so getOwner() resolves from it (never the query
+        // var) and performs no IdentityStore login.
         $member = $this->authenticator->getOwner($request);
 
         if (!$member instanceof Member) {
-            throw new ApiError(ErrorCode::UNAUTHENTICATED, 'Token owner not found.');
+            throw new ApiError(ErrorCode::UNAUTHENTICATED, 'Token invalid.');
+        }
+
+        $expires = (int) $member->ApiTokenExpire;
+
+        if ($expires <= time()) {
+            throw new ApiError(ErrorCode::TOKEN_EXPIRED, 'Token expired.');
         }
 
         Security::setCurrentUser($member);
 
-        return $this->authContext = new AuthContext($member, (int) $member->ApiTokenExpire);
+        return $this->authContext = new AuthContext($member, $expires);
     }
 
     /**

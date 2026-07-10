@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests;
 use Colymba\RESTfulAPI\Authenticators\TokenAuthenticator as ColymbaTokenAuthenticator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
@@ -35,6 +36,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestBlockPage::class,
         ApiTestElement::class,
         ApiTestElementItem::class,
+        ApiTestCascadeObject::class,
     ];
 
     protected function setUp(): void

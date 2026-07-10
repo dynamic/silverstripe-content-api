@@ -19,9 +19,15 @@ Colymba\RESTfulAPI\RESTfulAPI:
   cors:
     Enabled: false
 
+# Predictable, revocable tokens: a fixed lifetime (default 7 days) with NO
+# activity auto-refresh — a self-renewing token effectively never expires, and
+# our /content-api/v1 surface enforces this expiry strictly (colymba's own
+# /api surface otherwise allows a token up to a full tokenLife past expiry).
+# Long-lived service accounts should raise tokenLife in project config
+# (e.g. 31536000 for a year) rather than rely on refresh.
 Colymba\RESTfulAPI\Authenticators\TokenAuthenticator:
   tokenLife: 604800
-  autoRefreshLifetime: true
+  autoRefreshLifetime: false
 
 Dynamic\ContentApi\Control\ContentApiController:
   # CORS is off by default: the API is designed for server-to-server / agent callers.

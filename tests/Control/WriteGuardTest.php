@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
@@ -160,6 +161,100 @@ class WriteGuardTest extends ContentApiTestCase
 
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame(1, $record->Tags()->count(), 'listed relation applied by colymba');
+    }
+
+    public function testProtectedRelationByRelationName(): void
+    {
+        // Regression: a has_one listed in api_protected_fields by its RELATION
+        // name ('Buddy') must be reverted even though the DB column is BuddyID.
+        Config::modify()->set(ApiTestObject::class, 'api_protected_fields', ['Buddy']);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $other = $this->objFromFixture(ApiTestObject::class, 'two');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Title' => 'Reparent attempt',
+            'BuddyID' => (int) $other->ID,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(
+            0,
+            (int) ApiTestObject::get()->byID($record->ID)->BuddyID,
+            'protected relation reverted despite being named by relation, not FK'
+        );
+    }
+
+    public function testProtectedWinsInsideAllowlistMode(): void
+    {
+        // Regression: protected must win even when the field is in the
+        // allowlist (parity with WriteApplicator, which checks protected
+        // first). ApiToken in the allowlist must NOT be writable.
+        Config::modify()->set(ApiTestObject::class, 'api_writable_fields', ['Title', 'Rank']);
+        Config::modify()->set(ApiTestObject::class, 'api_protected_fields', ['Rank']);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Title' => 'Allowed',
+            'Rank' => 88,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestObject::get()->byID($record->ID);
+        $this->assertSame('Allowed', $fresh->Title);
+        $this->assertSame(1, (int) $fresh->Rank, 'allowlisted-but-protected field still reverted');
+    }
+
+    public function testCascadeWritesAreNotGuardedByTargetPolicy(): void
+    {
+        // Regression for #8: a guarded record written during a colymba request
+        // that is NOT the deserialized target (apiRequestBody === null) must be
+        // left alone — the old request-body fallback applied the target's field
+        // policy to it and reverted legitimate changes. Marker is denied in the
+        // lead's payload; the follower (guarded, never deserialized) must keep
+        // its value through the request.
+        Config::modify()->set(ApiTestCascadeObject::class, 'api_writable_fields', ['Title']);
+        Config::modify()->set(
+            \Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler::class,
+            'models',
+            ['ApiTest' => ApiTestObject::class, 'Cascade' => ApiTestCascadeObject::class]
+        );
+        Config::modify()->set(ApiTestCascadeObject::class, 'api_access', 'GET,POST,PUT,DELETE');
+
+        $lead = ApiTestCascadeObject::create();
+        $lead->Title = 'Lead';
+        $lead->IsLead = true;
+        $lead->write();
+
+        $follower = ApiTestCascadeObject::create();
+        $follower->Title = 'Follower';
+        $follower->Marker = 10;
+        $follower->write();
+
+        // Control: the cascade mechanism fires on a plain write (no colymba).
+        $lead->Title = 'Lead direct';
+        $lead->write();
+        $this->assertSame(
+            15,
+            (int) ApiTestCascadeObject::get()->byID($follower->ID)->Marker,
+            'precondition: onAfterWrite cascade bumps the follower on a direct write'
+        );
+
+        // Payload names Marker (denied) — the lead's own Marker would revert,
+        // but the follower's cascade bump must survive.
+        $response = $this->colymba('PUT', "Cascade/{$lead->ID}", [
+            'Title' => 'Lead updated',
+            'Marker' => 999,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(
+            15,
+            (int) ApiTestCascadeObject::get()->byID($follower->ID)->Marker,
+            'follower cascade bump (10 + 5) persisted — not reverted by the lead payload policy'
+        );
     }
 
     public function testCmsContextWriteIsUntouched(): void

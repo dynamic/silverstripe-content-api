@@ -99,12 +99,13 @@ class WriteGuardExtension extends Extension
             return;
         }
 
+        // Only the record colymba deserialized the payload into carries
+        // apiRequestBody. A null here means this write is a cascade/sibling
+        // write triggered during the API request (e.g. a Sort renumber in the
+        // target's onAfterWrite) — NOT the API-targeted record. Applying the
+        // target's field policy to it would silently revert legitimate
+        // programmatic changes, so leave it alone.
         $body = $this->apiRequestBody;
-
-        if ($body === null) {
-            $raw = Controller::curr()->getRequest()->getBody();
-            $body = json_decode((string) $raw, true);
-        }
 
         if (!is_array($body)) {
             return;
@@ -124,14 +125,29 @@ class WriteGuardExtension extends Extension
         $changed = $owner->getChangedFields(true, 2);
 
         foreach (array_keys($body) as $attribute) {
-            $field = array_key_exists($attribute, $hasOne) ? $attribute . 'ID' : $attribute;
+            // Resolve the payload key to the DB column colymba actually wrote
+            // (the FK column for a has_one) plus every name that could name it
+            // in config: the payload key, the relation name and the FK column.
+            if (array_key_exists($attribute, $hasOne)) {
+                $column = $attribute . 'ID';
+                $names = [$attribute, $column];
+            } elseif (str_ends_with($attribute, 'ID') && isset($hasOne[substr($attribute, 0, -2)])) {
+                $column = $attribute;
+                $names = [$attribute, substr($attribute, 0, -2)];
+            } else {
+                $column = $attribute;
+                $names = [$attribute];
+            }
 
-            $denied = $allowlistMode
-                ? !in_array($field, $allowlist, true) && !in_array($attribute, $allowlist, true)
-                : in_array($field, $protected, true);
+            // Protected always wins, regardless of allowlist (parity with
+            // WriteApplicator::isWritable), matched by relation name OR column.
+            $isProtected = array_intersect($names, $protected) !== [];
 
-            if ($denied && array_key_exists($field, $changed)) {
-                $owner->setField($field, $changed[$field]['before']);
+            $denied = $isProtected
+                || ($allowlistMode && array_intersect($names, $allowlist) === []);
+
+            if ($denied && array_key_exists($column, $changed)) {
+                $owner->setField($column, $changed[$column]['before']);
             }
         }
     }

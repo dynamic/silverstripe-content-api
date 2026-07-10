@@ -32,8 +32,11 @@ FEATURE_UNAVAILABLE` when absent): `dnadesign/silverstripe-elemental` (compositi
 
 ## Installation
 
-The colymba dependency has no Packagist release for SS6, so your **project root**
-composer.json needs the VCS entry (composer ignores a dependency's own `repositories`):
+The colymba dependency is consumed from a **dev branch** with no Packagist release, so
+your **project root** composer.json must both add the VCS entry (composer ignores a
+dependency's own `repositories`) **and** require the branch at root — a `dev-` constraint's
+stability flag only applies when declared by the root package, so a default
+`minimum-stability: stable` host cannot resolve it transitively:
 
 ```json
 "repositories": [
@@ -42,8 +45,15 @@ composer.json needs the VCS entry (composer ignores a dependency's own `reposito
 ```
 
 ```bash
+# root require carries the dev-branch stability flag; the inline alias lets a
+# stable host satisfy other packages' "^…" constraints against it:
+composer require colymba/silverstripe-restfulapi:"dev-feature/cms-6-compatibility as 3.0.0"
 composer require dynamic/silverstripe-content-api
 ```
+
+> The pinned branch (`feature/cms-6-compatibility`) is where silverstripeltd maintains SS6
+> support. If it is renamed or deleted after an upstream release, update the constraint to
+> the tagged version. Consumers' `composer.lock` pins the exact commit either way.
 
 ### Upgrading from 1.0.x
 
@@ -90,7 +100,12 @@ DNADesign\Elemental\Models\ElementContent:
 > natively applies every key in the payload, and a GET-then-PUT-verbatim round trip
 > would detach `_many` relations. The guard enforces `api_writable_fields` /
 > `api_protected_fields` / `api_writable_relations` — the same keys the module's own
-> write pipeline respects — scoped strictly to colymba-controller writes.
+> write pipeline respects, with protected fields always winning — scoped strictly to
+> colymba-controller writes. Note: on the colymba surface the guard **silently reverts**
+> disallowed fields / strips unlisted relations and the request still returns `200` (a
+> hook-layer constraint, matching the reference `ApiFieldGuardExtension`); the module's own
+> batch/composition surface instead **rejects** the whole payload with a machine-readable
+> error. Use batch/compositions when you need a hard failure on a bad field.
 
 2. **Apply the external-id extension** to classes the API should upsert (same column
    spec as `recipe-silverstripe-essentials-fixtures` — legacy-populated sites are
@@ -128,13 +143,22 @@ curl -H "X-Silverstripe-Apitoken: $TOKEN" https://site.test/api/ElementContent
   required on `/api` including GET), `access_control_policy: ACL_CHECK_CONFIG_AND_MODEL`
   (config verbs AND the model's `can*()`), CORS off, `tokenLife` 7 days with activity
   refresh.
-- Behavior notes (upstream semantics, documented in
-  [docs/en/upstream-issues.md](docs/en/upstream-issues.md)):
-  tokens are stored **in plaintext** on the Member; the `?token=` query-var fallback is
-  always active (avoid tokens in URLs); a token is valid while
-  `ApiTokenExpire > now − tokenLife` (idle tokens live up to 2× tokenLife); every
-  authenticated request logs the member into the session IdentityStore and, with
-  auto-refresh on, writes the Member row.
+- **This module's `/content-api/v1` surface hardens the token check**: it resolves the
+  member via colymba's `getOwner()` (no session login), accepts the token **header-only**
+  (colymba's `?token=` query-var fallback is refused here), and enforces **strict expiry**
+  at the advertised `ApiTokenExpire`. So none of the colymba auth caveats below apply to
+  this module's own endpoints.
+- **colymba's `/api` surface keeps upstream semantics** (documented + being addressed in
+  [docs/en/upstream-issues.md](docs/en/upstream-issues.md)): tokens stored **in plaintext**
+  on the Member; the `?token=` query-var fallback is always active (keep tokens out of
+  URLs); a token is valid while `ApiTokenExpire > now − tokenLife` with auto-refresh; every
+  authenticated request logs the member into the session IdentityStore. Treat `/api` as a
+  trusted server-to-server surface until those land upstream.
+- ⚠️ **`api/auth/logout?email=…` is unauthenticated upstream** — any caller can expire a
+  known service account's token (a DoS on integrations). Restrict `/api/auth/*` at the
+  network edge, or provision service tokens with the `MintContentApiToken` task and don't
+  rely on logout. Filed as
+  [silverstripeltd#6](https://github.com/silverstripeltd/silverstripe-restfulapi/issues/6).
 - `GET content-api/v1/auth/session` introspects the current token: member, held
   permission codes, expiry.
 
@@ -157,8 +181,10 @@ machine-readable codes. Auth failures here are `401 UNAUTHENTICATED|TOKEN_EXPIRE
 | `GET schema` / `schema/site` / `schema/$ClassRef` | Exposed classes, integrations + live palette, per-class payload contracts, `crud` pointer to the colymba surface |
 
 > `_stage` is underscored because bare `stage` is SilverStripe's own reserved staging
-> param. Generic CRUD (`/api`) is stage-unaware: writes land on the current stage
-> unpublished — use stage actions, batch `publish`, or compositions for versioned flows.
+> param. Generic CRUD (`/api`) is stage-unaware: writes land on the **current stage** —
+> for front-end requests that is LIVE, i.e. immediately public (verified on a live
+> testbed). Use this module's batch/compositions with explicit `publish` semantics for
+> draft-first workflows.
 
 ### Write payload shape (batch ops / compositions)
 
