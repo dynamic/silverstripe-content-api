@@ -2,10 +2,10 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
-use Dynamic\ContentApi\Tests\ContentApiFunctionalTest;
+use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use SilverStripe\Security\Member;
 
-class AuthTest extends ContentApiFunctionalTest
+class AuthTest extends ContentApiTestCase
 {
     private const PASSWORD = 'ap1-T3st-passw0rd!';
 

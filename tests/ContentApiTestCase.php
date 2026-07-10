@@ -15,9 +15,10 @@ use SilverStripe\Security\Member;
  * Shared plumbing for content API functional tests: fixture, registry
  * config and token helpers.
  */
-abstract class ContentApiFunctionalTest extends FunctionalTest
+abstract class ContentApiTestCase extends FunctionalTest
 {
-    protected static $fixture_file = 'fixtures/api-test.yml';
+    // Resolved relative to the concrete test class (tests/Control/).
+    protected static $fixture_file = '../fixtures/api-test.yml';
 
     protected static $extra_dataobjects = [
         ApiTestObject::class,
@@ -32,6 +33,11 @@ abstract class ContentApiFunctionalTest extends FunctionalTest
             'ApiTest' => ApiTestObject::class,
             'ApiTestVersioned' => ApiTestVersionedObject::class,
         ]);
+
+        // Explicit here rather than as private statics on the stubs: TestOnly
+        // classes in vendored module runs aren't reliably in the config manifest.
+        Config::modify()->set(ApiTestObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', true);
     }
 
     protected function mintTokenFor(string $fixtureName = 'apiUser'): string

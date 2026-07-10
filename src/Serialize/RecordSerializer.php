@@ -47,6 +47,7 @@ class RecordSerializer
         'TempIDHash',
         'TempIDExpired',
         'SessionData',
+        'ShareTokenSalt',
         'ContentApiTokenHash',
         'ContentApiTokenExpire',
     ];

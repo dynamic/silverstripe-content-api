@@ -38,20 +38,20 @@ enum ErrorCode: string
     public function httpStatus(): int
     {
         return match ($this) {
-            self::UNAUTHENTICATED, self::TOKEN_EXPIRED => 401,
-            self::FORBIDDEN, self::FORBIDDEN_CLASS, self::FORBIDDEN_RECORD,
-            self::ENV_FORBIDDEN, self::HOMEPAGE_CONVERSION_FORBIDDEN => 403,
-            self::UNKNOWN_CLASS, self::NOT_FOUND => 404,
-            self::METHOD_NOT_ALLOWED => 405,
-            self::MULTIPLE_MATCHES, self::ALREADY_EXISTS, self::ASSET_CONFLICT,
-            self::URLSEGMENT_COLLISION => 409,
-            self::VALIDATION_FAILED, self::UNKNOWN_FIELD, self::READONLY_FIELD,
-            self::UNKNOWN_RELATION, self::UNRESOLVED_REF, self::CIRCULAR_REF,
-            self::EXTERNAL_ID_UNSUPPORTED, self::TOKEN_RESOLUTION_FAILED => 422,
-            self::PAYLOAD_INVALID => 400,
-            self::ASSET_READ_FAILED => 502,
-            self::FEATURE_UNAVAILABLE => 501,
-            self::SERVER_ERROR => 500,
+            ErrorCode::UNAUTHENTICATED, ErrorCode::TOKEN_EXPIRED => 401,
+            ErrorCode::FORBIDDEN, ErrorCode::FORBIDDEN_CLASS, ErrorCode::FORBIDDEN_RECORD,
+            ErrorCode::ENV_FORBIDDEN, ErrorCode::HOMEPAGE_CONVERSION_FORBIDDEN => 403,
+            ErrorCode::UNKNOWN_CLASS, ErrorCode::NOT_FOUND => 404,
+            ErrorCode::METHOD_NOT_ALLOWED => 405,
+            ErrorCode::MULTIPLE_MATCHES, ErrorCode::ALREADY_EXISTS, ErrorCode::ASSET_CONFLICT,
+            ErrorCode::URLSEGMENT_COLLISION => 409,
+            ErrorCode::VALIDATION_FAILED, ErrorCode::UNKNOWN_FIELD, ErrorCode::READONLY_FIELD,
+            ErrorCode::UNKNOWN_RELATION, ErrorCode::UNRESOLVED_REF, ErrorCode::CIRCULAR_REF,
+            ErrorCode::EXTERNAL_ID_UNSUPPORTED, ErrorCode::TOKEN_RESOLUTION_FAILED => 422,
+            ErrorCode::PAYLOAD_INVALID => 400,
+            ErrorCode::ASSET_READ_FAILED => 502,
+            ErrorCode::FEATURE_UNAVAILABLE => 501,
+            ErrorCode::SERVER_ERROR => 500,
         };
     }
 }

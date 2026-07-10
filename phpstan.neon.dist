@@ -1,5 +1,15 @@
 parameters:
   level: 5
   treatPhpDocTypesAsCertain: false
+  reportUnmatchedIgnoredErrors: false
   paths:
     - src
+
+  ignoreErrors:
+    # Versioned decorates DataObject with magic methods; call sites are guarded
+    # by hasExtension(Versioned::class) checks PHPStan cannot narrow on.
+    - message: '#Call to an undefined method SilverStripe\\ORM\\DataObject::(isPublished|stagesDiffer|publishSingle|publishRecursive|doUnpublish|doArchive)\(\)#'
+      identifier: method.notFound
+
+    # $dependencies is read by the SilverStripe Injector via config, not PHP.
+    - message: '#Static property .*::\$dependencies is never read, only written\.#'

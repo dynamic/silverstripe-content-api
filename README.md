@@ -61,7 +61,7 @@ curl -H "X-Silverstripe-Apitoken: $TOKEN" \
 | Endpoint | Purpose |
 |---|---|
 | `POST auth/login` `logout` `refresh`, `GET auth/session` | Token lifecycle |
-| `GET records/$ClassRef[/$ID\|/ext:$ExternalId]` | Read one / list with `Field__Modifier=` filters, `sort`, `limit`/`offset`, `stage=draft\|live` |
+| `GET records/$ClassRef[/$ID\|/ext:$ExternalId]` | Read one / list with `Field__Modifier=` filters, `sort`, `limit`/`offset`, `_stage=draft\|live` |
 
 Write CRUD, batch, page compositions, assets, page actions and schema introspection land
 in later milestones — see the plan in the repo issues.

@@ -2,12 +2,12 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
-use Dynamic\ContentApi\Tests\ContentApiFunctionalTest;
+use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Core\Config\Config;
 
-class RecordsReadTest extends ContentApiFunctionalTest
+class RecordsReadTest extends ContentApiTestCase
 {
     private string $token;
 
@@ -66,9 +66,10 @@ class RecordsReadTest extends ContentApiFunctionalTest
     {
         $body = $this->decode($this->apiGet('records/ApiTest?sort=-Rank&limit=2', $this->token));
 
-        $this->assertCount(2, $body['data']);
+        // Pagination applies before canView filtering: the raw page is
+        // [Secret (99), Beta Prime (3)] and Secret is then filtered out.
+        $this->assertCount(1, $body['data']);
         $this->assertSame(2, $body['meta']['limit']);
-        // Secret (Rank 99) is canView-filtered; next highest visible is Beta Prime (3).
         $this->assertSame('Beta Prime', $body['data'][0]['fields']['Title']);
 
         $body = $this->decode($this->apiGet('records/ApiTest?sort=Rank&limit=2&offset=4', $this->token));
@@ -176,18 +177,18 @@ class RecordsReadTest extends ContentApiFunctionalTest
         $this->assertSame('draft', $body['meta']['stage']);
 
         // Live misses the draft-only record.
-        $response = $this->apiGet("records/ApiTestVersioned/{$record->ID}?stage=live", $this->token);
+        $response = $this->apiGet("records/ApiTestVersioned/{$record->ID}?_stage=live", $this->token);
         $this->assertErrorCode($response, 'NOT_FOUND', 404);
 
         // After publish, live sees it.
         $record->publishSingle();
-        $body = $this->decode($this->apiGet("records/ApiTestVersioned/{$record->ID}?stage=live", $this->token));
+        $body = $this->decode($this->apiGet("records/ApiTestVersioned/{$record->ID}?_stage=live", $this->token));
         $this->assertTrue($body['data']['stage']['live']);
     }
 
     public function testInvalidStageIsRejected(): void
     {
-        $response = $this->apiGet('records/ApiTestVersioned?stage=nope', $this->token);
+        $response = $this->apiGet('records/ApiTestVersioned?_stage=nope', $this->token);
 
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }

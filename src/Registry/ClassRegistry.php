@@ -88,7 +88,7 @@ class ClassRegistry
      * The verbs a class is exposed for. `content_api_access` wins over
      * `api_access` when both are set (colymba coexistence).
      *
-     * @return string[] subset of self::VERBS, empty = not exposed
+     * @return string[] subset of ClassRegistry::VERBS, empty = not exposed
      */
     public function accessVerbs(string $className): array
     {
@@ -99,7 +99,7 @@ class ClassRegistry
         }
 
         if ($access === true) {
-            return self::VERBS;
+            return ClassRegistry::VERBS;
         }
 
         if (!is_string($access) || trim($access) === '') {
@@ -115,9 +115,9 @@ class ClassRegistry
                 continue;
             }
 
-            $verb = self::METHOD_VERB_MAP[strtoupper($token)] ?? strtolower($token);
+            $verb = ClassRegistry::METHOD_VERB_MAP[strtoupper($token)] ?? strtolower($token);
 
-            if (in_array($verb, self::VERBS, true) && !in_array($verb, $verbs, true)) {
+            if (in_array($verb, ClassRegistry::VERBS, true) && !in_array($verb, $verbs, true)) {
                 $verbs[] = $verb;
             }
         }

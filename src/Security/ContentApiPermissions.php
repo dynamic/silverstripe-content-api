@@ -21,18 +21,18 @@ class ContentApiPermissions implements PermissionProvider
         $category = 'Content API';
 
         return [
-            self::ACCESS => [
+            ContentApiPermissions::ACCESS => [
                 'name' => 'Access the content API',
                 'category' => $category,
                 'help' => 'Required for every content API endpoint. '
                     . 'Record-level canView/canEdit checks still apply.',
             ],
-            self::POPULATE => [
+            ContentApiPermissions::POPULATE => [
                 'name' => 'Use content population endpoints',
                 'category' => $category,
                 'help' => 'Batch operations, page compositions, asset uploads and page actions.',
             ],
-            self::SCHEMA => [
+            ContentApiPermissions::SCHEMA => [
                 'name' => 'Read content API schema introspection',
                 'category' => $category,
                 'help' => 'Schema endpoints describing exposed classes and fields. '

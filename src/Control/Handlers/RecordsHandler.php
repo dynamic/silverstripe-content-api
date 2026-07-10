@@ -21,8 +21,10 @@ use SilverStripe\Versioned\Versioned;
  *
  * `$ID` accepts a numeric ID or `ext:<external-id>`. List filtering uses
  * `Field=value` / `Field__Modifier=value` query params (colymba-style syntax,
- * validated against the class schema and a modifier allowlist). `stage`
- * selects draft (default) or live reading for Versioned classes.
+ * validated against the class schema and a modifier allowlist). `_stage`
+ * selects draft (default) or live reading for Versioned classes — underscored
+ * because bare `stage` is SilverStripe's own reserved staging param, consumed
+ * by the Versioned middleware before any controller runs.
  */
 class RecordsHandler
 {
@@ -51,6 +53,7 @@ class RecordsHandler
         'sort',
         'limit',
         'offset',
+        '_stage',
         'stage',
         'token',
         'url',
@@ -171,12 +174,12 @@ class RecordsHandler
 
     private function resolveStage(HTTPRequest $request): string
     {
-        $stage = strtolower((string) ($request->getVar('stage') ?: 'draft'));
+        $stage = strtolower((string) ($request->getVar('_stage') ?: 'draft'));
 
         if (!in_array($stage, ['draft', 'live'], true)) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
-                'The "stage" parameter must be "draft" or "live".'
+                'The "_stage" parameter must be "draft" or "live".'
             );
         }
 
