@@ -1,0 +1,16 @@
+# Composer dependencies
+/vendor/
+/composer.lock
+
+# SilverStripe generated files
+/public/
+/.phpunit.result.cache
+/.phpunit.cache/
+
+# IDE / OS
+/.idea/
+.DS_Store
+
+# npm (none expected, defensive)
+node_modules/
+npm-debug.log

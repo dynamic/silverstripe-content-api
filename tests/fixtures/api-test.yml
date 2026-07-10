@@ -1,0 +1,47 @@
+SilverStripe\Security\Group:
+  apiGroup:
+    Title: 'API Users'
+
+SilverStripe\Security\Permission:
+  apiAccess:
+    Code: CONTENT_API_ACCESS
+    Group: =>SilverStripe\Security\Group.apiGroup
+
+SilverStripe\Security\Member:
+  apiUser:
+    FirstName: Agent
+    Surname: Account
+    Email: agent@example.com
+    Groups: =>SilverStripe\Security\Group.apiGroup
+  noAccessUser:
+    FirstName: Nobody
+    Surname: Outside
+    Email: nobody@example.com
+
+Dynamic\ContentApi\Tests\Stub\ApiTestObject:
+  one:
+    Title: Alpha
+    Rank: 1
+    FixtureIdentifier: alpha
+  two:
+    Title: Beta
+    Rank: 2
+    FixtureIdentifier: beta
+  three:
+    Title: 'Beta Prime'
+    Rank: 3
+  dupA:
+    Title: DupOne
+    FixtureIdentifier: dup
+  dupB:
+    Title: DupTwo
+    FixtureIdentifier: dup
+  secret:
+    Title: Secret
+    Rank: 99
+    FixtureIdentifier: secret
+
+Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject:
+  draftOnly:
+    Title: 'Draft Only'
+    FixtureIdentifier: draft-only

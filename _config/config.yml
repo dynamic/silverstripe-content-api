@@ -1,0 +1,22 @@
+---
+Name: content-api
+---
+SilverStripe\Control\Director:
+  rules:
+    'content-api/v1': Dynamic\ContentApi\Control\ContentApiController
+
+SilverStripe\Security\Member:
+  extensions:
+    - Dynamic\ContentApi\Auth\ApiTokenExtension
+
+Dynamic\ContentApi\Control\ContentApiController:
+  # CORS is off by default: the API is designed for server-to-server / agent callers.
+  cors_enabled: false
+
+Dynamic\ContentApi\Auth\TokenAuthenticator:
+  token_life: 604800
+  auto_refresh: true
+  header_name: 'X-Silverstripe-Apitoken'
+  # Query-var token fallback is disabled by default (tokens in URLs leak into logs).
+  allow_query_var: false
+  query_var: 'token'
