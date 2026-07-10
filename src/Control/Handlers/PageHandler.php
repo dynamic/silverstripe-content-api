@@ -14,6 +14,7 @@ use SilverStripe\CMS\Controllers\RootURLController;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Validation\ValidationException;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
@@ -56,11 +57,115 @@ class PageHandler
 
         return match ($action) {
             'convert' => $this->convert($request, $context),
+            'apply-template' => $this->applyTemplate($request, $context),
             default => throw new ApiError(
                 ErrorCode::NOT_FOUND,
                 sprintf('Unknown page action "%s".', $action)
             ),
         };
+    }
+
+    /**
+     * `POST pages/$ID/apply-template` `{"templateId": 3, "publish": "none|recursive"}`
+     * — duplicates a Dynamic\ElementalTemplates template's elements onto the
+     * page via TemplateApplicator. Optional integration.
+     */
+    protected function applyTemplate(HTTPRequest $request, AuthContext $context): array
+    {
+        $templateClass = 'Dynamic\\ElementalTemplates\\Models\\Template';
+        $applicatorClass = 'Dynamic\\ElementalTemplates\\Service\\TemplateApplicator';
+
+        if (!class_exists($templateClass) || !class_exists($applicatorClass)) {
+            throw new ApiError(
+                ErrorCode::FEATURE_UNAVAILABLE,
+                'Applying templates requires dynamic/silverstripe-elemental-templates.'
+            );
+        }
+
+        $this->policy->checkPopulateAccess($context->member);
+        $this->environmentGate->checkPopulationAllowed();
+
+        $body = $this->jsonBody($request);
+        $templateId = (int) ($body['templateId'] ?? 0);
+
+        if ($templateId < 1) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'apply-template requires "templateId".');
+        }
+
+        $publishMode = (string) ($body['publish'] ?? 'none');
+
+        if (!in_array($publishMode, ['none', 'recursive'], true)) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                'apply-template publish mode must be "none" or "recursive".'
+            );
+        }
+
+        return Versioned::withVersionedMode(function () use (
+            $request,
+            $templateClass,
+            $applicatorClass,
+            $templateId,
+            $publishMode,
+            $context
+        ) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            $id = (string) $request->param('ID');
+
+            if (!ctype_digit($id)) {
+                throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'apply-template requires a numeric page id.');
+            }
+
+            $page = DataObject::get_by_id(SiteTree::class, (int) $id);
+
+            if (!$page) {
+                throw new ApiError(ErrorCode::NOT_FOUND, sprintf('No page found with id %d.', (int) $id));
+            }
+
+            $this->policy->checkRecordAccess($page, 'update', $context->member);
+
+            $template = DataObject::get_by_id($templateClass, $templateId);
+
+            if (!$template) {
+                throw new ApiError(
+                    ErrorCode::NOT_FOUND,
+                    sprintf('No template found with id %d.', $templateId)
+                );
+            }
+
+            $result = Injector::inst()->get($applicatorClass)->applyTemplateToRecord($page, $template);
+
+            if (empty($result['success'])) {
+                throw new ApiError(
+                    ErrorCode::VALIDATION_FAILED,
+                    'Template application failed: ' . ($result['message'] ?? 'unknown error')
+                );
+            }
+
+            if ($publishMode === 'recursive') {
+                $area = $page->hasMethod('ElementalArea') ? $page->ElementalArea() : null;
+
+                if ($area && $area->exists()) {
+                    $area->publishSingle();
+
+                    foreach ($area->Elements() as $element) {
+                        $element->publishSingle();
+                    }
+                }
+
+                $page->publishRecursive();
+            }
+
+            return [
+                'data' => [
+                    'page' => $this->serializer->serialize($page),
+                    'templateId' => $templateId,
+                    'message' => $result['message'] ?? 'Template applied.',
+                ],
+                'meta' => ['operation' => 'template-applied'],
+            ];
+        });
     }
 
     protected function convert(HTTPRequest $request, AuthContext $context): array

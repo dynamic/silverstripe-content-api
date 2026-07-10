@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Control\Handlers\CompositionHandler;
 use Dynamic\ContentApi\Control\Handlers\PageHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsWriteHandler;
+use Dynamic\ContentApi\Control\Handlers\SchemaHandler;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Psr\Log\LoggerInterface;
@@ -46,6 +47,8 @@ class ContentApiController extends Controller
         'GET assets/$ID!' => 'handleAssetRead',
         'POST batch' => 'handleBatch',
         'POST compositions/page' => 'handleComposition',
+        'GET schema/$ClassRef' => 'handleSchema',
+        'GET schema' => 'handleSchema',
         '' => 'handleIndex',
     ];
 
@@ -62,6 +65,7 @@ class ContentApiController extends Controller
         'handleAssetRead',
         'handleBatch',
         'handleComposition',
+        'handleSchema',
         'handleIndex',
     ];
 
@@ -74,6 +78,7 @@ class ContentApiController extends Controller
         'assetHandler' => '%$' . AssetHandler::class,
         'batchHandler' => '%$' . BatchHandler::class,
         'compositionHandler' => '%$' . CompositionHandler::class,
+        'schemaHandler' => '%$' . SchemaHandler::class,
     ];
 
     public ?TokenAuthenticator $authenticator = null;
@@ -91,6 +96,8 @@ class ContentApiController extends Controller
     public ?BatchHandler $batchHandler = null;
 
     public ?CompositionHandler $compositionHandler = null;
+
+    public ?SchemaHandler $schemaHandler = null;
 
     protected ?AuthContext $authContext = null;
 
@@ -197,6 +204,15 @@ class ContentApiController extends Controller
             $this->requireAuth($request);
 
             return $this->compositionHandler->composePage($request, $this->authContext);
+        });
+    }
+
+    public function handleSchema(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->schemaHandler->handle($request, $this->authContext);
         });
     }
 

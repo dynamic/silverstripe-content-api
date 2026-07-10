@@ -1,0 +1,14 @@
+---
+Name: content-api-essentials
+Only:
+  classexists: Dynamic\Essentials\Service\ColorConfigurationProvider
+After: '#content-api'
+---
+Dynamic\ContentApi\Write\WriteApplicator:
+  transformers:
+    - 'Dynamic\ContentApi\Write\Transformers\ColorTokenTransformer'
+
+Dynamic\ContentApi\Schema\SchemaService:
+  field_tokens:
+    BackgroundColor: palette
+    ButtonColor: button

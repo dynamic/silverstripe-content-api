@@ -240,6 +240,14 @@ class WriteApplicator
         return $this->warnings;
     }
 
+    /**
+     * Public writability check (used by schema introspection).
+     */
+    public function isFieldWritable(string $className, string $columnName, ?string $relationName = null): bool
+    {
+        return $this->isWritable($className, $columnName, $relationName);
+    }
+
     protected function isWritable(string $className, string $columnName, ?string $relationName): bool
     {
         $protected = array_merge(

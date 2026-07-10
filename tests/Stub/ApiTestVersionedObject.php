@@ -16,6 +16,7 @@ class ApiTestVersionedObject extends DataObject implements TestOnly
 
     private static array $db = [
         'Title' => 'Varchar',
+        'Status' => "Enum('Draft,Review,Final','Draft')",
     ];
 
     private static array $extensions = [
