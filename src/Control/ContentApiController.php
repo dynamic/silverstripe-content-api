@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Control;
 
 use Dynamic\ContentApi\Auth\AuthContext;
 use Dynamic\ContentApi\Auth\TokenAuthenticator;
+use Dynamic\ContentApi\Control\Handlers\AssetHandler;
 use Dynamic\ContentApi\Control\Handlers\AuthHandler;
 use Dynamic\ContentApi\Control\Handlers\PageHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
@@ -39,6 +40,8 @@ class ContentApiController extends Controller
         'POST records/$ClassRef!' => 'handleCreate',
         'GET records/$ClassRef!' => 'handleReadList',
         'POST pages/$ID!/$PageAction!' => 'handlePageAction',
+        'POST assets' => 'handleAssetUpload',
+        'GET assets/$ID!' => 'handleAssetRead',
         '' => 'handleIndex',
     ];
 
@@ -51,6 +54,8 @@ class ContentApiController extends Controller
         'handleDelete',
         'handleRecordAction',
         'handlePageAction',
+        'handleAssetUpload',
+        'handleAssetRead',
         'handleIndex',
     ];
 
@@ -60,6 +65,7 @@ class ContentApiController extends Controller
         'recordsHandler' => '%$' . RecordsHandler::class,
         'recordsWriteHandler' => '%$' . RecordsWriteHandler::class,
         'pageHandler' => '%$' . PageHandler::class,
+        'assetHandler' => '%$' . AssetHandler::class,
     ];
 
     public ?TokenAuthenticator $authenticator = null;
@@ -71,6 +77,8 @@ class ContentApiController extends Controller
     public ?RecordsWriteHandler $recordsWriteHandler = null;
 
     public ?PageHandler $pageHandler = null;
+
+    public ?AssetHandler $assetHandler = null;
 
     protected ?AuthContext $authContext = null;
 
@@ -141,6 +149,24 @@ class ContentApiController extends Controller
             $this->requireAuth($request);
 
             return $this->pageHandler->handle($request, $this->authContext);
+        });
+    }
+
+    public function handleAssetUpload(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->assetHandler->upload($request, $this->authContext);
+        });
+    }
+
+    public function handleAssetRead(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->assetHandler->read($request, $this->authContext);
         });
     }
 
