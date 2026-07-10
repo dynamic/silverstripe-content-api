@@ -3,8 +3,8 @@
 namespace Dynamic\ContentApi\Write;
 
 use SilverStripe\Control\Controller;
-use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Extension;
+use SilverStripe\Core\Injector\Injector;
 
 /**
  * Field-level write guard for colymba/silverstripe-restfulapi's generic
@@ -115,47 +115,32 @@ class WriteGuardExtension extends Extension
             return;
         }
 
-        // Allowlist mode on this (untrusted) surface: the resolved policy
-        // (per-class api_write_policy, else the global WriteApplicator.policy —
-        // both honoured) OR simply a non-empty api_writable_fields. The trusted
-        // population path handles the first two identically but ignores a bare
-        // api_writable_fields (see WriteApplicator::isWritable).
-        $policy = $owner->config()->get('api_write_policy')
-            ?: (string) Config::inst()->get(WriteApplicator::class, 'policy');
-        $allowlist = (array) $owner->config()->get('api_writable_fields');
-        $allowlistMode = $policy === 'allowlist' || $allowlist !== [];
-
-        $protected = array_merge(
-            (array) Config::inst()->get(WriteApplicator::class, 'protected_fields'),
-            (array) $owner->config()->get('api_protected_fields')
-        );
-
+        $className = get_class($owner);
         $hasOne = (array) $owner->config()->get('has_one');
         $changed = $owner->getChangedFields(true, 2);
+        $applicator = Injector::inst()->get(WriteApplicator::class);
 
         foreach (array_keys($body) as $attribute) {
             // Resolve the payload key to the DB column colymba actually wrote
-            // (the FK column for a has_one) plus every name that could name it
-            // in config: the payload key, the relation name and the FK column.
+            // (the FK column for a has_one) and the relation name, so the
+            // shared writability check matches protected/allowlist config by
+            // either name.
             if (array_key_exists($attribute, $hasOne)) {
                 $column = $attribute . 'ID';
-                $names = [$attribute, $column];
+                $relationName = $attribute;
             } elseif (str_ends_with($attribute, 'ID') && isset($hasOne[substr($attribute, 0, -2)])) {
                 $column = $attribute;
-                $names = [$attribute, substr($attribute, 0, -2)];
+                $relationName = substr($attribute, 0, -2);
             } else {
                 $column = $attribute;
-                $names = [$attribute];
+                $relationName = null;
             }
 
-            // Protected always wins, regardless of allowlist (parity with
-            // WriteApplicator::isWritable), matched by relation name OR column.
-            $isProtected = array_intersect($names, $protected) !== [];
+            // Delegate to the single writability source of truth, restricting
+            // on a bare allowlist (this is the untrusted colymba surface).
+            $writable = $applicator->isFieldWritable($className, $column, $relationName, true);
 
-            $denied = $isProtected
-                || ($allowlistMode && array_intersect($names, $allowlist) === []);
-
-            if ($denied && array_key_exists($column, $changed)) {
+            if (!$writable && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);
             }
         }

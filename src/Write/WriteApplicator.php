@@ -241,15 +241,32 @@ class WriteApplicator
     }
 
     /**
-     * Public writability check (used by schema introspection).
+     * The single source of truth for field writability across both surfaces.
+     *
+     * `$restrictOnBareAllowlist` is the ONE intentional difference between the
+     * two: the untrusted colymba /api guard (WriteGuardExtension) passes true,
+     * so a non-empty `api_writable_fields` alone restricts writes there; the
+     * trusted population path (batch/compositions) passes false (the default),
+     * so it stays in guarded mode and can write structural fields like
+     * ParentID/Sort unless a project explicitly opts into allowlist mode via
+     * `api_write_policy` or the global `policy`. Both paths share the protected-
+     * field denylist and the allowlist matching by column name OR relation name.
      */
-    public function isFieldWritable(string $className, string $columnName, ?string $relationName = null): bool
-    {
-        return $this->isWritable($className, $columnName, $relationName);
+    public function isFieldWritable(
+        string $className,
+        string $columnName,
+        ?string $relationName = null,
+        bool $restrictOnBareAllowlist = false
+    ): bool {
+        return $this->isWritable($className, $columnName, $relationName, $restrictOnBareAllowlist);
     }
 
-    protected function isWritable(string $className, string $columnName, ?string $relationName): bool
-    {
+    protected function isWritable(
+        string $className,
+        string $columnName,
+        ?string $relationName,
+        bool $restrictOnBareAllowlist = false
+    ): bool {
         $protected = array_merge(
             (array) static::config()->get('protected_fields'),
             (array) Config::inst()->get($className, 'api_protected_fields')
@@ -259,21 +276,15 @@ class WriteApplicator
             return false;
         }
 
-        // The population path (batch/compositions) is the trusted, permission-
-        // and environment-gated surface: it stays in guarded mode unless a
-        // project explicitly opts a class (or globally) into allowlist mode.
-        // Per-class `api_writable_fields` alone does NOT restrict this path —
-        // that key restricts the untrusted colymba /api surface via
-        // WriteGuardExtension (compositions legitimately write structural
-        // fields like ParentID/Sort that are not in a human-content allowlist).
         $policy = Config::inst()->get($className, 'api_write_policy')
             ?: static::config()->get('policy');
 
-        if ($policy !== 'allowlist') {
+        $allowed = (array) Config::inst()->get($className, 'api_writable_fields');
+        $allowlistMode = $policy === 'allowlist' || ($restrictOnBareAllowlist && $allowed !== []);
+
+        if (!$allowlistMode) {
             return true;
         }
-
-        $allowed = (array) Config::inst()->get($className, 'api_writable_fields');
 
         return in_array($columnName, $allowed, true)
             || ($relationName && in_array($relationName, $allowed, true));
