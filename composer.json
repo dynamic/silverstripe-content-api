@@ -55,7 +55,11 @@
     "extra": {
         "branch-alias": {
             "dev-1": "1.x-dev"
-        }
+        },
+        "project-files-installed": [
+            "behat.yml",
+            "phpunit.xml.dist"
+        ]
     },
     "scripts": {
         "lint": "vendor/bin/phpcs src/ tests/",
@@ -67,7 +71,8 @@
         "allow-plugins": {
             "composer/installers": true,
             "silverstripe/vendor-plugin": true,
-            "phpstan/extension-installer": true
+            "phpstan/extension-installer": true,
+            "silverstripe/recipe-plugin": true
         }
     },
     "repositories": [
