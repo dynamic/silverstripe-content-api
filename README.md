@@ -279,6 +279,19 @@ SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit vendor/dynamic/silverstripe-content-api/te
 `SS_PHPUNIT_FLUSH=1` matters (TestOnly stub config needs a flushed test manifest).
 The suite includes cross-surface tests that hit colymba's real `/api` route.
 
+> **Gotcha — `preferred-install: source` + a local `app/`:** if you're iterating on this
+> module standalone (e.g. for `--with-behat` testing) you may have a gitignored
+> `app/code/Page.php`/`PageController.php` scaffold on disk (`.gitignore` excludes `/app/`
+> as "recipe-plugin scaffolding; not module code"). When this checkout is *also*
+> vendor-installed from source into a real project — which already defines its own `Page`
+> class — a full class-manifest rebuild (`dev/build`, or `phpunit`/`phpstan` run
+> unscoped from the project root, or the flush above) fatals with `There are two files
+> containing the "Page" class`. Module-scoped `phpcs`/`phpstan analyse <file>` don't boot
+> the kernel, so this is easy to miss on a narrow check and only surfaces on a full run.
+> Fix: move (don't just rename) `app/code/Page.php` and `PageController.php` fully outside
+> the module's directory tree before running project-level build/test commands, then
+> restore them afterward if you still need the local behat scaffold.
+
 ## MCP-readiness
 
 [`schema/endpoints.json`](schema/endpoints.json) describes this module's endpoints as
