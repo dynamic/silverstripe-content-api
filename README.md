@@ -180,6 +180,7 @@ machine-readable codes. Auth failures here are `401 UNAUTHENTICATED|TOKEN_EXPIRE
 | `GET records/$ClassRef/$ID` | Read one — numeric or `ext:<external-id>`, stage-aware |
 | `POST records/$ClassRef/$ID/publish\|unpublish\|archive` | Stage actions (`{"recursive": true}`) |
 | `POST batch` | Ordered `create\|upsert\|update\|delete` ops, per-op results + summary; `atomic` rollback |
+| — `delete` op `mode` | `archive` (default, both stages, recoverable) \| `unpublish` \| `hard`. Versioned classes (e.g. `SiteTree`/`BaseElement`) only accept `archive`/`unpublish` — `hard` is unversioned-only |
 | `POST compositions/page` | One atomic request = one page's full composition |
 | `POST assets`, `GET assets/$ID` | Asset ingestion (multipart/base64, conflict modes, hash-skip) + read |
 | `POST pages/$ID/convert`, `POST pages/$ID/apply-template` | Page class change; elemental-templates apply |
