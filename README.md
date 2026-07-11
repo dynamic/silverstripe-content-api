@@ -191,6 +191,10 @@ machine-readable codes. Auth failures here are `401 UNAUTHENTICATED|TOKEN_EXPIRE
 > for front-end requests that is LIVE, i.e. immediately public (verified on a live
 > testbed). Use this module's batch/compositions with explicit `publish` semantics for
 > draft-first workflows.
+>
+> `records/$ClassRef/$ID` on this module's surface is read + stage-action only — there is
+> no PUT/PATCH route here. Single-record field updates go through `POST batch`
+> (`op: "update"`) or a composition's sparse element upsert.
 
 ### Write payload shape (batch ops / compositions)
 
