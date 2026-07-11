@@ -26,8 +26,8 @@ class MintApiTokenTask extends BuildTask
     protected string $title = 'Mint content API token';
 
     protected static string $description = 'Generates a new content API token for the member with the given '
-        . 'email address, replacing any existing token. The plaintext token is shown once and stored '
-        . 'only as a hash.';
+        . 'email address, replacing any existing token. The plaintext token is shown once; colymba '
+        . 'stores it in plaintext on the Member record.';
 
     public function getOptions(): array
     {
