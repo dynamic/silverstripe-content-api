@@ -10,7 +10,7 @@ A Million Dreamz and dynamicagency-essentials) onto content API calls.
 | `FixtureIdentifier: my-id` + `PopulateMergeMatch: [FixtureIdentifier]` | `"externalId": "my-id"` (+ upsert). **Same DB column** — existing populated records are addressable as-is. |
 | One YAML file per page owning ElementalArea + elements | One `POST compositions/page` request |
 | Attach task (`AttachAmdAreasTask`) wiring area→page by hardcoded page id | `page.match` (`id` / `urlSegment` / `externalId`) — the composition attaches directly |
-| `Page` records never in fixtures (merge clobber → `home-2` bumps) | Pages safe to update: PATCH/compositions are **sparse**; URLSegment collisions surface as warnings |
+| `Page` records never in fixtures (merge clobber → `home-2` bumps) | Pages safe to update: `POST batch` (`op: "update"`) or a composition's sparse element upsert; URLSegment collisions surface as warnings |
 | `PopulateFileFrom` + `Filename` + AppPopulateFactory second-run fix | `POST assets` (or composition `assets[]`) — hash-identical re-uploads always return the record |
 | `=>Class.ref` cross-references (order-sensitive, earlier-only) | `{"externalId": …}` (global) or `{"$ref": …}` (per-request aliases, order-independent) |
 | `$palette(N)` / `$button(N, Label)` via PopulateColorResolver | Same tokens; resolution built into the write path, unresolvable tokens fail the write |
