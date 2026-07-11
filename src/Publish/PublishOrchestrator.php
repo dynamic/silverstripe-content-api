@@ -80,25 +80,30 @@ class PublishOrchestrator
 
     /**
      * Delete with an explicit mode. Versioned records accept `archive`
-     * (default) or `unpublish`; `hard` is only valid for unversioned classes,
-     * where all modes converge on delete().
+     * (default) or `unpublish` only — `hard` is rejected up front, so the
+     * "must be one of" error never lists a mode this record can't actually
+     * use. Unversioned classes accept all of DELETE_MODES, where every mode
+     * converges on delete().
      *
      * @throws ApiError PAYLOAD_INVALID
      */
     public function delete(DataObject $record, string $mode): void
     {
-        if (!in_array($mode, PublishOrchestrator::DELETE_MODES, true)) {
+        $isVersioned = $record->hasExtension(Versioned::class);
+        $validModes = $isVersioned ? ['archive', 'unpublish'] : PublishOrchestrator::DELETE_MODES;
+
+        if (!in_array($mode, $validModes, true)) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
                 sprintf(
                     'Delete mode "%s" must be one of: %s.',
                     $mode,
-                    implode(', ', PublishOrchestrator::DELETE_MODES)
+                    implode(', ', $validModes)
                 )
             );
         }
 
-        if (!$record->hasExtension(Versioned::class)) {
+        if (!$isVersioned) {
             $record->delete();
 
             return;
@@ -107,12 +112,10 @@ class PublishOrchestrator
         match ($mode) {
             'archive' => $record->doArchive(),
             'unpublish' => $record->doUnpublish(),
-            'hard' => throw new ApiError(
+            // Unreachable — $validModes above already rejected anything else.
+            default => throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
-                sprintf(
-                    '%s is versioned — use mode "archive" (both stages, recoverable) or "unpublish".',
-                    get_class($record)
-                )
+                sprintf('Delete mode "%s" must be one of: archive, unpublish.', $mode)
             ),
         };
     }

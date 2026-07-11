@@ -337,4 +337,59 @@ class BatchTest extends ContentApiTestCase
 
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }
+
+    /**
+     * Regression for #4: the "must be one of" message must never list a mode
+     * the target class can't actually use — a versioned record only accepts
+     * archive/unpublish, so "hard" must not appear even in the error text.
+     */
+    public function testDeleteInvalidModeMessageOmitsHardForVersionedClass(): void
+    {
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestVersioned', 'id' => (int) $record->ID, 'mode' => 'bogus'],
+            ],
+        ], $this->adminToken));
+
+        $error = $body['data']['results'][0]['error'];
+        $this->assertSame('PAYLOAD_INVALID', $error['code']);
+        $this->assertSame(
+            'Delete mode "bogus" must be one of: archive, unpublish.',
+            $error['message']
+        );
+    }
+
+    public function testDeleteHardRejectedForVersionedClass(): void
+    {
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestVersioned', 'id' => (int) $record->ID, 'mode' => 'hard'],
+            ],
+        ], $this->adminToken));
+
+        $error = $body['data']['results'][0]['error'];
+        $this->assertSame('PAYLOAD_INVALID', $error['code']);
+        $this->assertNotNull(
+            ApiTestVersionedObject::get()->byID($record->ID),
+            'a rejected hard-delete must leave the record untouched'
+        );
+    }
+
+    public function testDeleteArchiveAcceptedForVersionedClass(): void
+    {
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestVersioned', 'id' => (int) $record->ID, 'mode' => 'archive'],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame('deleted', $body['data']['results'][0]['status']);
+    }
 }
