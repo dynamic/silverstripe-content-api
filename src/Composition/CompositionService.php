@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Assets\AssetService;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
+use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
@@ -75,10 +76,15 @@ class CompositionService
         $pageSpec = (array) ($payload['page'] ?? []);
         $publishMode = (string) ($payload['publish'] ?? 'none');
 
-        if (!in_array($publishMode, ['none', 'recursive'], true)) {
+        if (!in_array($publishMode, PublishOrchestrator::COMPOSITION_MODES, true)) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
-                'Composition publish mode must be "none" or "recursive".'
+                sprintf(
+                    'Composition publish mode "%s" must be one of: %s. "single" applies per-record '
+                        . '(batch ops), not to a whole composition.',
+                    $publishMode,
+                    implode(', ', PublishOrchestrator::COMPOSITION_MODES)
+                )
             );
         }
 
