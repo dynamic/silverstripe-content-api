@@ -24,6 +24,15 @@ class PublishOrchestrator
 
     public const MODES = ['none', 'single', 'recursive'];
 
+    /**
+     * Publish modes valid at the whole-composition level. `single` is
+     * deliberately excluded: a composition is inherently multi-record (page +
+     * area + elements + children), so publishing "just one record" would leave
+     * the rest on draft — the invisible half-published state this module
+     * exists to prevent. Per-record `single` still applies inside batch ops.
+     */
+    public const COMPOSITION_MODES = ['none', 'recursive'];
+
     public const DELETE_MODES = ['archive', 'unpublish', 'hard'];
 
     /**

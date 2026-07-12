@@ -317,6 +317,16 @@ class CompositionTest extends ContentApiTestCase
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }
 
+    public function testCompositionRejectsSinglePublishMode(): void
+    {
+        $payload = $this->payload($this->blockPage());
+        $payload['publish'] = 'single';
+
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
     public function testUnresolvedRefRollsBack(): void
     {
         $payload = [

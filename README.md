@@ -241,6 +241,11 @@ externally-identified elements missing from the payload (hand-authored content i
 invisible to prune); `publish: recursive` publishes the page plus each written
 area/element/child individually. HomePage-style types: `"areaRelation": "ElementalHomePage"`.
 
+The composition's **top-level** `publish` accepts only `none` or `recursive` — a composition
+is inherently multi-record, so there is no `single` at this level (it would leave elements on
+draft behind a live page). `single` is a per-record mode: it applies to individual batch `op`s
+and to per-element `publish` inside a composition's `elements[]`, not to the composition as a whole.
+
 ## Error codes
 
 `UNAUTHENTICATED` `TOKEN_EXPIRED` `FORBIDDEN` `FORBIDDEN_CLASS` `FORBIDDEN_RECORD`
