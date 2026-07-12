@@ -34,12 +34,14 @@ class PermissionPolicy
     public ?ClassRegistry $registry = null;
 
     /**
-     * Gate a verb on a class: member must hold CONTENT_API_ACCESS and the
-     * class must expose the verb via api_access config.
+     * Gate on the CONTENT_API_ACCESS permission alone, independent of any
+     * class. Useful where the target class is only known after a lookup (asset
+     * reads), so an unauthorised member is refused before the record is
+     * fetched rather than leaking its existence.
      *
-     * @throws ApiError FORBIDDEN | FORBIDDEN_CLASS
+     * @throws ApiError FORBIDDEN
      */
-    public function checkClassAccess(string $className, string $verb, Member $member): void
+    public function checkAccess(Member $member): void
     {
         if (!Permission::checkMember($member, ContentApiPermissions::ACCESS)) {
             throw new ApiError(
@@ -47,6 +49,17 @@ class PermissionPolicy
                 'Member does not have content API access.'
             );
         }
+    }
+
+    /**
+     * Gate a verb on a class: member must hold CONTENT_API_ACCESS and the
+     * class must expose the verb via api_access config.
+     *
+     * @throws ApiError FORBIDDEN | FORBIDDEN_CLASS
+     */
+    public function checkClassAccess(string $className, string $verb, Member $member): void
+    {
+        $this->checkAccess($member);
 
         if (!in_array($verb, $this->registry->accessVerbs($className), true)) {
             throw new ApiError(

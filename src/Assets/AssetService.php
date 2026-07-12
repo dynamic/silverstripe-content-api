@@ -35,6 +35,40 @@ class AssetService
     public ?ExternalIdResolver $externalIds = null;
 
     /**
+     * The File subclass a given upload payload will resolve to — the class of
+     * an already-stored file at the same path (skip/overwrite reuse it), else
+     * the class SilverStripe maps the extension to. Shares the exact filename
+     * normalisation and conflict handling `ingest()` uses so an access check
+     * computed from this matches the record actually written. Defaults to File
+     * when the filename is unusable (ingest() then surfaces the PAYLOAD_INVALID).
+     *
+     * @param array{filename?: string, folder?: string, conflict?: string} $meta
+     */
+    public function resolveTargetClass(array $meta): string
+    {
+        $filename = basename(trim((string) ($meta['filename'] ?? '')));
+        $folder = trim((string) ($meta['folder'] ?? ''), '/');
+        $conflict = (string) ($meta['conflict'] ?? 'overwrite');
+
+        if ($filename === '' || $filename === '.') {
+            return File::class;
+        }
+
+        $targetPath = $folder !== '' ? "{$folder}/{$filename}" : $filename;
+        $existing = File::get()->filter('FileFilename', $targetPath)->first();
+
+        // `rename` never reuses the existing record — it writes a new record of
+        // the extension-derived class — so only skip/overwrite adopt its class.
+        if ($existing && $conflict !== 'rename') {
+            return get_class($existing);
+        }
+
+        return File::get_class_for_file_extension(
+            strtolower((string) pathinfo($filename, PATHINFO_EXTENSION))
+        );
+    }
+
+    /**
      * @param array{filename: string, folder?: string, title?: string,
      *   externalId?: string, conflict?: string, publish?: bool} $meta
      * @return array{record: File, existed: bool}
