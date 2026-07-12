@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Auth\AuthContext;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
@@ -32,6 +33,7 @@ class AssetHandler
     private static array $dependencies = [
         'assets' => '%$' . AssetService::class,
         'policy' => '%$' . PermissionPolicy::class,
+        'registry' => '%$' . ClassRegistry::class,
         'serializer' => '%$' . RecordSerializer::class,
         'externalIds' => '%$' . ExternalIdResolver::class,
         'environmentGate' => '%$' . EnvironmentGate::class,
@@ -41,6 +43,8 @@ class AssetHandler
     public ?AssetService $assets = null;
 
     public ?PermissionPolicy $policy = null;
+
+    public ?ClassRegistry $registry = null;
 
     public ?RecordSerializer $serializer = null;
 
@@ -56,6 +60,16 @@ class AssetHandler
         $this->environmentGate->checkPopulationAllowed();
 
         [$binary, $meta] = $this->extractUpload($request);
+
+        // Resolve the class exactly as ingest() will (same filename
+        // normalisation, and the existing record's class on overwrite/skip) so
+        // the access check gates the class actually written, not a re-parse.
+        $targetClass = $this->assets->resolveTargetClass($meta);
+        $this->policy->checkClassAccess(
+            $this->governingAssetClass($targetClass),
+            'create',
+            $context->member
+        );
 
         if (!File::singleton()->canCreate($context->member)) {
             throw new ApiError(ErrorCode::FORBIDDEN_RECORD, 'Not allowed to create files.');
@@ -77,18 +91,56 @@ class AssetHandler
 
     public function read(HTTPRequest $request, AuthContext $context): array
     {
-        $this->policy->checkClassAccess(File::class, 'read', $context->member);
+        // Coarse permission gate before the lookup, so a member without content
+        // API access is refused without learning whether the ID exists. The
+        // class-level verb check needs the record's actual class, so it runs
+        // after the fetch below.
+        $this->policy->checkAccess($context->member);
 
         return Versioned::withVersionedMode(function () use ($request, $context) {
             Versioned::set_stage(Versioned::DRAFT);
 
             $record = $this->reader->fetchRecord(File::class, (string) $request->param('ID'));
+
+            // Assets carry no classRef in the URL, so gate against the record's
+            // actual class (e.g. Image), resolved via the ancestry walk.
+            $this->policy->checkClassAccess(
+                $this->governingAssetClass(get_class($record)),
+                'read',
+                $context->member
+            );
             $this->policy->checkRecordAccess($record, 'read', $context->member);
 
             return [
                 'data' => $this->serializeAsset($record),
             ];
         });
+    }
+
+    /**
+     * Resolve the class that governs API access for an asset record. Asset
+     * endpoints take no classRef, so walk the concrete class's ancestry
+     * (e.g. Image → File) and return the nearest class that is actually
+     * granted access; fall back to File so a fully-ungranted asset still
+     * fails the deny-by-default check.
+     */
+    protected function governingAssetClass(string $concreteClass): string
+    {
+        $candidate = $concreteClass;
+
+        while ($candidate) {
+            if ($this->registry->accessVerbs($candidate) !== []) {
+                return $candidate;
+            }
+
+            if ($candidate === File::class) {
+                break;
+            }
+
+            $candidate = get_parent_class($candidate) ?: null;
+        }
+
+        return File::class;
     }
 
     /**

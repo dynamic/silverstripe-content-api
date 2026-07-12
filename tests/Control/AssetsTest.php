@@ -27,7 +27,7 @@ class AssetsTest extends ContentApiTestCase
 
         $this->adminToken = $this->mintTokenFor('adminUser');
 
-        Config::modify()->set(File::class, 'api_access', 'read');
+        Config::modify()->set(File::class, 'api_access', 'read,create');
     }
 
     protected function tearDown(): void
@@ -176,12 +176,65 @@ class AssetsTest extends ContentApiTestCase
 
     public function testAssetReadRequiresFileReadAccess(): void
     {
-        Config::modify()->set(File::class, 'api_access', false);
-
+        // Upload while access is granted, then revoke before reading.
         [, $uploaded] = $this->uploadPixel();
+
+        Config::modify()->set(File::class, 'api_access', false);
 
         $response = $this->apiGet("assets/{$uploaded['data']['id']}", $this->adminToken);
 
         $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+    }
+
+    public function testUploadRequiresCreateAccess(): void
+    {
+        // File granted read only — no create, and Image is unmapped/ungranted,
+        // so the ancestry walk lands on File, which lacks the create verb.
+        Config::modify()->set(File::class, 'api_access', 'read');
+
+        [$response] = $this->uploadPixel();
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+    }
+
+    public function testUploadClassCheckUsesNormalizedFilename(): void
+    {
+        // File permits create, but Image is explicitly restricted to read. A
+        // trailing-space filename must still resolve to Image (the class
+        // actually written) so the create check is gated on Image, not the
+        // permissive File fallback.
+        Config::modify()->set(File::class, 'api_access', 'read,create');
+        Config::modify()->set(Image::class, 'api_access', 'read');
+
+        [$response] = $this->uploadPixel(['filename' => 'pixel.png ']);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+    }
+
+    public function testUploadRespectsSubclassGrant(): void
+    {
+        // File carries no access at all; a create grant on the concrete Image
+        // subclass alone must satisfy the check (the README quick-start pattern).
+        Config::modify()->set(File::class, 'api_access', false);
+        Config::modify()->set(Image::class, 'api_access', 'read,create');
+
+        [$response, $body] = $this->uploadPixel();
+
+        $this->assertSame(201, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(Image::class, $body['data']['className']);
+    }
+
+    public function testAssetReadRespectsSubclassGrant(): void
+    {
+        Config::modify()->set(Image::class, 'api_access', 'read,create');
+
+        [, $uploaded] = $this->uploadPixel();
+
+        // File ungranted; only Image (the record's actual class) grants read.
+        Config::modify()->set(File::class, 'api_access', false);
+
+        $body = $this->decode($this->apiGet("assets/{$uploaded['data']['id']}", $this->adminToken));
+
+        $this->assertSame($uploaded['data']['id'], $body['data']['id']);
     }
 }
