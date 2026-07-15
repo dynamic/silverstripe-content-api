@@ -88,11 +88,14 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         $this->assertSame(400, $response->getStatusCode(), (string) $response->getBody());
     }
 
-    public function testPolymorphicClassColumnIsIndependentlyGatedOnNativeSurface(): void
+    public function testAsymmetricClassColumnProtectionRevertsBothColumnsNotJustOne(): void
     {
-        // #25 applies here too: protecting OwnerClass specifically must
-        // revert it even though Owner (and so OwnerID) is allowed and
-        // colymba's deserializer already wrote both raw columns directly.
+        // #25 applies here too, but the FK and companion Class column must
+        // revert TOGETHER — protecting OwnerClass specifically while Owner
+        // itself is allowed must not leave a torn state where OwnerID
+        // points at a real record but OwnerClass doesn't name it (a
+        // dangling polymorphic FK), which is worse than just rejecting the
+        // whole relation write.
         Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title', 'Owner']);
         Config::modify()->set(ApiTestPolyObject::class, 'api_protected_fields', ['OwnerClass']);
 
@@ -100,6 +103,7 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
 
         $poly = ApiTestPolyObject::create(['Title' => 'Protected class column']);
         $poly->write();
+        $originalOwnerId = (int) $poly->OwnerID;
 
         $response = $this->colymba('PUT', "Poly/{$poly->ID}", [
             'Owner' => ['class' => 'ApiTest', 'id' => (int) $owner->ID],
@@ -108,12 +112,12 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
 
         $fresh = ApiTestPolyObject::get()->byID($poly->ID);
-        $this->assertSame((int) $owner->ID, (int) $fresh->OwnerID, 'FK column: Owner is allowed');
-        $this->assertNotSame(
-            ApiTestObject::class,
-            $fresh->OwnerClass,
-            'companion Class column: protected, must be reverted even though the FK write was allowed'
+        $this->assertSame(
+            $originalOwnerId,
+            (int) $fresh->OwnerID,
+            'FK reverted too: OwnerClass is protected, so the pair must not split'
         );
+        $this->assertNotSame(ApiTestObject::class, $fresh->OwnerClass);
     }
 
     public function testPolymorphicHasOneFullyDeniedRevertsBothColumns(): void

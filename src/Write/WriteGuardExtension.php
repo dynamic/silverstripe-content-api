@@ -199,6 +199,36 @@ class WriteGuardExtension extends Extension
         $changed = $owner->getChangedFields(true, 2);
         $applicator = Injector::inst()->get(WriteApplicator::class);
 
+        // A polymorphic has_one's FK and companion Class column must be
+        // reverted together, not independently — checking each column's
+        // writability separately would let an asymmetric allowlist (e.g.
+        // protecting OwnerClass but allowing Owner) leave the FK pointing
+        // at a real record while the Class column reverts, corrupting the
+        // relation rather than just narrowing what's writable. Precompute
+        // one combined decision per polymorphic relation present in the
+        // payload, so both columns share it.
+        $polymorphicWritable = [];
+
+        foreach ($hasOne as $relationName => $relationClass) {
+            if ($relationClass !== DataObject::class) {
+                continue;
+            }
+
+            $idKey = $relationName . 'ID';
+            $classKey = $relationName . 'Class';
+
+            if (
+                !array_key_exists($relationName, $body)
+                && !array_key_exists($idKey, $body)
+                && !array_key_exists($classKey, $body)
+            ) {
+                continue;
+            }
+
+            $polymorphicWritable[$relationName] = $applicator->isFieldWritable($className, $idKey, $relationName)
+                && $applicator->isFieldWritable($className, $classKey, $relationName);
+        }
+
         foreach (array_keys($body) as $attribute) {
             // Resolve the payload key to the DB column colymba actually wrote
             // (the FK column for a has_one) and the relation name, so the
@@ -225,8 +255,12 @@ class WriteGuardExtension extends Extension
                 $relationName = null;
             }
 
-            // Delegate to the single writability source of truth.
-            $writable = $applicator->isFieldWritable($className, $column, $relationName);
+            // Delegate to the single writability source of truth, except
+            // for a polymorphic relation's pair of columns, which share the
+            // precomputed combined decision above.
+            $writable = $relationName !== null && isset($polymorphicWritable[$relationName])
+                ? $polymorphicWritable[$relationName]
+                : $applicator->isFieldWritable($className, $column, $relationName);
 
             if (!$writable && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);

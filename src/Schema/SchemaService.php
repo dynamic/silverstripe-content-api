@@ -152,10 +152,21 @@ class SchemaService
         $hasOne = [];
 
         foreach ((array) $singleton->hasOne() as $name => $relationClass) {
+            // A polymorphic has_one's FK and companion {Name}Class column
+            // are written and gated as a pair (#25) — advertising the FK's
+            // writability alone would tell a client a relation is writable
+            // when a real write could still be rejected over the Class
+            // column, or vice versa.
+            $writable = $this->applicator->isFieldWritable($className, $name . 'ID', $name);
+
+            if ($relationClass === DataObject::class) {
+                $writable = $writable && $this->applicator->isFieldWritable($className, $name . 'Class', $name);
+            }
+
             $hasOne[$name] = [
                 'class' => $relationClass,
                 'payload' => $this->payloadKind($relationClass),
-                'writable' => $this->applicator->isFieldWritable($className, $name . 'ID', $name),
+                'writable' => $writable,
             ];
         }
 
