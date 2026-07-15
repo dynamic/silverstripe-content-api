@@ -11,6 +11,7 @@ use Monolog\Logger;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\ORM\DB;
 
 class RecordSerializerTest extends ContentApiTestCase
 {
@@ -97,6 +98,60 @@ class RecordSerializerTest extends ContentApiTestCase
         $this->assertFalse(
             $this->logHandler->hasWarningRecords(),
             'a cleared FK must not trigger a warning based on the stale Class column'
+        );
+    }
+
+    public function testPolymorphicRelationWithIdButEmptyClassColumnWarns(): void
+    {
+        // A set FK with an empty companion Class column (a partial write, a
+        // legacy import, an upstream bug) is exactly the kind of broken
+        // relation this fix set out to make discoverable — it must not be
+        // silently indistinguishable from a genuinely unregistered class.
+        // OwnerClass is a DBClassName (DBEnum) column — SilverStripe assigns
+        // it *some* concrete class from the enum's value set on a plain
+        // write() rather than leaving it empty, and rejects an explicit ''
+        // as an invalid enum value through the ORM. A raw SQL update is the
+        // only way to reproduce a truly blank companion column, matching
+        // how this could actually arise (a legacy import, a pre-migration
+        // row written before the column existed).
+        $poly = ApiTestPolyObject::create(['Title' => 'Half-written ref']);
+        $poly->setField('OwnerID', 999);
+        $poly->write();
+
+        DB::prepared_query('UPDATE "ContentApi_ApiTestPolyObject" SET "OwnerClass" = \'\' WHERE "ID" = ?', [$poly->ID]);
+
+        $body = $this->decode($this->apiGet("records/ApiTestPoly/{$poly->ID}", $this->token));
+
+        $ownerRelation = $body['data']['relations']['Owner'];
+        $this->assertSame(999, $ownerRelation['id']);
+        $this->assertArrayNotHasKey('class', $ownerRelation);
+        $this->assertTrue(
+            $this->logHandler->hasWarningThatContains('no companion'),
+            'expected a warning logged when the id is set but the Class column is empty'
+        );
+    }
+
+    public function testUnreadableRelationWarningIsDedupedAcrossRecordsInAListRead(): void
+    {
+        // Every ApiTest fixture record shares the same broken has_many
+        // config — pre-#22-follow-up this would log once per record on
+        // every list page instead of once per broken relation shape.
+        Config::modify()->merge(ApiTestObject::class, 'has_many', [
+            'Broken' => 'Dynamic\\ContentApi\\Tests\\Stub\\NonExistentTarget',
+        ]);
+
+        $body = $this->decode($this->apiGet('records/ApiTest', $this->token));
+        $this->assertGreaterThan(1, count($body['data']), 'precondition: list read returns multiple records');
+
+        $brokenWarnings = array_filter(
+            $this->logHandler->getRecords(),
+            fn ($record) => str_contains($record['message'], 'Broken')
+        );
+
+        $this->assertCount(
+            1,
+            $brokenWarnings,
+            'the same broken-relation shape must warn once per request, not once per record'
         );
     }
 }
