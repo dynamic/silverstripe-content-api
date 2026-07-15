@@ -2,11 +2,13 @@
 
 namespace Dynamic\ContentApi\Write;
 
+use Dynamic\ContentApi\Errors\ApiError;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\ORM\DataObject;
 
 /**
  * Field-level write guard for colymba/silverstripe-restfulapi's generic
@@ -87,6 +89,8 @@ class WriteGuardExtension extends Extension
             }
         }
 
+        $filtered = $this->translatePolymorphicHasOnes($body) || $filtered;
+
         WriteGuardPayloads::store($this->getOwner(), $body);
 
         if ($filtered) {
@@ -117,6 +121,53 @@ class WriteGuardExtension extends Extension
 
             $rawJson = $encoded;
         }
+    }
+
+    /**
+     * Colymba's deserializer writes raw column values straight to the model
+     * — it has no concept of this module's `{"class": "...", "id": n}`
+     * has_one payload shape, or the companion `{Name}Class` column a
+     * polymorphic has_one needs alongside its FK. Left alone, a polymorphic
+     * has_one has no working way to be set through colymba's native
+     * surface at all (#23).
+     *
+     * Translates any polymorphic has_one entries in the payload into the
+     * raw `{Name}ID`/`{Name}Class` columns colymba already knows how to
+     * write, using the exact same resolution
+     * `WriteApplicator::resolveRelation()` applies on this module's own
+     * write path — one resolver, not a second implementation (#24).
+     *
+     * @param array<string, mixed> $body passed by reference — mutated in place
+     * @throws HTTPResponse_Exception wrapping an ApiError from resolution
+     *   (a bad/missing class hint, an unresolvable externalId): thrown as
+     *   HTTPResponse_Exception rather than left as ApiError because this
+     *   hook has no exception handling of its own to catch a bare ApiError.
+     */
+    private function translatePolymorphicHasOnes(array &$body): bool
+    {
+        $owner = $this->getOwner();
+        $hasOne = (array) $owner->config()->get('has_one');
+        $applicator = Injector::inst()->get(WriteApplicator::class);
+        $translated = false;
+
+        foreach ($hasOne as $relationName => $relationClass) {
+            if ($relationClass !== DataObject::class || !array_key_exists($relationName, $body)) {
+                continue;
+            }
+
+            try {
+                $resolved = $applicator->resolveRelation($relationName, $relationClass, $body[$relationName]);
+            } catch (ApiError $error) {
+                throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
+            }
+
+            unset($body[$relationName]);
+            $body[$relationName . 'ID'] = $resolved['id'];
+            $body[$relationName . 'Class'] = $resolved['class'];
+            $translated = true;
+        }
+
+        return $translated;
     }
 
     /**
@@ -159,6 +210,16 @@ class WriteGuardExtension extends Extension
             } elseif (str_ends_with($attribute, 'ID') && isset($hasOne[substr($attribute, 0, -2)])) {
                 $column = $attribute;
                 $relationName = substr($attribute, 0, -2);
+            } elseif (
+                str_ends_with($attribute, 'Class')
+                && ($hasOne[substr($attribute, 0, -5)] ?? null) === DataObject::class
+            ) {
+                // The companion Class column translatePolymorphicHasOnes()
+                // wrote alongside the FK — gate it via the same relation's
+                // allowlist entry, not as an unrelated standalone field
+                // (#25, on this surface too).
+                $column = $attribute;
+                $relationName = substr($attribute, 0, -5);
             } else {
                 $column = $attribute;
                 $relationName = null;

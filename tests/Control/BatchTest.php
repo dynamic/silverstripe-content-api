@@ -395,6 +395,36 @@ class BatchTest extends ContentApiTestCase
         $this->assertNull(ApiTestPolyObject::get()->filter('FixtureIdentifier', 'poly-fk-column')->first());
     }
 
+    public function testPolymorphicClassColumnIsIndependentlyGated(): void
+    {
+        // #25: the companion Class column must be checked on its own, not
+        // just ride along with the FK's writability check — protecting
+        // OwnerClass specifically must reject the write even though Owner
+        // (and so OwnerID) is allowed.
+        Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title', 'Owner']);
+        Config::modify()->set(ApiTestPolyObject::class, 'api_protected_fields', ['OwnerClass']);
+
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestPoly',
+                    'externalId' => 'poly-protected-class',
+                    'fields' => [
+                        'Title' => 'Poly record',
+                        'Owner' => ['class' => 'ApiTest', 'id' => (int) $owner->ID],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'batch envelope itself must not 500');
+        $this->assertSame('READONLY_FIELD', $body['data']['results'][0]['error']['code']);
+        $this->assertNull(ApiTestPolyObject::get()->filter('FixtureIdentifier', 'poly-protected-class')->first());
+    }
+
     public function testRelationModesAndExtraFields(): void
     {
         Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children', 'Tags']);

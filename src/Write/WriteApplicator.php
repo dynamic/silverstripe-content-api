@@ -166,6 +166,23 @@ class WriteApplicator
                 continue;
             }
 
+            // A polymorphic has_one's companion {Name}Class column is a
+            // second column this same payload key writes to (see below) —
+            // it must be independently gated too, not silently write
+            // alongside the FK for free just because the FK passed (#25).
+            if ($relationName !== null && ($hasOne[$relationName] ?? null) === DataObject::class) {
+                $classColumn = $relationName . 'Class';
+
+                if (!$this->isFieldWritable($className, $classColumn, $relationName, $trusted)) {
+                    $problems[] = [
+                        'field' => $name,
+                        'code' => ErrorCode::READONLY_FIELD->value,
+                        'message' => sprintf('Field "%s" is not writable via the content API.', $classColumn),
+                    ];
+                    continue;
+                }
+            }
+
             $plan[] = [$name, $columnName, $relationName, $value];
         }
 
@@ -380,9 +397,14 @@ class WriteApplicator
      * polymorphic relation is rejected as ambiguous, rather than reaching
      * DataObject::get_by_id(DataObject::class, ...) downstream and 500ing.
      *
+     * Public: also called by WriteGuardExtension to translate a polymorphic
+     * has_one's `{"class","id"}` payload shape into raw FK + Class column
+     * writes before colymba's own deserializer (which has no concept of
+     * either) applies the payload on its native `/api` surface (#23).
+     *
      * @return array{id: int, class: ?string, polymorphic: bool}
      */
-    protected function resolveRelation(string $relationName, string $relationClass, mixed $value): array
+    public function resolveRelation(string $relationName, string $relationClass, mixed $value): array
     {
         $isPolymorphic = $relationClass === DataObject::class;
 
@@ -406,21 +428,9 @@ class WriteApplicator
         }
 
         if (is_array($value)) {
-            $targetClass = $relationClass;
-
-            if ($isPolymorphic) {
-                if (!isset($value['class'])) {
-                    throw new ApiError(
-                        ErrorCode::PAYLOAD_INVALID,
-                        sprintf(
-                            'Relation "%s" is polymorphic and requires an explicit "class" hint.',
-                            $relationName
-                        )
-                    );
-                }
-
-                $targetClass = $this->registry->resolve((string) $value['class']);
-            }
+            $targetClass = $isPolymorphic
+                ? $this->registry->resolvePolymorphicHint($relationName, $value)
+                : $relationClass;
 
             if (isset($value['id'])) {
                 return [

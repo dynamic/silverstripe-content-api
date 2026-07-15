@@ -160,17 +160,7 @@ class PermissionPolicy
                     continue;
                 }
 
-                if (!is_array($value) || !isset($value['class'])) {
-                    throw new ApiError(
-                        ErrorCode::PAYLOAD_INVALID,
-                        sprintf(
-                            'Relation "%s" is polymorphic and requires an explicit "class" hint.',
-                            $relationName
-                        )
-                    );
-                }
-
-                $relationClass = $this->registry->resolve((string) $value['class']);
+                $relationClass = $this->registry->resolvePolymorphicHint($relationName, $value);
             }
 
             $id = match (true) {
