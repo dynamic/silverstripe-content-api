@@ -7,6 +7,9 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
+use Dynamic\ContentApi\Tests\Stub\ApiTestLink;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use Dynamic\ContentApi\Write\Transformers\LinkTransformer;
 use DNADesign\Elemental\Models\ElementContent;
 use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\CMS\Model\SiteTree;
@@ -535,5 +538,85 @@ class CompositionTest extends ContentApiTestCase
             (int) $e2->Items()->first()->ID,
             "e2 must not adopt e1's child"
         );
+    }
+
+    public function testPageCreationValidationFailureDoesNotLeakRawExceptionText(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'api_access', true);
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => [
+                'match' => ['urlSegment' => 'brand-new-page'],
+                'createIfMissing' => ['title' => 'Invalid', 'className' => 'ApiTestPage'],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        // A fixed, generic summary — never the raw exception text (#21).
+        $this->assertSame('1 field(s) failed validation. (composition rolled back)', $body['error']['message']);
+        $this->assertNotEmpty($body['error']['details']);
+        $this->assertSame('Title', $body['error']['details'][0]['field']);
+    }
+
+    public function testChildValidationFailureDoesNotLeakRawExceptionText(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'invalid-child-parent',
+                    'fields' => ['Title' => 'Parent'],
+                    'children' => [
+                        'Items' => [
+                            ['externalId' => 'invalid-child', 'fields' => ['Title' => 'Invalid']],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        // Prefixed with which child failed, but no raw exception text (#21).
+        $this->assertSame(
+            'Child "invalid-child": 1 field(s) failed validation. (composition rolled back)',
+            $body['error']['message']
+        );
+        $this->assertSame('Title', $body['error']['details'][0]['field']);
+    }
+
+    public function testLinkValidationFailureDoesNotLeakRawExceptionText(): void
+    {
+        Config::modify()->merge(LinkTransformer::class, 'type_map', ['TestLink' => ApiTestLink::class]);
+
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'invalid-link-owner',
+                    'fields' => [
+                        'Title' => 'Owner',
+                        'Cta' => ['type' => 'TestLink', 'title' => 'Invalid'],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        // Prefixed with which field's link failed, but no raw exception
+        // text (#21).
+        $this->assertSame(
+            'Link for "Cta": 1 field(s) failed validation. (composition rolled back)',
+            $body['error']['message']
+        );
+        $this->assertSame('LinkText', $body['error']['details'][0]['field']);
     }
 }
