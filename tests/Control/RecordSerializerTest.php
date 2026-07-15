@@ -51,7 +51,7 @@ class RecordSerializerTest extends ContentApiTestCase
         );
     }
 
-    public function testPolymorphicRelationWithUnregisteredClassEmitsFqcnNotNull(): void
+    public function testPolymorphicRelationWithUnregisteredClassOmitsClassKey(): void
     {
         $owner = ApiTestCascadeObject::create(['Title' => 'Owner']);
         $owner->write();
@@ -66,11 +66,37 @@ class RecordSerializerTest extends ContentApiTestCase
 
         $body = $this->decode($this->apiGet("records/ApiTestPoly/{$poly->ID}", $this->token));
 
-        $owner = $body['data']['relations']['Owner'];
-        $this->assertSame(ApiTestCascadeObject::class, $owner['class'], 'falls back to the FQCN, not null');
+        $ownerRelation = $body['data']['relations']['Owner'];
+        $this->assertSame($owner->ID, $ownerRelation['id']);
+        $this->assertArrayNotHasKey(
+            'class',
+            $ownerRelation,
+            'must not leak the internal FQCN of a class the registry never exposed'
+        );
         $this->assertTrue(
             $this->logHandler->hasWarningThatContains('unregistered'),
             'expected a warning logged for the unregistered polymorphic target class'
+        );
+    }
+
+    public function testPolymorphicRelationWithNullIdDoesNotWarnOnStaleClassColumn(): void
+    {
+        // A write path that clears only the FK (e.g. colymba's native PUT,
+        // which zeroes OwnerID but never touches OwnerClass) leaves a stale
+        // Class value behind. The relation is genuinely unset from the
+        // caller's perspective, so this must not fire the "unregistered
+        // class" warning at all.
+        $poly = ApiTestPolyObject::create(['Title' => 'Cleared ref']);
+        $poly->setField('OwnerID', 0);
+        $poly->setField('OwnerClass', ApiTestCascadeObject::class);
+        $poly->write();
+
+        $body = $this->decode($this->apiGet("records/ApiTestPoly/{$poly->ID}", $this->token));
+
+        $this->assertNull($body['data']['relations']['Owner']);
+        $this->assertFalse(
+            $this->logHandler->hasWarningRecords(),
+            'a cleared FK must not trigger a warning based on the stale Class column'
         );
     }
 }

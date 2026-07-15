@@ -8,7 +8,6 @@ use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
-use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
 use Throwable;
@@ -58,11 +57,14 @@ class RecordSerializer
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
         'externalIds' => '%$' . ExternalIdResolver::class,
+        'logger' => '%$' . LoggerInterface::class,
     ];
 
     public ?ClassRegistry $registry = null;
 
     public ?ExternalIdResolver $externalIds = null;
+
+    public ?LoggerInterface $logger = null;
 
     public function serialize(DataObject $record): array
     {
@@ -139,29 +141,41 @@ class RecordSerializer
                     // round-trip preserves the target class. "class" is a
                     // short registry ref, the same shape
                     // WriteApplicator::resolveRelation() requires on write.
-                    $targetClassName = $record->getField($name . 'Class') ?: null;
-                    $classRef = $targetClassName ? $this->registry->refFor($targetClassName) : null;
+                    //
+                    // Only look at the Class column when the relation is
+                    // actually set: a write path that clears just the FK
+                    // (leaving a stale Class value behind) must not trigger
+                    // a spurious "unregistered class" warning for a relation
+                    // that's genuinely unset from the caller's perspective.
+                    if ($id === null) {
+                        $relations[$name] = null;
+                    } else {
+                        $targetClassName = $record->getField($name . 'Class') ?: null;
+                        $classRef = $targetClassName ? $this->registry->refFor($targetClassName) : null;
 
-                    if ($targetClassName && $classRef === null) {
-                        // Not registered in ClassRegistry (never exposed, or
-                        // the mapping was removed after this record was
-                        // written) — fall back to the FQCN rather than null
-                        // so the response stays honest; a write attempt with
-                        // it will get a clear UNKNOWN_CLASS error instead of
-                        // silently targeting nothing (#26).
-                        Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
-                            'Polymorphic has_one "%s" on %s#%d targets unregistered class "%s".',
-                            $name,
-                            $className,
-                            (int) $record->ID,
-                            $targetClassName
-                        ));
+                        if ($targetClassName && $classRef === null) {
+                            // Not registered in ClassRegistry (never exposed,
+                            // or the mapping was removed after this record
+                            // was written). Omit "class" rather than emit a
+                            // misleading null (#26) or leak the internal
+                            // FQCN of a class the registry's deny-by-default
+                            // model deliberately never exposed — a write
+                            // attempt without a class hint gets a clear
+                            // PAYLOAD_INVALID instead of silently targeting
+                            // nothing.
+                            $this->logger->warning(sprintf(
+                                'Polymorphic has_one "%s" on %s#%d targets unregistered class "%s".',
+                                $name,
+                                $className,
+                                (int) $record->ID,
+                                $targetClassName
+                            ));
+                        }
+
+                        $relations[$name] = $classRef !== null
+                            ? ['id' => $id, 'class' => $classRef]
+                            : ['id' => $id];
                     }
-
-                    $relations[$name] = $id === null ? null : [
-                        'id' => $id,
-                        'class' => $classRef ?? $targetClassName,
-                    ];
                 } else {
                     $relations[$name] = $id;
                 }
@@ -178,7 +192,7 @@ class RecordSerializer
                 try {
                     $relations[$name] = array_map('intval', $record->{$name}()->column('ID'));
                 } catch (Throwable $exception) {
-                    Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+                    $this->logger->warning(sprintf(
                         'Relation "%s" on %s#%d could not be read: %s',
                         $name,
                         $className,
