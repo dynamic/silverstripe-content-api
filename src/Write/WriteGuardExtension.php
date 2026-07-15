@@ -248,6 +248,31 @@ class WriteGuardExtension extends Extension
             $polymorphicWritable[$relationName . 'Class'] = $combined;
         }
 
+        // A relation NOT in $translatedRelations can still have both its
+        // raw {Name}ID and {Name}Class keys sent directly together,
+        // bypassing the wrapped {"class","id"} shape
+        // translatePolymorphicHasOnes() expects. The Class column can
+        // never be legitimately set this way (see the unconditional revert
+        // below), so if both raw keys are present, revert BOTH rather than
+        // letting the FK alone through — applying just the FK half of an
+        // untranslated pair produces exactly the torn FK-repointed/
+        // Class-stale state this mechanism exists to prevent. A bare FK
+        // key with no Class key at all (the legitimate single-column
+        // repoint case) is untouched here and falls through to the normal
+        // independent check below.
+        foreach ($hasOne as $relationName => $relationClass) {
+            if ($relationClass !== DataObject::class || in_array($relationName, $translatedRelations, true)) {
+                continue;
+            }
+
+            $idKey = $relationName . 'ID';
+            $classKey = $relationName . 'Class';
+
+            if (array_key_exists($idKey, $body) && array_key_exists($classKey, $body)) {
+                $polymorphicWritable[$idKey] = false;
+            }
+        }
+
         foreach (array_keys($body) as $attribute) {
             $polymorphicClassRelation = $applicator->polymorphicClassColumnRelation($attribute, $hasOne);
 

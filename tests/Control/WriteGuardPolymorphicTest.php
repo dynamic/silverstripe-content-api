@@ -185,6 +185,35 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         );
     }
 
+    public function testRawIdAndClassColumnsSentTogetherRevertBothNotJustClass(): void
+    {
+        // A client sending both raw "OwnerID" and "OwnerClass" keys
+        // directly — bypassing the wrapped "Owner": {"class","id"} shape
+        // entirely — must not end up with the FK repointed while the
+        // Class column silently stays stale: OwnerClass can never be
+        // legitimately set this way, so applying only the FK half would
+        // produce exactly the torn FK+Class state this mechanism exists
+        // to prevent. Both must revert together.
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $poly = ApiTestPolyObject::create(['Title' => 'Raw pair together']);
+        $poly->write();
+        $original = ApiTestPolyObject::get()->byID($poly->ID);
+        $originalOwnerId = (int) $original->OwnerID;
+        $originalOwnerClass = $original->OwnerClass;
+
+        $response = $this->colymba('PUT', "Poly/{$poly->ID}", [
+            'OwnerID' => (int) $owner->ID,
+            'OwnerClass' => ApiTestObject::class,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestPolyObject::get()->byID($poly->ID);
+        $this->assertSame($originalOwnerId, (int) $fresh->OwnerID, 'FK must revert too, not just the Class column');
+        $this->assertSame($originalOwnerClass, $fresh->OwnerClass);
+    }
+
     public function testFullyDeniedRelationWithUnresolvableHintSilentlyRevertsInsteadOfErroring(): void
     {
         // #23 ordering fix: resolving a relation's class hint must not run

@@ -118,6 +118,7 @@ class SchemaService
         $singleton = DataObject::singleton($className);
         $schema = DataObject::getSchema();
         $tokens = (array) static::config()->get('field_tokens');
+        $hasOneSpec = (array) $singleton->hasOne();
 
         $fields = [];
 
@@ -127,14 +128,14 @@ class SchemaService
             }
 
             // has_one FK columns surface under relations instead.
-            if (str_ends_with($name, 'ID') && isset($singleton->hasOne()[substr($name, 0, -2)])) {
+            if (str_ends_with($name, 'ID') && isset($hasOneSpec[substr($name, 0, -2)])) {
                 continue;
             }
 
             // A polymorphic has_one's companion {Name}Class column is
             // managed as part of the relation (see hasOne below), never
             // independently writable as a standalone field (#25).
-            if ($this->applicator->polymorphicClassColumnRelation($name, (array) $singleton->hasOne()) !== null) {
+            if ($this->applicator->polymorphicClassColumnRelation($name, $hasOneSpec) !== null) {
                 continue;
             }
 
@@ -158,7 +159,7 @@ class SchemaService
 
         $hasOne = [];
 
-        foreach ((array) $singleton->hasOne() as $name => $relationClass) {
+        foreach ($hasOneSpec as $name => $relationClass) {
             // A polymorphic has_one's FK and companion {Name}Class column
             // are written and gated as a pair (#25) — advertising the FK's
             // writability alone would tell a client a relation is writable
