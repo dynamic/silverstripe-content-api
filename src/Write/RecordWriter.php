@@ -188,7 +188,7 @@ class RecordWriter
         try {
             $record->write();
         } catch (ValidationException $exception) {
-            throw $this->validationError($exception);
+            throw ApiError::fromValidation($exception);
         }
 
         $warnings = $this->applicator->getWarnings();
@@ -218,24 +218,5 @@ class RecordWriter
             'operation' => $operation,
             'warnings' => $warnings,
         ];
-    }
-
-    protected function validationError(ValidationException $exception): ApiError
-    {
-        $details = [];
-
-        foreach ($exception->getResult()->getMessages() as $message) {
-            $details[] = [
-                'field' => ($message['fieldName'] ?? '') !== '' ? $message['fieldName'] : null,
-                'code' => 'VALIDATION',
-                'message' => (string) ($message['message'] ?? ''),
-            ];
-        }
-
-        return new ApiError(
-            ErrorCode::VALIDATION_FAILED,
-            sprintf('%d field(s) failed validation.', max(1, count($details))),
-            $details
-        );
     }
 }

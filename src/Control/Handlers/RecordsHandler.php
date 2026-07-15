@@ -124,21 +124,26 @@ class RecordsHandler
             // pages that can never be paged around (#20). This trades a
             // full-list iteration for correctness, consistent with the
             // module's reject-rather-than-silently-degrade posture.
-            $visible = [];
-
-            foreach ($list as $record) {
-                if ($this->policy->canViewRecord($record, $context->member)) {
-                    $visible[] = $record;
-                }
-            }
-
-            $total = count($visible);
-            $page = array_slice($visible, $offset, $limit);
-
+            //
+            // Every row still has to be visited and canView-checked to reach
+            // an exact total — there's no SQL pushdown for it — but we only
+            // ever hold $limit records in memory at once (not the entire
+            // visible set): DataList::filterByCallback() would materialize
+            // every visible row into an ArrayList before we could slice it,
+            // which defeats that bound for a large table.
+            $total = 0;
             $data = [];
 
-            foreach ($page as $record) {
-                $data[] = $this->serializer->serialize($record);
+            foreach ($list as $record) {
+                if (!$this->policy->canViewRecord($record, $context->member)) {
+                    continue;
+                }
+
+                if ($total >= $offset && count($data) < $limit) {
+                    $data[] = $this->serializer->serialize($record);
+                }
+
+                $total++;
             }
 
             return [

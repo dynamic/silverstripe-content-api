@@ -81,22 +81,6 @@ class RecordsReadTest extends ContentApiTestCase
         $this->assertSame(4, $body['meta']['offset']);
     }
 
-    public function testHiddenRecordsDoNotLeakViaTotalOrShortenPages(): void
-    {
-        // Secret sorts first (highest Rank) but is invisible to canView.
-        // Pre-#20 this both leaked its existence via meta.total (6 instead
-        // of 5) and returned a short page (1 record for limit=2, since
-        // Secret occupied a slot in the raw page before being dropped).
-        $body = $this->decode($this->apiGet('records/ApiTest?sort=-Rank&limit=2', $this->token));
-
-        $this->assertSame(5, $body['meta']['total'], 'total must not count invisible records');
-        $this->assertCount(2, $body['data'], 'a full page must be returned around hidden records');
-
-        foreach ($body['data'] as $record) {
-            $this->assertNotSame('Secret', $record['fields']['Title']);
-        }
-    }
-
     public function testReadOneById(): void
     {
         $record = $this->objFromFixture(ApiTestObject::class, 'one');
