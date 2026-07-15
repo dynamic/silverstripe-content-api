@@ -112,13 +112,19 @@ class ColorTokenTransformer implements ValueTransformer
         // ColorTokenResolver reports failureReason as a plain string (see
         // Dynamic\Essentials\Service\ColorTokenResult) so this class never
         // needs to import it. A palette-origin failure (no colors configured
-        // / index out of range) reuses the palette wording below; the
-        // resolver's three "no combos configured" button-side failure
-        // reasons all collapse onto this class's one original button
-        // message, unchanged; a JSON-encode failure gets its own distinct
-        // message so a genuinely-configured-but-unserializable combo isn't
-        // misreported as unconfigured.
-        if (in_array($result->failureReason, ['no_background_colors', 'palette_out_of_range'], true)) {
+        // / index out of range / stale-class method missing) reuses the
+        // palette wording below; the resolver's "no combos configured"
+        // button-side failure reasons all collapse onto this class's one
+        // original button message, unchanged; a JSON-encode failure gets its
+        // own distinct message so a genuinely-configured-but-unserializable
+        // combo isn't misreported as unconfigured.
+        if (
+            in_array(
+                $result->failureReason,
+                ['no_background_colors', 'palette_out_of_range', 'background_method_missing'],
+                true
+            )
+        ) {
             throw new ApiError(ErrorCode::TOKEN_RESOLUTION_FAILED, $this->paletteFailureMessage($result, $token));
         }
 
@@ -146,6 +152,14 @@ class ColorTokenTransformer implements ValueTransformer
     {
         if ($result->failureReason === 'palette_out_of_range') {
             return sprintf('%s is out of range — the project palette has indexes 0–%d.', $token, $result->maxIndex);
+        }
+
+        if ($result->failureReason === 'background_method_missing') {
+            return sprintf(
+                'Cannot resolve %s — ColorConfigurationProvider is missing getBackgroundColors() '
+                    . '(a stale class definition, e.g. from a cached opcache/manifest — try a fresh flush).',
+                $token
+            );
         }
 
         return sprintf('Cannot resolve %s — no background_colors configured for this project.', $token);
