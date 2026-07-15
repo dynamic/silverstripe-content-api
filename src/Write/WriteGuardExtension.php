@@ -92,8 +92,7 @@ class WriteGuardExtension extends Extension
         $translatedRelations = $this->translatePolymorphicHasOnes($body);
         $filtered = $translatedRelations !== [] || $filtered;
 
-        WriteGuardPayloads::store($this->getOwner(), $body);
-        WriteGuardPayloads::storeTranslatedRelations($this->getOwner(), $translatedRelations);
+        WriteGuardPayloads::store($this->getOwner(), $body, $translatedRelations);
 
         if ($filtered) {
             $encoded = json_encode($body);
@@ -167,7 +166,7 @@ class WriteGuardExtension extends Extension
     {
         $owner = $this->getOwner();
         $className = get_class($owner);
-        $hasOne = (array) $owner->config()->get('has_one');
+        $hasOne = (array) $owner->hasOne();
         $applicator = Injector::inst()->get(WriteApplicator::class);
         $translated = [];
 
@@ -220,7 +219,7 @@ class WriteGuardExtension extends Extension
         }
 
         $className = get_class($owner);
-        $hasOne = (array) $owner->config()->get('has_one');
+        $hasOne = (array) $owner->hasOne();
         $changed = $owner->getChangedFields(true, 2);
         $applicator = Injector::inst()->get(WriteApplicator::class);
         $translatedRelations = WriteGuardPayloads::translatedRelations($owner);
@@ -242,10 +241,14 @@ class WriteGuardExtension extends Extension
         // the untouched Class column happens to be protected.
         $polymorphicWritable = [];
 
+        // A relation only ever lands in $translatedRelations after
+        // translatePolymorphicHasOnes() already confirmed
+        // isPolymorphicRelationWritable() for it moments earlier in this
+        // same request — that answer cannot have changed since, so it's
+        // reused verbatim rather than recomputed.
         foreach ($translatedRelations as $relationName) {
-            $combined = $applicator->isPolymorphicRelationWritable($className, $relationName);
-            $polymorphicWritable[$relationName . 'ID'] = $combined;
-            $polymorphicWritable[$relationName . 'Class'] = $combined;
+            $polymorphicWritable[$relationName . 'ID'] = true;
+            $polymorphicWritable[$relationName . 'Class'] = true;
         }
 
         // A relation NOT in $translatedRelations can still have both its
@@ -253,23 +256,26 @@ class WriteGuardExtension extends Extension
         // bypassing the wrapped {"class","id"} shape
         // translatePolymorphicHasOnes() expects. The Class column can
         // never be legitimately set this way (see the unconditional revert
-        // below), so if both raw keys are present, revert BOTH rather than
-        // letting the FK alone through — applying just the FK half of an
-        // untranslated pair produces exactly the torn FK-repointed/
-        // Class-stale state this mechanism exists to prevent. A bare FK
-        // key with no Class key at all (the legitimate single-column
-        // repoint case) is untouched here and falls through to the normal
-        // independent check below.
+        // below), so if the Class column's value actually changed, revert
+        // the FK alongside it rather than letting the FK half through —
+        // applying just the FK half of an untranslated pair produces
+        // exactly the torn FK-repointed/Class-stale state this mechanism
+        // exists to prevent.
+        //
+        // Gating on $changed (not mere presence in $body) matters: a
+        // routine GET-then-PUT-verbatim round trip echoes the Class
+        // column's existing, unchanged value back in the same request as a
+        // legitimate FK repoint — that must not be treated as a bypass
+        // attempt and must not block the repoint (a bare FK key with no
+        // Class key at all is unaffected either way, falling through to
+        // the normal independent check below).
         foreach ($hasOne as $relationName => $relationClass) {
             if ($relationClass !== DataObject::class || in_array($relationName, $translatedRelations, true)) {
                 continue;
             }
 
-            $idKey = $relationName . 'ID';
-            $classKey = $relationName . 'Class';
-
-            if (array_key_exists($idKey, $body) && array_key_exists($classKey, $body)) {
-                $polymorphicWritable[$idKey] = false;
+            if (array_key_exists($relationName . 'Class', $changed)) {
+                $polymorphicWritable[$relationName . 'ID'] = false;
             }
         }
 

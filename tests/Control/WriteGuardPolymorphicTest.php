@@ -214,6 +214,38 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         $this->assertSame($originalOwnerClass, $fresh->OwnerClass);
     }
 
+    public function testGetThenPutVerbatimEchoingUnchangedClassDoesNotDropTheFkRepoint(): void
+    {
+        // The routine GET-then-PUT-verbatim pattern: a naive client GETs a
+        // record (which serializes OwnerID/OwnerClass as plain columns on
+        // this native surface), changes only OwnerID, and PUTs the whole
+        // body back — OwnerClass comes along unchanged. This must not be
+        // treated as a same-request "raw pair" bypass attempt: OwnerClass
+        // didn't actually change, so the legitimate FK repoint must apply.
+        $firstOwner = $this->objFromFixture(ApiTestObject::class, 'one');
+        $secondOwner = $this->objFromFixture(ApiTestObject::class, 'two');
+
+        $poly = ApiTestPolyObject::create(['Title' => 'Verbatim echo']);
+        $poly->setField('OwnerID', $firstOwner->ID);
+        $poly->setField('OwnerClass', ApiTestObject::class);
+        $poly->write();
+
+        $response = $this->colymba('PUT', "Poly/{$poly->ID}", [
+            'OwnerID' => (int) $secondOwner->ID,
+            'OwnerClass' => ApiTestObject::class,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestPolyObject::get()->byID($poly->ID);
+        $this->assertSame(
+            (int) $secondOwner->ID,
+            (int) $fresh->OwnerID,
+            'echoing back the unchanged Class column must not drop a legitimate FK repoint'
+        );
+        $this->assertSame(ApiTestObject::class, $fresh->OwnerClass);
+    }
+
     public function testFullyDeniedRelationWithUnresolvableHintSilentlyRevertsInsteadOfErroring(): void
     {
         // #23 ordering fix: resolving a relation's class hint must not run

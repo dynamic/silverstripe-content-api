@@ -128,14 +128,18 @@ class WriteApplicator
             $isHasOneFk = str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)]);
             $polymorphicClassRelation = $this->polymorphicClassColumnRelation($name, $hasOne);
             $isDbField = $schema->fieldSpec($className, $name) !== null;
+            $trusted = isset($internalFields[$name]);
 
             // A polymorphic has_one's companion {Name}Class column is only
-            // ever set as a side effect of resolving its relation key (see
-            // resolveRelation() below) — never directly. Otherwise a client
-            // could set an arbitrary raw class name with no
-            // ClassRegistry/resolveRelation() validation at all, and
-            // independently of the FK's own writability (#25).
-            if ($polymorphicClassRelation !== null) {
+            // ever set directly by request-derived input as a side effect
+            // of resolving its relation key (see resolveRelation() below),
+            // never as a bare payload key — otherwise a client could set an
+            // arbitrary raw class name with no ClassRegistry/
+            // resolveRelation() validation at all, independently of the
+            // FK's own writability (#25). Trusted in-process code (the same
+            // channel that already writes ParentID/Sort) may still set it
+            // directly, same as any other trusted field.
+            if ($polymorphicClassRelation !== null && !$trusted) {
                 $problems[] = [
                     'field' => $name,
                     'code' => ErrorCode::READONLY_FIELD->value,
@@ -176,7 +180,6 @@ class WriteApplicator
                 default => null,
             };
             $columnName = $isHasOne ? $name . 'ID' : $name;
-            $trusted = isset($internalFields[$name]);
 
             if (!$this->isFieldWritable($className, $columnName, $relationName, $trusted)) {
                 $problems[] = [

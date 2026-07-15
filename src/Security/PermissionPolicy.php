@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Security;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
@@ -29,9 +30,12 @@ class PermissionPolicy
 
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
+        'externalIds' => '%$' . ExternalIdResolver::class,
     ];
 
     public ?ClassRegistry $registry = null;
+
+    public ?ExternalIdResolver $externalIds = null;
 
     /**
      * Gate on the CONTENT_API_ACCESS permission alone, independent of any
@@ -144,6 +148,11 @@ class PermissionPolicy
      * from a tenant-scoped canCreate()'s context — a fail-open gap a project
      * feedback lesson (see class doc) specifically warned against.
      *
+     * The same fail-open concern applies to the `{"externalId": "..."}`
+     * payload shape — resolveRelation() accepts it as equally valid to a
+     * numeric id, so a tenant-scoped canCreate() must see it hydrated too,
+     * not silently treated as if the relation were absent from the payload.
+     *
      * @return array<string, mixed>
      */
     protected function buildCreateContext(string $className, array $fields): array
@@ -171,6 +180,12 @@ class PermissionPolicy
 
             if ($id > 0) {
                 $context[$relationName] = DataObject::get_by_id($relationClass, $id);
+                continue;
+            }
+
+            if (is_array($value) && isset($value['externalId'])) {
+                $this->externalIds->assertSupported($relationClass);
+                $context[$relationName] = $this->externalIds->find($relationClass, (string) $value['externalId']);
             }
         }
 
