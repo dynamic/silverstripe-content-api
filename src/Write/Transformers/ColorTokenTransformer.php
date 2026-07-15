@@ -17,11 +17,16 @@ use SilverStripe\ORM\DataObject;
  *   back to the background's first combo when the label doesn't exist, so
  *   shared payloads use generic labels)
  *
- * Ported from the fixtures recipe's PopulateColorResolver minus its
- * PopulateFactory-backtrace gating — the API is its own trusted context, so
- * ORM-write color bugs (unresolved literals rendering white-on-white) can't
- * happen here: an unresolvable token FAILS the write with
- * TOKEN_RESOLUTION_FAILED instead of persisting a literal.
+ * The actual parsing/lookup/fallback algorithm lives in essentials-tools'
+ * `Dynamic\Essentials\Service\ColorTokenResolver`, shared with the fixtures
+ * recipe's `PopulateColorResolver` (both used to duplicate it independently).
+ * This class only decides *when* to resolve (which field/token shape) and
+ * *what to do on failure* — the API is its own trusted context, so an
+ * unresolvable token FAILS the write with TOKEN_RESOLUTION_FAILED instead of
+ * persisting a literal (unlike the fixtures recipe, which logs and leaves the
+ * literal in place). `resolvePalette()`/`resolveButton()` below map the
+ * resolver's neutral `ColorTokenResult` onto that throw policy, preserving
+ * this class's original three error messages verbatim.
  *
  * Registered only when essentials-tools is installed (essentials.yml).
  */
@@ -35,9 +40,14 @@ class ColorTokenTransformer implements ValueTransformer
     private const BUTTON_PATTERN = '/^\$button\((\d+),\s*(.+)\)$/';
 
     /**
-     * String constant so there is no hard dependency on essentials-tools.
+     * String constants so there is no hard dependency on essentials-tools —
+     * these classes are only ever referenced once `supports()`'s
+     * `class_exists()` gate (below) has already confirmed the package is
+     * installed.
      */
     private const COLOR_PROVIDER_CLASS = 'Dynamic\\Essentials\\Service\\ColorConfigurationProvider';
+
+    private const COLOR_TOKEN_RESOLVER_CLASS = 'Dynamic\\Essentials\\Service\\ColorTokenResolver';
 
     /**
      * Fields eligible for token resolution.
@@ -52,7 +62,14 @@ class ColorTokenTransformer implements ValueTransformer
         return is_string($value)
             && in_array($fieldName, (array) static::config()->get('token_fields'), true)
             && (bool) preg_match('/^\$(palette|button)\(/', $value)
-            && class_exists(ColorTokenTransformer::COLOR_PROVIDER_CLASS);
+            // Both classes are gated: an essentials-tools install that has
+            // ColorConfigurationProvider but predates ColorTokenResolver
+            // (staggered upgrades — the two packages have no hard dependency
+            // on each other) must degrade to "resolution unsupported" here,
+            // not reach resolvePalette()/resolveButton() and hard-fail on a
+            // missing class.
+            && class_exists(ColorTokenTransformer::COLOR_PROVIDER_CLASS)
+            && class_exists(ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS);
     }
 
     public function transform(DataObject $record, string $fieldName, mixed $value): mixed
@@ -73,45 +90,64 @@ class ColorTokenTransformer implements ValueTransformer
 
     protected function resolvePalette(int $index, string $token): string
     {
-        $provider = ColorTokenTransformer::COLOR_PROVIDER_CLASS;
-        $colors = array_values((array) $provider::getBackgroundColors());
+        $resolver = ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS;
+        $result = $resolver::resolvePalette($index);
 
-        if ($colors === []) {
-            throw new ApiError(
-                ErrorCode::TOKEN_RESOLUTION_FAILED,
-                sprintf('Cannot resolve %s — no background_colors configured for this project.', $token)
-            );
+        if ($result->success) {
+            return $result->value;
         }
 
-        if (!isset($colors[$index])) {
-            throw new ApiError(
-                ErrorCode::TOKEN_RESOLUTION_FAILED,
-                sprintf('%s is out of range — the project palette has indexes 0–%d.', $token, count($colors) - 1)
-            );
-        }
-
-        return $colors[$index];
+        throw new ApiError(ErrorCode::TOKEN_RESOLUTION_FAILED, $this->paletteFailureMessage($result, $token));
     }
 
     protected function resolveButton(int $bgIndex, string $label, string $token): string
     {
-        $bgColor = $this->resolvePalette($bgIndex, $token);
+        $resolver = ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS;
+        $result = $resolver::resolveButton($bgIndex, $label);
 
-        $provider = ColorTokenTransformer::COLOR_PROVIDER_CLASS;
-        $combos = (array) $provider::getButtonColorCombinations();
-        $bgButtons = (array) ($combos[$bgColor] ?? []);
+        if ($result->success) {
+            return $result->value;
+        }
 
-        if ($bgButtons === []) {
+        // ColorTokenResolver reports failureReason as a plain string (see
+        // Dynamic\Essentials\Service\ColorTokenResult) so this class never
+        // needs to import it. A palette-origin failure (no colors configured
+        // / index out of range) reuses the palette wording below; the
+        // resolver's three "no combos configured" button-side failure
+        // reasons all collapse onto this class's one original button
+        // message, unchanged; a JSON-encode failure gets its own distinct
+        // message so a genuinely-configured-but-unserializable combo isn't
+        // misreported as unconfigured.
+        if (in_array($result->failureReason, ['no_background_colors', 'palette_out_of_range'], true)) {
+            throw new ApiError(ErrorCode::TOKEN_RESOLUTION_FAILED, $this->paletteFailureMessage($result, $token));
+        }
+
+        if ($result->failureReason === 'json_encode_failed') {
             throw new ApiError(
                 ErrorCode::TOKEN_RESOLUTION_FAILED,
-                sprintf('Cannot resolve %s — no button colors configured for background %s.', $token, $bgColor)
+                sprintf('Cannot resolve %s — the resolved button color combo could not be encoded.', $token)
             );
         }
 
-        // Exact label, else the background's first combo (generic-label
-        // payloads adopt each project's own label names).
-        $combo = $bgButtons[$label] ?? reset($bgButtons);
+        throw new ApiError(
+            ErrorCode::TOKEN_RESOLUTION_FAILED,
+            sprintf(
+                'Cannot resolve %s — no button colors configured for background %s.',
+                $token,
+                $result->backgroundColor
+            )
+        );
+    }
 
-        return json_encode($combo, JSON_THROW_ON_ERROR);
+    /**
+     * @param object $result a Dynamic\Essentials\Service\ColorTokenResult
+     */
+    private function paletteFailureMessage(object $result, string $token): string
+    {
+        if ($result->failureReason === 'palette_out_of_range') {
+            return sprintf('%s is out of range — the project palette has indexes 0–%d.', $token, $result->maxIndex);
+        }
+
+        return sprintf('Cannot resolve %s — no background_colors configured for this project.', $token);
     }
 }
