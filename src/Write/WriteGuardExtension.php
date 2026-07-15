@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Write;
 
+use RuntimeException;
 use SilverStripe\Control\Controller;
 use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
@@ -88,7 +89,22 @@ class WriteGuardExtension extends Extension
         WriteGuardPayloads::store($this->getOwner(), $body);
 
         if ($filtered) {
-            $rawJson = json_encode($body) ?: $rawJson;
+            $encoded = json_encode($body);
+
+            if ($encoded === false) {
+                // A guard that can silently no-op on an encoding failure is
+                // worse than one that errors loudly (#22) — falling back to
+                // $rawJson here would mean colymba deserializes the
+                // *original, unstripped* payload, silently bypassing the
+                // relation-key strip this method just computed.
+                throw new RuntimeException(sprintf(
+                    'WriteGuardExtension could not re-encode the filtered payload for %s (json_encode: %s).',
+                    get_class($this->getOwner()),
+                    json_last_error_msg()
+                ));
+            }
+
+            $rawJson = $encoded;
         }
     }
 

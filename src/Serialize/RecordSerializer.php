@@ -4,9 +4,11 @@ namespace Dynamic\ContentApi\Serialize;
 
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
 use Throwable;
@@ -138,9 +140,27 @@ class RecordSerializer
                     // short registry ref, the same shape
                     // WriteApplicator::resolveRelation() requires on write.
                     $targetClassName = $record->getField($name . 'Class') ?: null;
+                    $classRef = $targetClassName ? $this->registry->refFor($targetClassName) : null;
+
+                    if ($targetClassName && $classRef === null) {
+                        // Not registered in ClassRegistry (never exposed, or
+                        // the mapping was removed after this record was
+                        // written) — fall back to the FQCN rather than null
+                        // so the response stays honest; a write attempt with
+                        // it will get a clear UNKNOWN_CLASS error instead of
+                        // silently targeting nothing (#26).
+                        Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+                            'Polymorphic has_one "%s" on %s#%d targets unregistered class "%s".',
+                            $name,
+                            $className,
+                            (int) $record->ID,
+                            $targetClassName
+                        ));
+                    }
+
                     $relations[$name] = $id === null ? null : [
                         'id' => $id,
-                        'class' => $targetClassName ? $this->registry->refFor($targetClassName) : null,
+                        'class' => $classRef ?? $targetClassName,
                     ];
                 } else {
                     $relations[$name] = $id;
@@ -152,10 +172,20 @@ class RecordSerializer
             if (isset($hasMany[$name]) || isset($manyMany[$name])) {
                 // Guarded: a misconfigured third-party relation (e.g. a
                 // has_many whose target lacks the has_one in this manifest)
-                // must not take down the whole record read.
+                // must not take down the whole record read — but it must
+                // still be discoverable, not indistinguishable from a
+                // genuinely empty relation (#22).
                 try {
                     $relations[$name] = array_map('intval', $record->{$name}()->column('ID'));
-                } catch (Throwable) {
+                } catch (Throwable $exception) {
+                    Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+                        'Relation "%s" on %s#%d could not be read: %s',
+                        $name,
+                        $className,
+                        (int) $record->ID,
+                        $exception->getMessage()
+                    ), ['exception' => $exception]);
+
                     $relations[$name] = null;
                 }
                 continue;
