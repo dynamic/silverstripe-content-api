@@ -144,4 +144,24 @@ class PageActionsTest extends ContentApiTestCase
 
         $this->assertErrorCode($response, 'NOT_FOUND', 404);
     }
+
+    public function testConvertValidationFailureDoesNotLeakRawExceptionText(): void
+    {
+        // Plain SiteTree has no validate() override, so this page can be
+        // titled "Invalid" and saved; ApiTestPage's validate() rejects that
+        // title, which the conversion carries over unchanged.
+        $page = SiteTree::create(['Title' => 'Invalid']);
+        $page->write();
+
+        $response = $this->apiPost("pages/{$page->ID}/convert", [
+            'className' => 'ApiTestPage',
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        // Prefixed with which operation failed, but no raw exception
+        // text (#21).
+        $this->assertSame('Page conversion: 1 field(s) failed validation.', $body['error']['message']);
+        $this->assertSame('Title', $body['error']['details'][0]['field']);
+    }
 }
