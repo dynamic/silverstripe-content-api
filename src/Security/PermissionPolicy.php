@@ -136,9 +136,13 @@ class PermissionPolicy
      * refuses to query it directly ("cannot query non-subclass DataObject
      * directly"). The concrete target class only exists if the payload named
      * one via a "class" hint (the same convention WriteApplicator's
-     * resolveRelation() requires for the write itself); without a resolvable
-     * hint the relation is left out of the context rather than crashing —
-     * a tenant-scoped canCreate() simply won't see that key.
+     * resolveRelation() requires for the write itself). An absent value is
+     * skipped (the relation simply isn't in the payload), but a present,
+     * malformed, or unresolvable hint is rejected here with the same
+     * PAYLOAD_INVALID error resolveRelation() would raise for the identical
+     * shape during the write itself, rather than silently omitting the key
+     * from a tenant-scoped canCreate()'s context — a fail-open gap a project
+     * feedback lesson (see class doc) specifically warned against.
      *
      * @return array<string, mixed>
      */
@@ -152,15 +156,21 @@ class PermissionPolicy
             $isPolymorphic = $relationClass === DataObject::class;
 
             if ($isPolymorphic) {
-                if (!is_array($value) || !isset($value['class'])) {
+                if ($value === null) {
                     continue;
                 }
 
-                try {
-                    $relationClass = $this->registry->resolve((string) $value['class']);
-                } catch (ApiError) {
-                    continue;
+                if (!is_array($value) || !isset($value['class'])) {
+                    throw new ApiError(
+                        ErrorCode::PAYLOAD_INVALID,
+                        sprintf(
+                            'Relation "%s" is polymorphic and requires an explicit "class" hint.',
+                            $relationName
+                        )
+                    );
                 }
+
+                $relationClass = $this->registry->resolve((string) $value['class']);
             }
 
             $id = match (true) {

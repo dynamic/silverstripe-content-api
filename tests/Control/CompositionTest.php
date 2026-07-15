@@ -374,4 +374,34 @@ class CompositionTest extends ContentApiTestCase
 
         $this->assertErrorCode($response, 'ENV_FORBIDDEN', 403);
     }
+
+    public function testBareAllowlistIsEnforcedOnElementWrites(): void
+    {
+        // Regression for #15 on the compositions surface: CompositionService's
+        // element/child writes route through the same WriteApplicator as
+        // batch (BatchTest::testBareAllowlistIsEnforcedOnTrustedPath covers
+        // that surface), but had no direct assertion here that a bare
+        // api_writable_fields (no explicit api_write_policy) is still
+        // enforced on this surface too, not just implied by shared code.
+        Config::modify()->set(ElementContent::class, 'api_writable_fields', ['Title']);
+
+        $payload = [
+            'page' => ['match' => ['id' => (int) $this->blockPage()->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'bare-allowlist-e1',
+                    'fields' => ['Title' => 'Allowed', 'HTML' => 'Not in the allowlist'],
+                ],
+            ],
+        ];
+
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+
+        $this->assertErrorCode($response, 'READONLY_FIELD', 422);
+        $this->assertNull(
+            ElementContent::get()->filter('FixtureIdentifier', 'bare-allowlist-e1')->first(),
+            'rejected write must not leave a partial record behind'
+        );
+    }
 }

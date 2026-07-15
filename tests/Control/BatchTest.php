@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
@@ -201,6 +202,24 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('READONLY_FIELD', $results[0]['error']['code'], 'Rank rejected by the bare allowlist');
         $this->assertSame('updated', $results[1]['status']);
         $this->assertSame('Renamed bare', $this->objFromFixture(ApiTestObject::class, 'one')->Title);
+    }
+
+    public function testBatchIsEnvironmentGated(): void
+    {
+        // Batch shares checkPopulationAllowed() with compositions
+        // (CompositionTest::testCompositionIsEnvironmentGated covers that
+        // surface) but had no direct assertion that the gate is actually
+        // wired into BatchHandler, only that EnvironmentGate's own parsing
+        // is correct in isolation (EnvironmentGateTest).
+        Config::modify()->set(EnvironmentGate::class, 'population_enabled_environments', []);
+
+        $response = $this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'gated-new', 'fields' => ['Title' => 'x']],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'ENV_FORBIDDEN', 403);
     }
 
     public function testValidationFailureMapsPerField(): void
