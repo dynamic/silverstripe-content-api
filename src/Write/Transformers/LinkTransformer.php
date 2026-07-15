@@ -116,7 +116,10 @@ class LinkTransformer implements ValueTransformer
         try {
             $link->write();
         } catch (ValidationException $exception) {
-            throw ApiError::fromValidation($exception, sprintf('Link for "%s"', $fieldName));
+            throw new ApiError(
+                ErrorCode::VALIDATION_FAILED,
+                sprintf('Link for "%s" failed validation: %s', $fieldName, $exception->getMessage())
+            );
         }
 
         if ($link->hasMethod('publishSingle')) {

@@ -235,7 +235,10 @@ class PageHandler
             try {
                 $converted->write();
             } catch (ValidationException $exception) {
-                throw ApiError::fromValidation($exception, 'Page conversion');
+                throw new ApiError(
+                    ErrorCode::VALIDATION_FAILED,
+                    'Page conversion failed validation: ' . $exception->getMessage()
+                );
             }
 
             $this->publisher->publish($converted, $publishMode);

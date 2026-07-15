@@ -3,16 +3,12 @@
 namespace Dynamic\ContentApi\Tests\Stub;
 
 use Dynamic\ContentApi\Identity\ExternalIdentifierExtension;
-use SilverStripe\Core\Validation\ValidationResult;
 use SilverStripe\Dev\TestOnly;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
 
 /**
  * has_many child of ApiTestElement (versioned, like real element children).
- * Titling a record "Invalid" fails validate(), matching ApiTestObject's
- * convention, so composition child-write can exercise VALIDATION_FAILED
- * mapping.
  */
 class ApiTestElementItem extends DataObject implements TestOnly
 {
@@ -31,17 +27,6 @@ class ApiTestElementItem extends DataObject implements TestOnly
         Versioned::class,
         ExternalIdentifierExtension::class,
     ];
-
-    public function validate(): ValidationResult
-    {
-        $result = parent::validate();
-
-        if ($this->Title === 'Invalid') {
-            $result->addFieldError('Title', 'Title may not be "Invalid".');
-        }
-
-        return $result;
-    }
 
     public function canView($member = null): bool
     {

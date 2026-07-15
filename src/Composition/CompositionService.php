@@ -280,7 +280,7 @@ class CompositionService
         try {
             $page->write();
         } catch (ValidationException $exception) {
-            throw ApiError::fromValidation($exception);
+            throw new ApiError(ErrorCode::VALIDATION_FAILED, 'Page creation failed: ' . $exception->getMessage());
         }
 
         return $page;
@@ -598,7 +598,10 @@ class CompositionService
         try {
             $child->write();
         } catch (ValidationException $exception) {
-            throw ApiError::fromValidation($exception, sprintf('Child "%s"', $externalId));
+            throw new ApiError(
+                ErrorCode::VALIDATION_FAILED,
+                sprintf('Child "%s" failed validation: %s', $externalId, $exception->getMessage())
+            );
         }
 
         $element->{$relationName}()->add($child);
