@@ -36,7 +36,12 @@ class ApiError extends Exception
             ];
         }
 
-        $summary = sprintf('%d field(s) failed validation.', max(1, count($details)));
+        // Don't claim a field count the (possibly empty) $details array
+        // can't back up — toArray() omits 'details' entirely when it's
+        // empty, so a forced-to-1 count would contradict the response body.
+        $summary = $details !== []
+            ? sprintf('%d field(s) failed validation.', count($details))
+            : 'Validation failed.';
 
         return new self(
             ErrorCode::VALIDATION_FAILED,

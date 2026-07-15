@@ -16,6 +16,8 @@ use SilverStripe\Versioned\Versioned;
  */
 class ApiTestElementItem extends DataObject implements TestOnly
 {
+    use InvalidFieldValidationTrait;
+
     private static string $table_name = 'ContentApi_ApiTestElementItem';
 
     private static array $db = [
@@ -34,13 +36,7 @@ class ApiTestElementItem extends DataObject implements TestOnly
 
     public function validate(): ValidationResult
     {
-        $result = parent::validate();
-
-        if ($this->Title === 'Invalid') {
-            $result->addFieldError('Title', 'Title may not be "Invalid".');
-        }
-
-        return $result;
+        return $this->rejectInvalidFieldValue(parent::validate(), 'Title');
     }
 
     public function canView($member = null): bool

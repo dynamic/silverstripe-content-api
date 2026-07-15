@@ -13,16 +13,12 @@ use SilverStripe\Dev\TestOnly;
  */
 class ApiTestPage extends SiteTree implements TestOnly
 {
+    use InvalidFieldValidationTrait;
+
     private static string $table_name = 'ContentApi_ApiTestPage';
 
     public function validate(): ValidationResult
     {
-        $result = parent::validate();
-
-        if ($this->Title === 'Invalid') {
-            $result->addFieldError('Title', 'Title may not be "Invalid".');
-        }
-
-        return $result;
+        return $this->rejectInvalidFieldValue(parent::validate(), 'Title');
     }
 }

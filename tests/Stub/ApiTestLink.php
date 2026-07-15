@@ -16,16 +16,12 @@ use SilverStripe\LinkField\Models\Link;
  */
 class ApiTestLink extends Link implements TestOnly
 {
+    use InvalidFieldValidationTrait;
+
     private static string $table_name = 'ContentApi_ApiTestLink';
 
     public function validate(): ValidationResult
     {
-        $result = parent::validate();
-
-        if ($this->LinkText === 'Invalid') {
-            $result->addFieldError('LinkText', 'LinkText may not be "Invalid".');
-        }
-
-        return $result;
+        return $this->rejectInvalidFieldValue(parent::validate(), 'LinkText');
     }
 }

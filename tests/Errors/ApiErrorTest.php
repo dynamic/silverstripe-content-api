@@ -55,4 +55,19 @@ class ApiErrorTest extends SapphireTest
         $this->assertSame('2 field(s) failed validation.', $error->getMessage());
         $this->assertCount(2, $error->getDetails());
     }
+
+    public function testFromValidationWithNoFieldMessagesDoesNotClaimAPhantomCount(): void
+    {
+        // A ValidationResult with no addError()/addFieldError() calls has an
+        // empty getMessages() — toArray() omits the 'details' key entirely
+        // in that case, so the summary must not claim "1 field(s) failed"
+        // (a count the response body can't back up).
+        $exception = new ValidationException(ValidationResult::create());
+
+        $error = ApiError::fromValidation($exception);
+
+        $this->assertSame('Validation failed.', $error->getMessage());
+        $this->assertSame([], $error->getDetails());
+        $this->assertArrayNotHasKey('details', $error->toArray());
+    }
 }
