@@ -404,4 +404,136 @@ class CompositionTest extends ContentApiTestCase
             'rejected write must not leave a partial record behind'
         );
     }
+
+    public function testParentIdIsWritableWithoutBeingAllowlisted(): void
+    {
+        // Module #27 payoff: ParentID is server-derived (WriteApplicator's
+        // trusted $internalFields channel), so a class's api_writable_fields
+        // no longer needs to list it for a composition to attach elements.
+        // See WriteGuardTest::testParentIdStaysReadonlyOnColymbaSurface for
+        // the matching security-half assertion — it's still rejected on the
+        // untrusted public PUT surface.
+        Config::modify()->set(ElementContent::class, 'api_writable_fields', ['Title']);
+
+        $page = $this->blockPage();
+        $payload = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'parentid-e1',
+                    'fields' => ['Title' => 'Attached without ParentID allowlisted'],
+                ],
+            ],
+        ];
+
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+        $body = $this->decode($response);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertNull($body['error']);
+
+        $area = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea();
+        $element = ElementContent::get()->filter('FixtureIdentifier', 'parentid-e1')->first();
+
+        $this->assertNotNull($element);
+        $this->assertSame((int) $area->ID, (int) $element->ParentID);
+    }
+
+    public function testChildWriteRequiresClassAccess(): void
+    {
+        // Module #19: CONTENT_API_POPULATE alone is not sufficient to write
+        // an arbitrary has_many-target class — the child class must also
+        // grant api_access for the verb, mirroring every other write surface
+        // (batch, single-record, colymba).
+        Config::modify()->set(ApiTestElementItem::class, 'api_access', 'read');
+
+        $payload = [
+            'page' => ['match' => ['id' => (int) $this->blockPage()->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'acl-e1',
+                    'fields' => ['Title' => 'Parent'],
+                    'children' => [
+                        'Items' => [
+                            ['externalId' => 'acl-e1-i1', 'fields' => ['Title' => 'Denied child']],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertNull(
+            ApiTestElementItem::get()->filter('FixtureIdentifier', 'acl-e1-i1')->first(),
+            'denied child write must not persist'
+        );
+        $this->assertNull(
+            ApiTestElement::get()->filter('FixtureIdentifier', 'acl-e1')->first(),
+            'the whole composition rolls back, including the parent element'
+        );
+    }
+
+    public function testChildLookupIsScopedToOwningElement(): void
+    {
+        // Module #19: a composition child externalId must not adopt/
+        // re-parent a child record that already belongs to a DIFFERENT
+        // element — ExternalIdResolver::tryFind() is a global lookup by
+        // design, so the composition path scopes the search itself.
+        $page = $this->blockPage();
+
+        $first = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'scope-e1',
+                    'fields' => ['Title' => 'First'],
+                    'children' => [
+                        'Items' => [
+                            ['externalId' => 'shared-child', 'fields' => ['Title' => 'Owned by e1']],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $this->apiPost('compositions/page', $first, $this->adminToken);
+
+        $second = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'scope-e2',
+                    'fields' => ['Title' => 'Second'],
+                    'children' => [
+                        'Items' => [
+                            ['externalId' => 'shared-child', 'fields' => ['Title' => 'Owned by e2']],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $body = $this->decode($this->apiPost('compositions/page', $second, $this->adminToken));
+        $this->assertNull($body['error']);
+
+        $e1 = ApiTestElement::get()->filter('FixtureIdentifier', 'scope-e1')->first();
+        $e2 = ApiTestElement::get()->filter('FixtureIdentifier', 'scope-e2')->first();
+
+        $this->assertSame(1, $e1->Items()->count(), 'e1 keeps its own child');
+        $this->assertSame('Owned by e1', $e1->Items()->first()->Title, 'e1 child untouched');
+
+        $this->assertSame(1, $e2->Items()->count(), "e2 gets its own new child, not e1's");
+        $this->assertSame('Owned by e2', $e2->Items()->first()->Title);
+        $this->assertNotSame(
+            (int) $e1->Items()->first()->ID,
+            (int) $e2->Items()->first()->ID,
+            "e2 must not adopt e1's child"
+        );
+    }
 }

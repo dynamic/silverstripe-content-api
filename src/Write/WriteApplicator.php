@@ -31,6 +31,15 @@ use SilverStripe\ORM\DataObject;
  *   allowlist is itself the opt-in, on every write surface (colymba /api,
  *   batch, compositions). There is no configuration that declares
  *   `api_writable_fields` and has it silently ignored.
+ *
+ * A small, separate trusted channel (`applyFields()`'s `$internalFields`
+ * param) lets in-process population machinery (e.g. `CompositionService`)
+ * write server-derived structural fields — like an element's `ParentID` —
+ * without adding them to `api_writable_fields`, which would also expose them
+ * on the untrusted colymba PUT surface. The `protected_fields` /
+ * `api_protected_fields` denylist still applies to trusted writes; only the
+ * allowlist check is bypassed. Nothing derived from request input may be
+ * passed as `$internalFields`.
  */
 class WriteApplicator
 {
@@ -90,10 +99,20 @@ class WriteApplicator
      * Validate and apply `fields` to the record (unsaved). Relations are
      * applied separately via applyRelations() after the record has an ID.
      *
+     * `$internalFields` is a separate, trusted channel for server-derived
+     * values the population machinery writes on the caller's behalf (e.g. a
+     * composition element's `ParentID`) — it bypasses the `api_writable_fields`
+     * allowlist (the protected-field denylist still applies) and always wins
+     * over a same-named key in `$fields`, so a client can't smuggle in its own
+     * value for a structural field under that name. Only in-process module
+     * code should ever populate it; request-derived payloads must never flow
+     * into this parameter.
+     *
      * @param array<string, mixed> $fields
+     * @param array<string, mixed> $internalFields
      * @throws ApiError when any field fails writability — nothing is applied
      */
-    public function applyFields(DataObject $record, array $fields): void
+    public function applyFields(DataObject $record, array $fields, array $internalFields = []): void
     {
         $this->warnings = [];
         $schema = DataObject::getSchema();
@@ -102,7 +121,9 @@ class WriteApplicator
         $problems = [];
         $plan = [];
 
-        foreach ($fields as $name => $value) {
+        $combined = array_merge($fields, $internalFields);
+
+        foreach ($combined as $name => $value) {
             $isHasOne = isset($hasOne[$name]);
             $isHasOneFk = str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)]);
             $isDbField = $schema->fieldSpec($className, $name) !== null;
@@ -134,8 +155,9 @@ class WriteApplicator
                 default => null,
             };
             $columnName = $isHasOne ? $name . 'ID' : $name;
+            $trusted = isset($internalFields[$name]);
 
-            if (!$this->isFieldWritable($className, $columnName, $relationName)) {
+            if (!$this->isFieldWritable($className, $columnName, $relationName, $trusted)) {
                 $problems[] = [
                     'field' => $name,
                     'code' => ErrorCode::READONLY_FIELD->value,
@@ -277,9 +299,19 @@ class WriteApplicator
      * opt-in, so there is no configuration where `api_writable_fields` is set
      * but silently has no effect. Both paths share the protected-field
      * denylist and the allowlist matching by column name OR relation name.
+     *
+     * `$trusted` is for server-derived fields the population machinery writes
+     * on a caller's behalf (e.g. a composition's `ParentID`) — it is set by
+     * in-process module code only, never from request input, so it is safe
+     * to bypass the allowlist for it. The protected-field denylist is an
+     * absolute floor and still applies even when `$trusted` is true.
      */
-    public function isFieldWritable(string $className, string $columnName, ?string $relationName = null): bool
-    {
+    public function isFieldWritable(
+        string $className,
+        string $columnName,
+        ?string $relationName = null,
+        bool $trusted = false
+    ): bool {
         $protected = array_merge(
             (array) static::config()->get('protected_fields'),
             (array) Config::inst()->get($className, 'api_protected_fields')
@@ -287,6 +319,10 @@ class WriteApplicator
 
         if (in_array($columnName, $protected, true) || ($relationName && in_array($relationName, $protected, true))) {
             return false;
+        }
+
+        if ($trusted) {
+            return true;
         }
 
         $policy = Config::inst()->get($className, 'api_write_policy')

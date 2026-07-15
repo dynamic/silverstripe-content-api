@@ -112,6 +112,14 @@ DNADesign\Elemental\Models\ElementContent:
 > into allowlist mode on **every** write surface — no separate `api_write_policy: allowlist`
 > is required. Only fields listed there (or `api_writable_relations` entries, for
 > has_many/many_many) are writable; everything else is rejected/reverted.
+>
+> `api_writable_fields` governs **client-submitted** fields only. A small set of
+> server-derived structural fields (e.g. a composition element's `ParentID`, the
+> ElementalArea FK) are written through a separate trusted internal channel that the
+> population machinery uses on the caller's behalf — you do not, and should not, add them
+> to `api_writable_fields`, which would also expose them on the untrusted colymba PUT
+> surface. The `protected_fields`/`api_protected_fields` denylist still applies to that
+> channel; only the allowlist check is bypassed, and only for in-process module code.
 
 2. **Apply the external-id extension** to classes the API should upsert (same column
    spec as `recipe-silverstripe-essentials-fixtures` — legacy-populated sites are
@@ -258,6 +266,13 @@ externally-identified elements missing from the payload (hand-authored content i
 invisible to prune); `publish: recursive` publishes the page plus each written
 area/element/child individually. HomePage-style types: `"areaRelation": "ElementalHomePage"`.
 
+`children` (has_many, e.g. `Panels` above) enforce the same class-level ACL and
+`canCreate()`/`canEdit()` gate as every other write surface — a `CONTENT_API_POPULATE`
+grant is not by itself enough to write an arbitrary has_many-target class; the child class
+also needs `api_access` for the verb, same as any other exposed class. A child's
+`externalId` lookup is scoped to the owning element's own relation, so a composition can
+never adopt/re-parent a child record that currently belongs to a different element.
+
 The composition's **top-level** `publish` accepts only `none` or `recursive` — a composition
 is inherently multi-record, so there is no `single` at this level (it would leave elements on
 draft behind a live page). `single` is a per-record mode: it applies to individual batch `op`s
@@ -285,7 +300,9 @@ unresolvable color token fails the write rather than persisting a white-on-white
   against the record's concrete class (subclasses may narrow inherited access);
   `content_api_access` overrides `api_access` for this module's surface only.
 - **Record gate**: the model's own `can*()` always applies; `canCreate()` receives a
-  context hydrated from payload has_one keys.
+  context hydrated from payload has_one keys. This includes composition `children`
+  (has_many): each one runs the same class gate + `canCreate()`/`canEdit()` check as any
+  other written record — a `CONTENT_API_POPULATE` grant alone does not bypass it.
 - **Write policies**: `guarded` (protected-field denylist) or `allowlist` — enforced
   identically on every write surface (this module's native pipeline and, via
   `WriteGuardExtension`, colymba's write path). A class is in allowlist mode when
@@ -293,6 +310,16 @@ unresolvable color token fails the write rather than persisting a white-on-white
   declares a non-empty `api_writable_fields` at all — the allowlist declaration is
   itself the opt-in; there is no configuration where `api_writable_fields` is set
   but silently ignored.
+- **Trusted internal fields**: a handful of server-derived structural fields (currently
+  a composition element's `ParentID`) are written by the population machinery through a
+  separate channel that bypasses `api_writable_fields` but never the
+  `protected_fields`/`api_protected_fields` denylist. Only in-process module code
+  populates this channel — request-derived values never reach it, and colymba's PUT
+  surface has no equivalent, so these fields stay non-writable there regardless of
+  `api_writable_fields`.
+- **Child-record identity scoping**: a composition's has_many `children` are looked up by
+  external id scoped to their owning element — a child already attached to a *different*
+  element is never adopted or re-parented, even if the external id collides.
 
 ## Testing
 

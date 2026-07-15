@@ -204,6 +204,38 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('Renamed bare', $this->objFromFixture(ApiTestObject::class, 'one')->Title);
     }
 
+    public function testBatchCannotSmuggleFieldsThroughInternalFieldsKey(): void
+    {
+        // Module #27 hardening: WriteApplicator's trusted `internalFields`
+        // channel bypasses api_writable_fields (see CompositionTest for the
+        // legitimate use — a composition element's server-derived ParentID).
+        // BatchProcessor forwards the raw client operation object straight
+        // into RecordWriter, so a client naming a top-level "internalFields"
+        // key in its JSON must have zero effect — RecordWriter takes it as a
+        // dedicated method parameter that only in-process callers populate,
+        // never read from the request payload itself.
+        Config::modify()->set(ApiTestObject::class, 'api_writable_fields', ['Title']);
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTest',
+                    'externalId' => 'alpha',
+                    'fields' => ['Title' => 'Still gated'],
+                    'internalFields' => ['Rank' => 999],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame(
+            1,
+            (int) $this->objFromFixture(ApiTestObject::class, 'one')->Rank,
+            'a client-submitted "internalFields" key must never reach the trusted channel'
+        );
+    }
+
     public function testBatchIsEnvironmentGated(): void
     {
         // Batch shares checkPopulationAllowed() with compositions
