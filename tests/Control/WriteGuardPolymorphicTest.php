@@ -152,6 +152,63 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         );
     }
 
+    public function testBareClassColumnWithNoPairedFkIsAlwaysRejectedRegardlessOfAllowlist(): void
+    {
+        // A client sending only "OwnerClass" directly — with no "Owner" or
+        // "OwnerID" key at all, so translatePolymorphicHasOnes() never
+        // touches this relation — must never be able to set an arbitrary,
+        // unvalidated class string, even if "Owner" is fully allowlisted.
+        // Otherwise it resolves to the relation's own allowlist entry and
+        // is judged writable with none of resolveRelation()'s
+        // ClassRegistry validation ever having run.
+        Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title', 'Owner']);
+
+        $poly = ApiTestPolyObject::create(['Title' => 'Bare class column']);
+        $poly->write();
+        // Reload rather than trust the in-memory object: OwnerClass is a
+        // DBClassName (DBEnum), so SilverStripe assigns it some concrete
+        // class from the enum's value set on write() rather than leaving
+        // it as the pre-write in-memory value.
+        $originalOwnerClass = ApiTestPolyObject::get()->byID($poly->ID)->OwnerClass;
+
+        $response = $this->colymba('PUT', "Poly/{$poly->ID}", [
+            'OwnerClass' => ApiTestObject::class,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestPolyObject::get()->byID($poly->ID);
+        $this->assertSame(
+            $originalOwnerClass,
+            $fresh->OwnerClass,
+            'a bare Class-column key must always be reverted, never independently writable'
+        );
+    }
+
+    public function testFullyDeniedRelationWithUnresolvableHintSilentlyRevertsInsteadOfErroring(): void
+    {
+        // #23 ordering fix: resolving a relation's class hint must not run
+        // before its writability is checked — a denied relation with a
+        // malformed/unresolvable hint must still silently no-op (matching
+        // testPolymorphicHasOneFullyDeniedRevertsBothColumns), not surface
+        // a hard validation error for a field the client can't write anyway.
+        Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title']);
+
+        $poly = ApiTestPolyObject::create(['Title' => 'Denied with bad hint']);
+        $poly->write();
+
+        $response = $this->colymba('PUT', "Poly/{$poly->ID}", [
+            'Owner' => ['class' => 'ApiTest', 'externalId' => 'does-not-exist'],
+        ]);
+
+        $this->assertSame(
+            200,
+            $response->getStatusCode(),
+            'a denied relation must silently no-op even with an unresolvable hint, not 404/400: '
+                . $response->getBody()
+        );
+    }
+
     public function testPolymorphicHasOneFullyDeniedRevertsBothColumns(): void
     {
         Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title']);

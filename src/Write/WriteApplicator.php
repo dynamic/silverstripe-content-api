@@ -126,8 +126,7 @@ class WriteApplicator
         foreach ($combined as $name => $value) {
             $isHasOne = isset($hasOne[$name]);
             $isHasOneFk = str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)]);
-            $isPolymorphicClassColumn = str_ends_with($name, 'Class')
-                && ($hasOne[substr($name, 0, -5)] ?? null) === DataObject::class;
+            $polymorphicClassRelation = $this->polymorphicClassColumnRelation($name, $hasOne);
             $isDbField = $schema->fieldSpec($className, $name) !== null;
 
             // A polymorphic has_one's companion {Name}Class column is only
@@ -136,7 +135,7 @@ class WriteApplicator
             // could set an arbitrary raw class name with no
             // ClassRegistry/resolveRelation() validation at all, and
             // independently of the FK's own writability (#25).
-            if ($isPolymorphicClassColumn) {
+            if ($polymorphicClassRelation !== null) {
                 $problems[] = [
                     'field' => $name,
                     'code' => ErrorCode::READONLY_FIELD->value,
@@ -144,7 +143,7 @@ class WriteApplicator
                         'Field "%s" can only be set via its relation ("%s") with an explicit class hint,'
                             . ' not directly.',
                         $name,
-                        substr($name, 0, -5)
+                        $polymorphicClassRelation
                     ),
                 ];
                 continue;
@@ -192,10 +191,12 @@ class WriteApplicator
             // second column this same payload key writes to (see below) —
             // it must be independently gated too, not silently write
             // alongside the FK for free just because the FK passed (#25).
+            // The FK itself was already confirmed writable just above, so
+            // only the Class column needs checking here.
             if (
                 $relationName !== null
                 && ($hasOne[$relationName] ?? null) === DataObject::class
-                && !$this->isPolymorphicRelationWritable($className, $relationName, $trusted)
+                && !$this->isFieldWritable($className, $relationName . 'Class', $relationName, $trusted)
             ) {
                 $problems[] = [
                     'field' => $name,
@@ -391,6 +392,27 @@ class WriteApplicator
     {
         return $this->isFieldWritable($className, $relationName . 'ID', $relationName, $trusted)
             && $this->isFieldWritable($className, $relationName . 'Class', $relationName, $trusted);
+    }
+
+    /**
+     * Whether $columnName is the companion {Name}Class column of a
+     * polymorphic has_one declared in $hasOne — the naming-convention
+     * detection this class, SchemaService and WriteGuardExtension all
+     * independently need (#25), in one place.
+     *
+     * @param array<string, string> $hasOne as returned by DataObject::hasOne()
+     * @return ?string the relation name if $columnName is its companion
+     *   Class column, null otherwise
+     */
+    public function polymorphicClassColumnRelation(string $columnName, array $hasOne): ?string
+    {
+        if (!str_ends_with($columnName, 'Class')) {
+            return null;
+        }
+
+        $relationName = substr($columnName, 0, -5);
+
+        return ($hasOne[$relationName] ?? null) === DataObject::class ? $relationName : null;
     }
 
     protected function unknownFieldMode(string $className): string

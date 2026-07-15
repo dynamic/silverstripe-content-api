@@ -134,10 +134,7 @@ class SchemaService
             // A polymorphic has_one's companion {Name}Class column is
             // managed as part of the relation (see hasOne below), never
             // independently writable as a standalone field (#25).
-            if (
-                str_ends_with($name, 'Class')
-                && ($singleton->hasOne()[substr($name, 0, -5)] ?? null) === DataObject::class
-            ) {
+            if ($this->applicator->polymorphicClassColumnRelation($name, (array) $singleton->hasOne()) !== null) {
                 continue;
             }
 
