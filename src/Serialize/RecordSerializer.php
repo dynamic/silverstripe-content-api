@@ -182,18 +182,15 @@ class RecordSerializer
                                 sprintf('poly:%s:%s:%s', $className, $name, $targetClassName ?? ''),
                                 $targetClassName !== null
                                     ? sprintf(
-                                        'Polymorphic has_one "%s" on %s#%d targets unregistered class "%s".',
+                                        'Polymorphic has_one "%s" on %s targets unregistered class "%s".',
                                         $name,
-                                        $className,
-                                        (int) $record->ID,
+                                        $this->recordLabel($className, $record),
                                         $targetClassName
                                     )
                                     : sprintf(
-                                        'Polymorphic has_one "%s" on %s#%d has an id but no companion '
-                                            . 'Class value.',
+                                        'Polymorphic has_one "%s" on %s has an id but no companion Class value.',
                                         $name,
-                                        $className,
-                                        (int) $record->ID
+                                        $this->recordLabel($className, $record)
                                     )
                             );
                         }
@@ -221,10 +218,9 @@ class RecordSerializer
                     $this->warnOnceForRelation(
                         sprintf('read:%s:%s', $className, $name),
                         sprintf(
-                            'Relation "%s" on %s#%d could not be read: %s',
+                            'Relation "%s" on %s could not be read: %s',
                             $name,
-                            $className,
-                            (int) $record->ID,
+                            $this->recordLabel($className, $record),
                             $exception->getMessage()
                         ),
                         ['exception' => $exception]
@@ -252,6 +248,11 @@ class RecordSerializer
         }
 
         return [$fields, $relations];
+    }
+
+    private function recordLabel(string $className, DataObject $record): string
+    {
+        return sprintf('%s#%d', $className, (int) $record->ID);
     }
 
     /**
