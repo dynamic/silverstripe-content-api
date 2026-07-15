@@ -25,10 +25,21 @@ final class WriteGuardPayloads
 
     /**
      * @param array<string, mixed> $payload
+     * @param string[] $translatedRelations which polymorphic has_one
+     *   relations translatePolymorphicHasOnes() actually resolved — the
+     *   FK+Class pair may only be treated as writable-as-a-unit for a
+     *   relation named here. A bare {Name}Class key that reaches
+     *   onBeforeWrite() without its relation appearing in this set did not
+     *   come from a genuine {"class","id"} resolution and must never be
+     *   independently writable, regardless of allowlist config (#25's own
+     *   hole, reopened on this surface if that distinction isn't kept).
      */
-    public static function store(DataObject $owner, array $payload): void
+    public static function store(DataObject $owner, array $payload, array $translatedRelations = []): void
     {
-        WriteGuardPayloads::map()[$owner] = $payload;
+        WriteGuardPayloads::map()[$owner] = [
+            'payload' => $payload,
+            'translatedRelations' => $translatedRelations,
+        ];
     }
 
     /**
@@ -36,6 +47,14 @@ final class WriteGuardPayloads
      */
     public static function get(DataObject $owner): ?array
     {
-        return WriteGuardPayloads::map()[$owner] ?? null;
+        return WriteGuardPayloads::map()[$owner]['payload'] ?? null;
+    }
+
+    /**
+     * @return string[]
+     */
+    public static function translatedRelations(DataObject $owner): array
+    {
+        return WriteGuardPayloads::map()[$owner]['translatedRelations'] ?? [];
     }
 }

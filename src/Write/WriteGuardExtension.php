@@ -2,11 +2,13 @@
 
 namespace Dynamic\ContentApi\Write;
 
+use Dynamic\ContentApi\Errors\ApiError;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\ORM\DataObject;
 
 /**
  * Field-level write guard for colymba/silverstripe-restfulapi's generic
@@ -87,7 +89,10 @@ class WriteGuardExtension extends Extension
             }
         }
 
-        WriteGuardPayloads::store($this->getOwner(), $body);
+        $translatedRelations = $this->translatePolymorphicHasOnes($body);
+        $filtered = $translatedRelations !== [] || $filtered;
+
+        WriteGuardPayloads::store($this->getOwner(), $body, $translatedRelations);
 
         if ($filtered) {
             $encoded = json_encode($body);
@@ -120,6 +125,76 @@ class WriteGuardExtension extends Extension
     }
 
     /**
+     * Colymba's deserializer writes raw column values straight to the model
+     * — it has no concept of this module's `{"class": "...", "id": n}`
+     * has_one payload shape, or the companion `{Name}Class` column a
+     * polymorphic has_one needs alongside its FK. Left alone, a polymorphic
+     * has_one has no working way to be set through colymba's native
+     * surface at all (#23).
+     *
+     * Translates any polymorphic has_one entries in the payload into the
+     * raw `{Name}ID`/`{Name}Class` columns colymba already knows how to
+     * write, using the exact same resolution
+     * `WriteApplicator::resolveRelation()` applies on this module's own
+     * write path — one resolver, not a second implementation (#24).
+     *
+     * Only translates (and only resolves — see below) a relation that's
+     * actually writable: resolution can itself throw (a bad/missing class
+     * hint, an unresolvable externalId), and running it before checking
+     * writability would turn "you can't write this relation, so it's
+     * silently reverted" into a hard validation error for a field the
+     * client was never allowed to touch in the first place. A relation
+     * that fails this check is left completely untouched in the payload —
+     * colymba's deserializer won't find a matching column for the bare
+     * relation-name key, so nothing is written, matching the intended
+     * silent-no-op outcome.
+     *
+     * @param array<string, mixed> $body passed by reference — mutated in place
+     * @return string[] relation names actually translated — onBeforeWrite()
+     *   may only treat a relation's FK+Class pair as writable-as-a-unit
+     *   when it's named here; a bare {Name}Class key that reaches
+     *   onBeforeWrite() without having been translated here did not come
+     *   from a genuine {"class","id"} resolution and must never be
+     *   independently writable (closes the same hole #25 closed on this
+     *   module's own write path, for this surface too).
+     * @throws HTTPResponse_Exception wrapping an ApiError from resolution:
+     *   thrown as HTTPResponse_Exception rather than left as ApiError
+     *   because this hook has no exception handling of its own to catch a
+     *   bare ApiError.
+     */
+    private function translatePolymorphicHasOnes(array &$body): array
+    {
+        $owner = $this->getOwner();
+        $className = get_class($owner);
+        $hasOne = (array) $owner->hasOne();
+        $applicator = Injector::inst()->get(WriteApplicator::class);
+        $translated = [];
+
+        foreach ($hasOne as $relationName => $relationClass) {
+            if ($relationClass !== DataObject::class || !array_key_exists($relationName, $body)) {
+                continue;
+            }
+
+            if (!$applicator->isPolymorphicRelationWritable($className, $relationName)) {
+                continue;
+            }
+
+            try {
+                $resolved = $applicator->resolveRelation($relationName, $relationClass, $body[$relationName]);
+            } catch (ApiError $error) {
+                throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
+            }
+
+            unset($body[$relationName]);
+            $body[$relationName . 'ID'] = $resolved['id'];
+            $body[$relationName . 'Class'] = $resolved['class'];
+            $translated[] = $relationName;
+        }
+
+        return $translated;
+    }
+
+    /**
      * Revert payload-named fields that violate the write policy. Only keys
      * named in the payload are considered — sibling extensions and the
      * model's own onBeforeWrite may legitimately change other fields.
@@ -144,11 +219,79 @@ class WriteGuardExtension extends Extension
         }
 
         $className = get_class($owner);
-        $hasOne = (array) $owner->config()->get('has_one');
+        $hasOne = (array) $owner->hasOne();
         $changed = $owner->getChangedFields(true, 2);
         $applicator = Injector::inst()->get(WriteApplicator::class);
+        $translatedRelations = WriteGuardPayloads::translatedRelations($owner);
+
+        // A polymorphic has_one's FK and companion Class column must be
+        // reverted together, not independently, for a relation
+        // translatePolymorphicHasOnes() actually resolved (both columns
+        // are then guaranteed present together) — checking each column's
+        // writability separately there would let an asymmetric allowlist
+        // (e.g. protecting OwnerClass but allowing Owner) leave the FK
+        // pointing at a real record while the Class column reverts,
+        // corrupting the relation rather than just narrowing what's
+        // writable.
+        //
+        // A relation NOT in this set must not be paired: a request that
+        // legitimately writes only the FK (e.g. repointing an
+        // already-typed relation to a different record of the same class,
+        // without re-sending the class) must not be blocked just because
+        // the untouched Class column happens to be protected.
+        $polymorphicWritable = [];
+
+        // A relation only ever lands in $translatedRelations after
+        // translatePolymorphicHasOnes() already confirmed
+        // isPolymorphicRelationWritable() for it moments earlier in this
+        // same request — that answer cannot have changed since, so it's
+        // reused verbatim rather than recomputed.
+        foreach ($translatedRelations as $relationName) {
+            $polymorphicWritable[$relationName . 'ID'] = true;
+            $polymorphicWritable[$relationName . 'Class'] = true;
+        }
+
+        // A relation NOT in $translatedRelations can still have both its
+        // raw {Name}ID and {Name}Class keys sent directly together,
+        // bypassing the wrapped {"class","id"} shape
+        // translatePolymorphicHasOnes() expects. The Class column can
+        // never be legitimately set this way (see the unconditional revert
+        // below), so if the *client's payload* actually changes the Class
+        // column, revert the FK alongside it rather than letting the FK
+        // half through — applying just the FK half of an untranslated pair
+        // produces exactly the torn FK-repointed/Class-stale state this
+        // mechanism exists to prevent.
+        //
+        // Both conditions matter, for different reasons:
+        // - Requiring the key in $body (not just $changed) keeps this
+        //   scoped to what THIS request's payload actually named — this
+        //   method's own contract is "only keys named in the payload are
+        //   considered"; a sibling extension/hook mutating the Class
+        //   column for unrelated reasons must not trigger a revert of a
+        //   field the client's payload never touched.
+        // - Requiring the value in $changed (not just $body) handles the
+        //   routine GET-then-PUT-verbatim round trip, where the Class
+        //   column is echoed back unchanged alongside a legitimate FK
+        //   repoint — that must not be treated as a bypass attempt.
+        //
+        // A bare FK key with no Class key in the payload at all is
+        // unaffected either way, falling through to the normal independent
+        // check below.
+        foreach ($hasOne as $relationName => $relationClass) {
+            if ($relationClass !== DataObject::class || in_array($relationName, $translatedRelations, true)) {
+                continue;
+            }
+
+            $classKey = $relationName . 'Class';
+
+            if (array_key_exists($classKey, $body) && array_key_exists($classKey, $changed)) {
+                $polymorphicWritable[$relationName . 'ID'] = false;
+            }
+        }
 
         foreach (array_keys($body) as $attribute) {
+            $polymorphicClassRelation = $applicator->polymorphicClassColumnRelation($attribute, $hasOne);
+
             // Resolve the payload key to the DB column colymba actually wrote
             // (the FK column for a has_one) and the relation name, so the
             // shared writability check matches protected/allowlist config by
@@ -159,13 +302,39 @@ class WriteGuardExtension extends Extension
             } elseif (str_ends_with($attribute, 'ID') && isset($hasOne[substr($attribute, 0, -2)])) {
                 $column = $attribute;
                 $relationName = substr($attribute, 0, -2);
+            } elseif ($polymorphicClassRelation !== null) {
+                $column = $attribute;
+                $relationName = $polymorphicClassRelation;
             } else {
                 $column = $attribute;
                 $relationName = null;
             }
 
-            // Delegate to the single writability source of truth.
-            $writable = $applicator->isFieldWritable($className, $column, $relationName);
+            // A Class column that did NOT come from a genuine translated
+            // {"class","id"} resolution — e.g. a client sending a bare
+            // {Name}Class key directly, with no paired {Name}/{Name}ID —
+            // is never independently writable, regardless of allowlist
+            // config. This is the same rule
+            // WriteApplicator::applyFields() enforces unconditionally on
+            // the module's own write path (#25); without it here, a raw
+            // Class column write would resolve to its relation's allowlist
+            // entry via $relationName above and be judged writable with no
+            // ClassRegistry validation at all.
+            $isUntranslatedClassColumn = $polymorphicClassRelation !== null
+                && !in_array($polymorphicClassRelation, $translatedRelations, true);
+
+            if ($isUntranslatedClassColumn) {
+                if (array_key_exists($column, $changed)) {
+                    $owner->setField($column, $changed[$column]['before']);
+                }
+                continue;
+            }
+
+            // Delegate to the single writability source of truth, except
+            // for a translated polymorphic relation's pair, which share
+            // the precomputed combined decision above.
+            $writable = $polymorphicWritable[$column]
+                ?? $applicator->isFieldWritable($className, $column, $relationName);
 
             if (!$writable && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);

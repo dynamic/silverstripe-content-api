@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use SilverStripe\Core\Config\Config;
 
 class SchemaTest extends ContentApiTestCase
@@ -105,6 +106,23 @@ class SchemaTest extends ContentApiTestCase
 
         $this->assertTrue($body['data']['fields']['Title']['writable']);
         $this->assertFalse($body['data']['fields']['Rank']['writable']);
+    }
+
+    public function testPolymorphicHasOneWritabilityReflectsCompanionClassColumn(): void
+    {
+        // #25: a polymorphic has_one's writability must account for the
+        // companion Class column too, not just the FK — otherwise the
+        // schema endpoint tells a client Owner is writable when a real
+        // write would still be rejected over the protected Class column.
+        Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title', 'Owner']);
+        Config::modify()->set(ApiTestPolyObject::class, 'api_protected_fields', ['OwnerClass']);
+
+        $body = $this->decode($this->apiGet('schema/ApiTestPoly', $this->token));
+
+        $this->assertFalse(
+            $body['data']['hasOne']['Owner']['writable'],
+            'Owner must report unwritable while its companion Class column is protected'
+        );
     }
 
     public function testSchemaRequiresPermission(): void

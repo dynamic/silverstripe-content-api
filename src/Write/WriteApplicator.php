@@ -126,7 +126,32 @@ class WriteApplicator
         foreach ($combined as $name => $value) {
             $isHasOne = isset($hasOne[$name]);
             $isHasOneFk = str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)]);
+            $polymorphicClassRelation = $this->polymorphicClassColumnRelation($name, $hasOne);
             $isDbField = $schema->fieldSpec($className, $name) !== null;
+            $trusted = isset($internalFields[$name]);
+
+            // A polymorphic has_one's companion {Name}Class column is only
+            // ever set directly by request-derived input as a side effect
+            // of resolving its relation key (see resolveRelation() below),
+            // never as a bare payload key — otherwise a client could set an
+            // arbitrary raw class name with no ClassRegistry/
+            // resolveRelation() validation at all, independently of the
+            // FK's own writability (#25). Trusted in-process code (the same
+            // channel that already writes ParentID/Sort) may still set it
+            // directly, same as any other trusted field.
+            if ($polymorphicClassRelation !== null && !$trusted) {
+                $problems[] = [
+                    'field' => $name,
+                    'code' => ErrorCode::READONLY_FIELD->value,
+                    'message' => sprintf(
+                        'Field "%s" can only be set via its relation ("%s") with an explicit class hint,'
+                            . ' not directly.',
+                        $name,
+                        $polymorphicClassRelation
+                    ),
+                ];
+                continue;
+            }
 
             if (!$isHasOne && !$isDbField && !$isHasOneFk) {
                 if ($this->unknownFieldMode($className) === 'strict') {
@@ -155,13 +180,31 @@ class WriteApplicator
                 default => null,
             };
             $columnName = $isHasOne ? $name . 'ID' : $name;
-            $trusted = isset($internalFields[$name]);
 
             if (!$this->isFieldWritable($className, $columnName, $relationName, $trusted)) {
                 $problems[] = [
                     'field' => $name,
                     'code' => ErrorCode::READONLY_FIELD->value,
                     'message' => sprintf('Field "%s" is not writable via the content API.', $name),
+                ];
+                continue;
+            }
+
+            // A polymorphic has_one's companion {Name}Class column is a
+            // second column this same payload key writes to (see below) —
+            // it must be independently gated too, not silently write
+            // alongside the FK for free just because the FK passed (#25).
+            // The FK itself was already confirmed writable just above, so
+            // only the Class column needs checking here.
+            if (
+                $relationName !== null
+                && ($hasOne[$relationName] ?? null) === DataObject::class
+                && !$this->isFieldWritable($className, $relationName . 'Class', $relationName, $trusted)
+            ) {
+                $problems[] = [
+                    'field' => $name,
+                    'code' => ErrorCode::READONLY_FIELD->value,
+                    'message' => sprintf('Field "%s" is not writable via the content API.', $relationName . 'Class'),
                 ];
                 continue;
             }
@@ -339,6 +382,42 @@ class WriteApplicator
             || ($relationName && in_array($relationName, $allowed, true));
     }
 
+    /**
+     * Whether a polymorphic has_one's FK and companion {Name}Class column
+     * are BOTH writable — the pair is gated as a single unit, not two
+     * independent columns (#25). Every caller that needs to know whether a
+     * polymorphic relation itself can be written (WriteApplicator's own
+     * apply loop, SchemaService's advertised writability, WriteGuardExtension's
+     * revert guard) shares this one decision rather than each re-deriving
+     * the same FK-AND-Class check.
+     */
+    public function isPolymorphicRelationWritable(string $className, string $relationName, bool $trusted = false): bool
+    {
+        return $this->isFieldWritable($className, $relationName . 'ID', $relationName, $trusted)
+            && $this->isFieldWritable($className, $relationName . 'Class', $relationName, $trusted);
+    }
+
+    /**
+     * Whether $columnName is the companion {Name}Class column of a
+     * polymorphic has_one declared in $hasOne — the naming-convention
+     * detection this class, SchemaService and WriteGuardExtension all
+     * independently need (#25), in one place.
+     *
+     * @param array<string, string> $hasOne as returned by DataObject::hasOne()
+     * @return ?string the relation name if $columnName is its companion
+     *   Class column, null otherwise
+     */
+    public function polymorphicClassColumnRelation(string $columnName, array $hasOne): ?string
+    {
+        if (!str_ends_with($columnName, 'Class')) {
+            return null;
+        }
+
+        $relationName = substr($columnName, 0, -5);
+
+        return ($hasOne[$relationName] ?? null) === DataObject::class ? $relationName : null;
+    }
+
     protected function unknownFieldMode(string $className): string
     {
         return Config::inst()->get($className, 'api_unknown_fields')
@@ -380,9 +459,14 @@ class WriteApplicator
      * polymorphic relation is rejected as ambiguous, rather than reaching
      * DataObject::get_by_id(DataObject::class, ...) downstream and 500ing.
      *
+     * Public: also called by WriteGuardExtension to translate a polymorphic
+     * has_one's `{"class","id"}` payload shape into raw FK + Class column
+     * writes before colymba's own deserializer (which has no concept of
+     * either) applies the payload on its native `/api` surface (#23).
+     *
      * @return array{id: int, class: ?string, polymorphic: bool}
      */
-    protected function resolveRelation(string $relationName, string $relationClass, mixed $value): array
+    public function resolveRelation(string $relationName, string $relationClass, mixed $value): array
     {
         $isPolymorphic = $relationClass === DataObject::class;
 
@@ -406,21 +490,9 @@ class WriteApplicator
         }
 
         if (is_array($value)) {
-            $targetClass = $relationClass;
-
-            if ($isPolymorphic) {
-                if (!isset($value['class'])) {
-                    throw new ApiError(
-                        ErrorCode::PAYLOAD_INVALID,
-                        sprintf(
-                            'Relation "%s" is polymorphic and requires an explicit "class" hint.',
-                            $relationName
-                        )
-                    );
-                }
-
-                $targetClass = $this->registry->resolve((string) $value['class']);
-            }
+            $targetClass = $isPolymorphic
+                ? $this->registry->resolvePolymorphicHint($relationName, $value)
+                : $relationClass;
 
             if (isset($value['id'])) {
                 return [

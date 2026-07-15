@@ -4,7 +4,9 @@ namespace Dynamic\ContentApi\Security;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Write\WriteApplicator;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Member;
@@ -29,9 +31,15 @@ class PermissionPolicy
 
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
+        'externalIds' => '%$' . ExternalIdResolver::class,
+        'applicator' => '%$' . WriteApplicator::class,
     ];
 
     public ?ClassRegistry $registry = null;
+
+    public ?ExternalIdResolver $externalIds = null;
+
+    public ?WriteApplicator $applicator = null;
 
     /**
      * Gate on the CONTENT_API_ACCESS permission alone, independent of any
@@ -111,12 +119,24 @@ class PermissionPolicy
      * implementations need the hydrated parent records (the
      * project-feedback ApiPermissionManager lesson, generalized).
      *
+     * `$internalFields` is the same trusted, request-independent channel
+     * `WriteApplicator::applyFields()` accepts — passed separately (not
+     * pre-merged by the caller) so a relation set only via that channel
+     * (e.g. a composition element's `ParentID`, never in
+     * `api_writable_fields`) still gets hydrated into the context rather
+     * than being mistaken for an untrusted, unwritable field and skipped.
+     *
      * @param array<string, mixed> $fields the payload's fields block
+     * @param array<string, mixed> $internalFields
      * @throws ApiError FORBIDDEN_RECORD
      */
-    public function checkCreateAccess(string $className, Member $member, array $fields = []): void
-    {
-        $context = $this->buildCreateContext($className, $fields);
+    public function checkCreateAccess(
+        string $className,
+        Member $member,
+        array $fields = [],
+        array $internalFields = []
+    ): void {
+        $context = $this->buildCreateContext($className, $fields, $internalFields);
 
         if (!DataObject::singleton($className)->canCreate($member, $context)) {
             throw new ApiError(
@@ -144,33 +164,50 @@ class PermissionPolicy
      * from a tenant-scoped canCreate()'s context — a fail-open gap a project
      * feedback lesson (see class doc) specifically warned against.
      *
+     * The same fail-open concern applies to the `{"externalId": "..."}`
+     * payload shape — resolveRelation() accepts it as equally valid to a
+     * numeric id, so a tenant-scoped canCreate() must see it hydrated too,
+     * not silently treated as if the relation were absent from the payload.
+     *
+     * A relation the client isn't even allowed to write is skipped before
+     * any of that resolution runs (matching
+     * WriteGuardExtension::translatePolymorphicHasOnes()'s "check
+     * writability before resolving" — #23): otherwise a bad class hint or
+     * unresolvable externalId on a field applyFields() would reject with
+     * READONLY_FIELD anyway surfaces a confusing NOT_FOUND/PAYLOAD_INVALID
+     * instead, for a field the request could never have written regardless.
+     * A relation named only via `$internalFields` bypasses that check the
+     * same way it bypasses `applyFields()`'s own allowlist.
+     *
+     * @param array<string, mixed> $internalFields
      * @return array<string, mixed>
      */
-    protected function buildCreateContext(string $className, array $fields): array
+    protected function buildCreateContext(string $className, array $fields, array $internalFields = []): array
     {
-        $context = ['Payload' => $fields];
+        $combined = array_merge($fields, $internalFields);
+        $context = ['Payload' => $combined];
         $hasOne = (array) DataObject::singleton($className)->hasOne();
 
         foreach ($hasOne as $relationName => $relationClass) {
-            $value = $fields[$relationName] ?? $fields[$relationName . 'ID'] ?? null;
+            $value = $combined[$relationName] ?? $combined[$relationName . 'ID'] ?? null;
+
+            if ($value === null) {
+                continue;
+            }
+
             $isPolymorphic = $relationClass === DataObject::class;
+            $trusted = isset($internalFields[$relationName]) || isset($internalFields[$relationName . 'ID']);
+
+            $writable = $isPolymorphic
+                ? $this->applicator->isPolymorphicRelationWritable($className, $relationName, $trusted)
+                : $this->applicator->isFieldWritable($className, $relationName . 'ID', $relationName, $trusted);
+
+            if (!$writable) {
+                continue;
+            }
 
             if ($isPolymorphic) {
-                if ($value === null) {
-                    continue;
-                }
-
-                if (!is_array($value) || !isset($value['class'])) {
-                    throw new ApiError(
-                        ErrorCode::PAYLOAD_INVALID,
-                        sprintf(
-                            'Relation "%s" is polymorphic and requires an explicit "class" hint.',
-                            $relationName
-                        )
-                    );
-                }
-
-                $relationClass = $this->registry->resolve((string) $value['class']);
+                $relationClass = $this->registry->resolvePolymorphicHint($relationName, $value);
             }
 
             $id = match (true) {
@@ -181,6 +218,11 @@ class PermissionPolicy
 
             if ($id > 0) {
                 $context[$relationName] = DataObject::get_by_id($relationClass, $id);
+                continue;
+            }
+
+            if (is_array($value) && isset($value['externalId'])) {
+                $context[$relationName] = $this->externalIds->find($relationClass, (string) $value['externalId']);
             }
         }
 

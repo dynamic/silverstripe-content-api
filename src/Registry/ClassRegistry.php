@@ -62,6 +62,28 @@ class ClassRegistry
     ];
 
     /**
+     * Resolves a polymorphic has_one's target class from a payload value's
+     * "class" hint — shared by WriteApplicator::resolveRelation() and
+     * PermissionPolicy::buildCreateContext(), which both independently
+     * needed the same "polymorphic has_one payload value -> concrete FQCN"
+     * resolution (#24).
+     *
+     * @throws ApiError PAYLOAD_INVALID when $value isn't an array carrying
+     *   "class"; UNKNOWN_CLASS via resolve() when the hint doesn't map
+     */
+    public function resolvePolymorphicHint(string $relationName, mixed $value): string
+    {
+        if (!is_array($value) || !isset($value['class'])) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('Relation "%s" is polymorphic and requires an explicit "class" hint.', $relationName)
+            );
+        }
+
+        return $this->resolve((string) $value['class']);
+    }
+
+    /**
      * Resolve a short class reference to its FQCN.
      *
      * @throws ApiError UNKNOWN_CLASS when unmapped, missing or not exposed
