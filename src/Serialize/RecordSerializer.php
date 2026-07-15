@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Serialize;
 
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
@@ -56,11 +57,25 @@ class RecordSerializer
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
         'externalIds' => '%$' . ExternalIdResolver::class,
+        'logger' => '%$' . LoggerInterface::class,
     ];
 
     public ?ClassRegistry $registry = null;
 
     public ?ExternalIdResolver $externalIds = null;
+
+    public ?LoggerInterface $logger = null;
+
+    /**
+     * Dedupes relation-read warnings by shape (relation + class), not by
+     * record — a systemically broken relation (a dropped ClassRegistry
+     * mapping, a misconfigured has_many) otherwise logs once per affected
+     * record on every list read of a page, flooding logs with duplicates of
+     * the same underlying problem.
+     *
+     * @var array<string, true>
+     */
+    private array $loggedRelationWarnings = [];
 
     public function serialize(DataObject $record): array
     {
@@ -137,11 +152,53 @@ class RecordSerializer
                     // round-trip preserves the target class. "class" is a
                     // short registry ref, the same shape
                     // WriteApplicator::resolveRelation() requires on write.
-                    $targetClassName = $record->getField($name . 'Class') ?: null;
-                    $relations[$name] = $id === null ? null : [
-                        'id' => $id,
-                        'class' => $targetClassName ? $this->registry->refFor($targetClassName) : null,
-                    ];
+                    //
+                    // Only look at the Class column when the relation is
+                    // actually set: a write path that clears just the FK
+                    // (leaving a stale Class value behind) must not trigger
+                    // a spurious "unregistered class" warning for a relation
+                    // that's genuinely unset from the caller's perspective.
+                    if ($id === null) {
+                        $relations[$name] = null;
+                    } else {
+                        $targetClassName = $record->getField($name . 'Class') ?: null;
+                        $classRef = $targetClassName ? $this->registry->refFor($targetClassName) : null;
+
+                        if ($classRef === null) {
+                            // Either the companion Class column is empty
+                            // despite the FK being set (a partial write, a
+                            // legacy import, an upstream bug — the relation
+                            // is broken, not just unexposed), or it names a
+                            // class ClassRegistry never registered (never
+                            // exposed, or the mapping was removed after this
+                            // record was written). Either way: omit "class"
+                            // rather than emit a misleading null (#26) or
+                            // leak the internal FQCN of a class the
+                            // registry's deny-by-default model deliberately
+                            // never exposed — a write attempt without a
+                            // class hint gets a clear PAYLOAD_INVALID
+                            // instead of silently targeting nothing.
+                            $this->warnOnceForRelation(
+                                sprintf('poly:%s:%s:%s', $className, $name, $targetClassName ?? ''),
+                                $targetClassName !== null
+                                    ? sprintf(
+                                        'Polymorphic has_one "%s" on %s targets unregistered class "%s".',
+                                        $name,
+                                        $this->recordLabel($className, $record),
+                                        $targetClassName
+                                    )
+                                    : sprintf(
+                                        'Polymorphic has_one "%s" on %s has an id but no companion Class value.',
+                                        $name,
+                                        $this->recordLabel($className, $record)
+                                    )
+                            );
+                        }
+
+                        $relations[$name] = $classRef !== null
+                            ? ['id' => $id, 'class' => $classRef]
+                            : ['id' => $id];
+                    }
                 } else {
                     $relations[$name] = $id;
                 }
@@ -152,10 +209,23 @@ class RecordSerializer
             if (isset($hasMany[$name]) || isset($manyMany[$name])) {
                 // Guarded: a misconfigured third-party relation (e.g. a
                 // has_many whose target lacks the has_one in this manifest)
-                // must not take down the whole record read.
+                // must not take down the whole record read — but it must
+                // still be discoverable, not indistinguishable from a
+                // genuinely empty relation (#22).
                 try {
                     $relations[$name] = array_map('intval', $record->{$name}()->column('ID'));
-                } catch (Throwable) {
+                } catch (Throwable $exception) {
+                    $this->warnOnceForRelation(
+                        sprintf('read:%s:%s', $className, $name),
+                        sprintf(
+                            'Relation "%s" on %s could not be read: %s',
+                            $name,
+                            $this->recordLabel($className, $record),
+                            $exception->getMessage()
+                        ),
+                        ['exception' => $exception]
+                    );
+
                     $relations[$name] = null;
                 }
                 continue;
@@ -178,6 +248,25 @@ class RecordSerializer
         }
 
         return [$fields, $relations];
+    }
+
+    private function recordLabel(string $className, DataObject $record): string
+    {
+        return sprintf('%s#%d', $className, (int) $record->ID);
+    }
+
+    /**
+     * Logs a relation-read warning at most once per (relation + shape) key
+     * for this serializer instance's lifetime — see $loggedRelationWarnings.
+     */
+    private function warnOnceForRelation(string $dedupeKey, string $message, array $context = []): void
+    {
+        if (isset($this->loggedRelationWarnings[$dedupeKey])) {
+            return;
+        }
+
+        $this->loggedRelationWarnings[$dedupeKey] = true;
+        $this->logger->warning($message, $context);
     }
 
     private function stageReport(DataObject $record): array

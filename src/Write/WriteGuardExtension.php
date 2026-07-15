@@ -2,7 +2,9 @@
 
 namespace Dynamic\ContentApi\Write;
 
+use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
+use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
 
@@ -88,7 +90,32 @@ class WriteGuardExtension extends Extension
         WriteGuardPayloads::store($this->getOwner(), $body);
 
         if ($filtered) {
-            $rawJson = json_encode($body) ?: $rawJson;
+            $encoded = json_encode($body);
+
+            if ($encoded === false) {
+                // A guard that can silently no-op on an encoding failure is
+                // worse than one that errors loudly (#22) — falling back to
+                // $rawJson here would mean colymba deserializes the
+                // *original, unstripped* payload, silently bypassing the
+                // relation-key strip this method just computed.
+                //
+                // HTTPResponse_Exception specifically: this hook runs inside
+                // colymba's own controller action, which has no exception
+                // handling of its own — but SilverStripe's RequestHandler
+                // catches HTTPResponse_Exception and turns it into the
+                // response, so this still fails as a clean HTTP error
+                // instead of an unhandled exception. The internal class name
+                // stays in the log, not the client-facing message.
+                Injector::inst()->get(LoggerInterface::class)->error(sprintf(
+                    'WriteGuardExtension could not re-encode the filtered payload for %s (json_encode: %s).',
+                    get_class($this->getOwner()),
+                    json_last_error_msg()
+                ));
+
+                throw new HTTPResponse_Exception('Unable to process the request payload.', 500);
+            }
+
+            $rawJson = $encoded;
         }
     }
 
