@@ -119,12 +119,24 @@ class PermissionPolicy
      * implementations need the hydrated parent records (the
      * project-feedback ApiPermissionManager lesson, generalized).
      *
+     * `$internalFields` is the same trusted, request-independent channel
+     * `WriteApplicator::applyFields()` accepts — passed separately (not
+     * pre-merged by the caller) so a relation set only via that channel
+     * (e.g. a composition element's `ParentID`, never in
+     * `api_writable_fields`) still gets hydrated into the context rather
+     * than being mistaken for an untrusted, unwritable field and skipped.
+     *
      * @param array<string, mixed> $fields the payload's fields block
+     * @param array<string, mixed> $internalFields
      * @throws ApiError FORBIDDEN_RECORD
      */
-    public function checkCreateAccess(string $className, Member $member, array $fields = []): void
-    {
-        $context = $this->buildCreateContext($className, $fields);
+    public function checkCreateAccess(
+        string $className,
+        Member $member,
+        array $fields = [],
+        array $internalFields = []
+    ): void {
+        $context = $this->buildCreateContext($className, $fields, $internalFields);
 
         if (!DataObject::singleton($className)->canCreate($member, $context)) {
             throw new ApiError(
@@ -164,26 +176,31 @@ class PermissionPolicy
      * unresolvable externalId on a field applyFields() would reject with
      * READONLY_FIELD anyway surfaces a confusing NOT_FOUND/PAYLOAD_INVALID
      * instead, for a field the request could never have written regardless.
+     * A relation named only via `$internalFields` bypasses that check the
+     * same way it bypasses `applyFields()`'s own allowlist.
      *
+     * @param array<string, mixed> $internalFields
      * @return array<string, mixed>
      */
-    protected function buildCreateContext(string $className, array $fields): array
+    protected function buildCreateContext(string $className, array $fields, array $internalFields = []): array
     {
-        $context = ['Payload' => $fields];
+        $combined = array_merge($fields, $internalFields);
+        $context = ['Payload' => $combined];
         $hasOne = (array) DataObject::singleton($className)->hasOne();
 
         foreach ($hasOne as $relationName => $relationClass) {
-            $value = $fields[$relationName] ?? $fields[$relationName . 'ID'] ?? null;
+            $value = $combined[$relationName] ?? $combined[$relationName . 'ID'] ?? null;
 
             if ($value === null) {
                 continue;
             }
 
             $isPolymorphic = $relationClass === DataObject::class;
+            $trusted = isset($internalFields[$relationName]) || isset($internalFields[$relationName . 'ID']);
 
             $writable = $isPolymorphic
-                ? $this->applicator->isPolymorphicRelationWritable($className, $relationName)
-                : $this->applicator->isFieldWritable($className, $relationName . 'ID', $relationName);
+                ? $this->applicator->isPolymorphicRelationWritable($className, $relationName, $trusted)
+                : $this->applicator->isFieldWritable($className, $relationName . 'ID', $relationName, $trusted);
 
             if (!$writable) {
                 continue;

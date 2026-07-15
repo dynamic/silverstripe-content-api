@@ -98,12 +98,14 @@ class RecordWriter
         $this->policy->checkClassAccess($className, 'create', $member);
 
         // canCreate() context hydration should see trusted fields too (e.g. a
-        // composition element's ParentID) — it only informs permission
-        // checks, it isn't a writability gate, so merging here is safe.
+        // composition element's ParentID) — passed separately (not
+        // pre-merged) so checkCreateAccess() can tell a trusted field apart
+        // from an untrusted one when it checks writability.
         $this->policy->checkCreateAccess(
             $className,
             $member,
-            array_merge((array) ($payload['fields'] ?? []), $internalFields)
+            (array) ($payload['fields'] ?? []),
+            $internalFields
         );
 
         /** @var DataObject $record */
