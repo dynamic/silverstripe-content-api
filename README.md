@@ -71,6 +71,23 @@ composer require dynamic/silverstripe-content-api
   set a longer `tokenLife` and re-mint (auto-refresh is off, see Authentication).
 - Injector note: `RecordsWriteHandler` was replaced by `RecordActionsHandler`.
 
+### Upgrading from 1.1.x
+
+1.2.0 is a security/correctness release with no route, envelope, or config changes —
+see [CHANGELOG.md](CHANGELOG.md) for the full list. A few fixes are observable response
+differences if client code happened to depend on the old (buggy) shape:
+
+- `GET records/$ClassRef` list reads: `meta.total` now reflects only records the
+  caller can view (previously it counted hidden records too), and a page is never
+  short a record that was silently filtered out after pagination.
+- A polymorphic has_one pointing at a class not registered in `ClassRegistry` now
+  serializes as `{"id": n}` with no `"class"` key, instead of `{"id": n, "class":
+  null}`.
+- Four validation-error responses (composition page/child writes, page conversion,
+  link writes) now return the same structured `details` array every other
+  `VALIDATION_FAILED` response already used, rather than a raw exception message —
+  only relevant if client code was parsing that specific message text.
+
 ## Quick start
 
 1. **Expose classes** — one map drives both surfaces (deny-by-default; a class must be
