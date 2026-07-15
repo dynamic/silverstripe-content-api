@@ -130,6 +130,16 @@ class PermissionPolicy
      * Hydrate has_one relations named in the payload (either `Relation` or
      * `RelationID` form) into a canCreate() context array.
      *
+     * A polymorphic has_one (declared `'Relation' => DataObject::class`)
+     * can't be hydrated via `DataObject::get_by_id($relationClass, $id)` —
+     * `$relationClass` is the literal abstract `DataObject::class`, and core
+     * refuses to query it directly ("cannot query non-subclass DataObject
+     * directly"). The concrete target class only exists if the payload named
+     * one via a "class" hint (the same convention WriteApplicator's
+     * resolveRelation() requires for the write itself); without a resolvable
+     * hint the relation is left out of the context rather than crashing —
+     * a tenant-scoped canCreate() simply won't see that key.
+     *
      * @return array<string, mixed>
      */
     protected function buildCreateContext(string $className, array $fields): array
@@ -139,6 +149,19 @@ class PermissionPolicy
 
         foreach ($hasOne as $relationName => $relationClass) {
             $value = $fields[$relationName] ?? $fields[$relationName . 'ID'] ?? null;
+            $isPolymorphic = $relationClass === DataObject::class;
+
+            if ($isPolymorphic) {
+                if (!is_array($value) || !isset($value['class'])) {
+                    continue;
+                }
+
+                try {
+                    $relationClass = $this->registry->resolve((string) $value['class']);
+                } catch (ApiError) {
+                    continue;
+                }
+            }
 
             $id = match (true) {
                 is_int($value), is_string($value) && ctype_digit((string) $value) => (int) $value,

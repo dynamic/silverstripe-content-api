@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Core\Config\Config;
@@ -176,6 +177,32 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('Renamed', $this->objFromFixture(ApiTestObject::class, 'one')->Title);
     }
 
+    public function testBareAllowlistIsEnforcedOnTrustedPath(): void
+    {
+        // Regression for #15: a class in the default `guarded` policy with a
+        // non-empty api_writable_fields (no explicit api_write_policy) must
+        // still be gated on the batch/compositions surface — a bare allowlist
+        // is not a silent no-op here just because it isn't the colymba guard.
+        Config::modify()->set(ApiTestObject::class, 'api_writable_fields', ['Title']);
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'upsert', 'class' => 'ApiTest', 'externalId' => 'alpha', 'fields' => ['Rank' => 5]],
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTest',
+                    'externalId' => 'alpha',
+                    'fields' => ['Title' => 'Renamed bare'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $results = $body['data']['results'];
+        $this->assertSame('READONLY_FIELD', $results[0]['error']['code'], 'Rank rejected by the bare allowlist');
+        $this->assertSame('updated', $results[1]['status']);
+        $this->assertSame('Renamed bare', $this->objFromFixture(ApiTestObject::class, 'one')->Title);
+    }
+
     public function testValidationFailureMapsPerField(): void
     {
         $body = $this->decode($this->apiPost('batch', [
@@ -223,6 +250,98 @@ class BatchTest extends ContentApiTestCase
             ],
         ], $this->adminToken);
         $this->assertSame(0, (int) ApiTestObject::get()->byID($one->ID)->BuddyID);
+    }
+
+    public function testPolymorphicHasOneCreateWithClassHint(): void
+    {
+        // Regression for #17: creating a record with a polymorphic has_one
+        // (ApiTestPolyObject.Owner => DataObject::class) used to 500 —
+        // PermissionPolicy::buildCreateContext() called
+        // DataObject::get_by_id(DataObject::class, ...) while hydrating the
+        // canCreate() context, before the field-apply logic ever ran.
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTestPoly',
+                    'externalId' => 'poly-new',
+                    'fields' => [
+                        'Title' => 'Poly record',
+                        'Owner' => ['class' => 'ApiTest', 'id' => (int) $owner->ID],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'create must not 500');
+        $this->assertSame('created', $body['data']['results'][0]['status']);
+
+        $created = ApiTestPolyObject::get()->filter('FixtureIdentifier', 'poly-new')->first();
+        $this->assertNotNull($created);
+        $this->assertSame((int) $owner->ID, (int) $created->OwnerID, 'FK column set');
+        $this->assertSame(ApiTestObject::class, $created->OwnerClass, 'companion Class column set');
+
+        // GET round-trips the class alongside the id rather than a bare int.
+        $read = $this->decode($this->apiGet("records/ApiTestPoly/{$created->ID}", $this->adminToken));
+        $this->assertSame(
+            ['id' => (int) $created->ID, 'class' => 'ApiTest'],
+            $read['data']['relations']['Owner']
+        );
+    }
+
+    public function testPolymorphicHasOneWithoutClassHintIsRejectedNotCrashed(): void
+    {
+        // A bare {"id": n} (or plain int) on a polymorphic has_one is
+        // ambiguous — the fix rejects it with a machine-readable error
+        // instead of reaching DataObject::get_by_id(DataObject::class, ...)
+        // and 500ing.
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestPoly',
+                    'externalId' => 'poly-no-hint',
+                    'fields' => [
+                        'Title' => 'Poly record',
+                        'Owner' => ['id' => (int) $owner->ID],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'batch envelope itself must not 500');
+        $this->assertSame('PAYLOAD_INVALID', $body['data']['results'][0]['error']['code']);
+    }
+
+    public function testPolymorphicHasOneViaBareFkColumnIsAlsoRejected(): void
+    {
+        // Regression: a payload naming the relation by its raw FK column
+        // ("OwnerID") rather than the relation name ("Owner") must not
+        // bypass the polymorphic class-hint requirement — both keys route
+        // through the same resolveRelation() check.
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestPoly',
+                    'externalId' => 'poly-fk-column',
+                    'fields' => [
+                        'Title' => 'Poly record',
+                        'OwnerID' => (int) $owner->ID,
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'batch envelope itself must not 500');
+        $this->assertSame('PAYLOAD_INVALID', $body['data']['results'][0]['error']['code']);
+        $this->assertNull(ApiTestPolyObject::get()->filter('FixtureIdentifier', 'poly-fk-column')->first());
     }
 
     public function testRelationModesAndExtraFields(): void

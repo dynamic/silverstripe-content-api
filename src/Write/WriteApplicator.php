@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Write;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
@@ -24,7 +25,12 @@ use SilverStripe\ORM\DataObject;
  *   except `protected_fields` + per-class `api_protected_fields`. has_many /
  *   many_many writes require the relation in `api_writable_relations`.
  * - `allowlist`: only per-class `api_writable_fields` entries are writable
- *   (relations still gate through `api_writable_relations`).
+ *   (relations still gate through `api_writable_relations`). A class also
+ *   enters allowlist mode implicitly the moment it declares a non-empty
+ *   `api_writable_fields`, even under the `guarded` policy — declaring the
+ *   allowlist is itself the opt-in, on every write surface (colymba /api,
+ *   batch, compositions). There is no configuration that declares
+ *   `api_writable_fields` and has it silently ignored.
  */
 class WriteApplicator
 {
@@ -66,9 +72,12 @@ class WriteApplicator
 
     private static array $dependencies = [
         'externalIds' => '%$' . ExternalIdResolver::class,
+        'registry' => '%$' . ClassRegistry::class,
     ];
 
     public ?ExternalIdResolver $externalIds = null;
+
+    public ?ClassRegistry $registry = null;
 
     /**
      * Warnings collected during the last apply() call.
@@ -115,9 +124,18 @@ class WriteApplicator
                 continue;
             }
 
+            // Both the relation-name key ("Owner") and the raw FK-column key
+            // ("OwnerID") route through the same has_one handling below — a
+            // relation named only by its FK column must not bypass the
+            // polymorphic class-hint requirement resolveRelation() enforces.
+            $relationName = match (true) {
+                $isHasOne => $name,
+                $isHasOneFk => substr($name, 0, -2),
+                default => null,
+            };
             $columnName = $isHasOne ? $name . 'ID' : $name;
 
-            if (!$this->isWritable($className, $columnName, $isHasOne ? $name : null)) {
+            if (!$this->isFieldWritable($className, $columnName, $relationName)) {
                 $problems[] = [
                     'field' => $name,
                     'code' => ErrorCode::READONLY_FIELD->value,
@@ -126,7 +144,7 @@ class WriteApplicator
                 continue;
             }
 
-            $plan[] = [$name, $columnName, $isHasOne, $value];
+            $plan[] = [$name, $columnName, $relationName, $value];
         }
 
         if ($problems !== []) {
@@ -137,11 +155,20 @@ class WriteApplicator
             );
         }
 
-        foreach ($plan as [$name, $columnName, $isHasOne, $value]) {
+        foreach ($plan as [$name, $columnName, $relationName, $value]) {
             $value = $this->transformValue($record, $name, $value);
 
-            if ($isHasOne) {
-                $record->setField($columnName, $this->resolveRelationId($record, $name, $value));
+            if ($relationName !== null) {
+                $resolved = $this->resolveRelation($relationName, $hasOne[$relationName], $value);
+                $record->setField($columnName, $resolved['id']);
+
+                // Polymorphic has_ones (declared `'Relation' => DataObject::class`)
+                // need the companion `{Name}Class` column written alongside the
+                // FK — the ID alone can't be dereferenced on read. Non-polymorphic
+                // relations never touch this column.
+                if ($resolved['polymorphic']) {
+                    $record->setField($relationName . 'Class', $resolved['class']);
+                }
             } else {
                 $record->setCastedField($columnName, $value);
             }
@@ -241,32 +268,18 @@ class WriteApplicator
     }
 
     /**
-     * The single source of truth for field writability across both surfaces.
+     * The single source of truth for field writability across every write
+     * surface (colymba /api, batch, compositions).
      *
-     * `$restrictOnBareAllowlist` is the ONE intentional difference between the
-     * two: the untrusted colymba /api guard (WriteGuardExtension) passes true,
-     * so a non-empty `api_writable_fields` alone restricts writes there; the
-     * trusted population path (batch/compositions) passes false (the default),
-     * so it stays in guarded mode and can write structural fields like
-     * ParentID/Sort unless a project explicitly opts into allowlist mode via
-     * `api_write_policy` or the global `policy`. Both paths share the protected-
-     * field denylist and the allowlist matching by column name OR relation name.
+     * A class is in allowlist mode when it declares `api_write_policy:
+     * allowlist` (or the global `policy` is `allowlist`), OR when it declares
+     * a non-empty `api_writable_fields` at all — the allowlist itself is the
+     * opt-in, so there is no configuration where `api_writable_fields` is set
+     * but silently has no effect. Both paths share the protected-field
+     * denylist and the allowlist matching by column name OR relation name.
      */
-    public function isFieldWritable(
-        string $className,
-        string $columnName,
-        ?string $relationName = null,
-        bool $restrictOnBareAllowlist = false
-    ): bool {
-        return $this->isWritable($className, $columnName, $relationName, $restrictOnBareAllowlist);
-    }
-
-    protected function isWritable(
-        string $className,
-        string $columnName,
-        ?string $relationName,
-        bool $restrictOnBareAllowlist = false
-    ): bool {
+    public function isFieldWritable(string $className, string $columnName, ?string $relationName = null): bool
+    {
         $protected = array_merge(
             (array) static::config()->get('protected_fields'),
             (array) Config::inst()->get($className, 'api_protected_fields')
@@ -280,7 +293,7 @@ class WriteApplicator
             ?: static::config()->get('policy');
 
         $allowed = (array) Config::inst()->get($className, 'api_writable_fields');
-        $allowlistMode = $policy === 'allowlist' || ($restrictOnBareAllowlist && $allowed !== []);
+        $allowlistMode = $policy === 'allowlist' || $allowed !== [];
 
         if (!$allowlistMode) {
             return true;
@@ -312,36 +325,92 @@ class WriteApplicator
     }
 
     /**
-     * Resolve a has_one payload value to a foreign key ID.
-     * Accepts int, null, {"id": n} or {"externalId": "..."}.
+     * Resolve a has_one payload value to a foreign key ID (and, for a
+     * polymorphic has_one, the concrete target class). `$relationClass` is
+     * the relation's declared has_one target — the caller already has it
+     * (from `$record->hasOne()`) so this doesn't re-derive it via schema.
+     *
+     * A non-polymorphic has_one (the common case) accepts an integer ID,
+     * null, {"id": n} or {"externalId": "..."} — unchanged from before.
+     *
+     * A polymorphic has_one (declared `'Relation' => DataObject::class`) has
+     * no single target class to fall back on, so the class isn't derivable
+     * from the schema the way it is for a normal relation — the caller MUST
+     * say which class the ID/externalId belongs to via an explicit "class"
+     * hint: {"class": "...", "id": n} or {"class": "...", "externalId": "..."}.
+     * "class" is a short registry ref (see ClassRegistry::resolve()), the
+     * same convention CompositionService already uses for a child's class
+     * override. A bare int or a hint-less {"id"/"externalId"} on a
+     * polymorphic relation is rejected as ambiguous, rather than reaching
+     * DataObject::get_by_id(DataObject::class, ...) downstream and 500ing.
+     *
+     * @return array{id: int, class: ?string, polymorphic: bool}
      */
-    protected function resolveRelationId(DataObject $record, string $relationName, mixed $value): int
+    protected function resolveRelation(string $relationName, string $relationClass, mixed $value): array
     {
+        $isPolymorphic = $relationClass === DataObject::class;
+
         if ($value === null) {
-            return 0;
+            return ['id' => 0, 'class' => null, 'polymorphic' => $isPolymorphic];
         }
 
         if (is_int($value) || (is_string($value) && ctype_digit($value))) {
-            return (int) $value;
+            if ($isPolymorphic) {
+                throw new ApiError(
+                    ErrorCode::PAYLOAD_INVALID,
+                    sprintf(
+                        'Relation "%s" is polymorphic; a bare ID is ambiguous — use '
+                        . '{"class": "...", "id": n}.',
+                        $relationName
+                    )
+                );
+            }
+
+            return ['id' => (int) $value, 'class' => null, 'polymorphic' => false];
         }
 
         if (is_array($value)) {
-            $relationClass = DataObject::getSchema()->hasOneComponent(get_class($record), $relationName);
+            $targetClass = $relationClass;
 
-            if (isset($value['id'])) {
-                return (int) $value['id'];
+            if ($isPolymorphic) {
+                if (!isset($value['class'])) {
+                    throw new ApiError(
+                        ErrorCode::PAYLOAD_INVALID,
+                        sprintf(
+                            'Relation "%s" is polymorphic and requires an explicit "class" hint.',
+                            $relationName
+                        )
+                    );
+                }
+
+                $targetClass = $this->registry->resolve((string) $value['class']);
             }
 
-            if (isset($value['externalId']) && $relationClass) {
-                return (int) $this->externalIds->find($relationClass, (string) $value['externalId'])->ID;
+            if (isset($value['id'])) {
+                return [
+                    'id' => (int) $value['id'],
+                    'class' => $isPolymorphic ? $targetClass : null,
+                    'polymorphic' => $isPolymorphic,
+                ];
+            }
+
+            if (isset($value['externalId']) && $targetClass) {
+                $found = $this->externalIds->find($targetClass, (string) $value['externalId']);
+
+                return [
+                    'id' => (int) $found->ID,
+                    'class' => $isPolymorphic ? $targetClass : null,
+                    'polymorphic' => $isPolymorphic,
+                ];
             }
         }
 
         throw new ApiError(
             ErrorCode::PAYLOAD_INVALID,
             sprintf(
-                'Relation "%s" accepts an integer ID, null, {"id": n} or {"externalId": "..."}.',
-                $relationName
+                'Relation "%s" accepts an integer ID, null, {"id": n} or {"externalId": "..."}%s.',
+                $relationName,
+                $isPolymorphic ? ', with an explicit "class"' : ''
             )
         );
     }

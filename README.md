@@ -107,6 +107,11 @@ DNADesign\Elemental\Models\ElementContent:
 > hook-layer constraint, matching the reference `ApiFieldGuardExtension`); the module's own
 > batch/composition surface instead **rejects** the whole payload with a machine-readable
 > error. Use batch/compositions when you need a hard failure on a bad field.
+>
+> Declaring a non-empty `api_writable_fields` (as above) is itself enough to put a class
+> into allowlist mode on **every** write surface — no separate `api_write_policy: allowlist`
+> is required. Only fields listed there (or `api_writable_relations` entries, for
+> has_many/many_many) are writable; everything else is rejected/reverted.
 
 2. **Apply the external-id extension** to classes the API should upsert (same column
    spec as `recipe-silverstripe-essentials-fixtures` — legacy-populated sites are
@@ -215,6 +220,18 @@ surfaces (colymba's serializer also emits verbatim names). has_one values: int, 
 `{"id"}`, `{"externalId"}`, a link payload, or `{"$ref"}` inside compositions. Writes
 validate before applying — a rejected payload changes nothing.
 
+A **polymorphic** has_one (declared `'Relation' => DataObject::class`, e.g. core's
+`UserForms\EmailRecipient.Form`) has no single target class to infer, so its value must
+carry an explicit `"class"` hint alongside `"id"`/`"externalId"` —
+`{"class": "ElementForm", "id": 1431}`. `"class"` is the same short registry ref used
+elsewhere (e.g. composition `elements[].class`). GET responses for a polymorphic has_one
+emit this same `{"id", "class"}` shape (instead of a bare int) so it round-trips directly
+into a write payload — **on this module's own surface** (single-record writes, batch,
+compositions). Colymba's generic `/api` write path applies payload keys directly to DB
+columns with no relation-shape handling at all, so it has no equivalent for a polymorphic
+has_one — `WriteGuardExtension` only guards *which* fields colymba's own deserializer
+already decided to write, it doesn't add relation resolution to that surface.
+
 ### Page composition
 
 ```json
@@ -269,9 +286,13 @@ unresolvable color token fails the write rather than persisting a white-on-white
   `content_api_access` overrides `api_access` for this module's surface only.
 - **Record gate**: the model's own `can*()` always applies; `canCreate()` receives a
   context hydrated from payload has_one keys.
-- **Write policies**: `guarded` (protected-field denylist) or `allowlist`
-  (`api_write_policy: allowlist` + `api_writable_fields`) — enforced natively in this
-  module's pipeline and, via `WriteGuardExtension`, on colymba's write path.
+- **Write policies**: `guarded` (protected-field denylist) or `allowlist` — enforced
+  identically on every write surface (this module's native pipeline and, via
+  `WriteGuardExtension`, colymba's write path). A class is in allowlist mode when
+  `api_write_policy: allowlist` (or the global `policy`) is set, OR when the class
+  declares a non-empty `api_writable_fields` at all — the allowlist declaration is
+  itself the opt-in; there is no configuration where `api_writable_fields` is set
+  but silently ignored.
 
 ## Testing
 
