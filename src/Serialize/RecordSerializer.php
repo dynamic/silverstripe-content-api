@@ -128,7 +128,24 @@ class RecordSerializer
             }
 
             if (isset($hasOne[$name])) {
-                $relations[$name] = (int) $record->getField($name . 'ID') ?: null;
+                $id = (int) $record->getField($name . 'ID') ?: null;
+
+                if ($hasOne[$name] === DataObject::class) {
+                    // Polymorphic has_one: the bare FK id isn't dereferenceable
+                    // without the companion {Name}Class column — emit
+                    // {"id", "class"} instead of a bare int so a GET->PATCH
+                    // round-trip preserves the target class. "class" is a
+                    // short registry ref, the same shape
+                    // WriteApplicator::resolveRelation() requires on write.
+                    $targetClassName = $record->getField($name . 'Class') ?: null;
+                    $relations[$name] = $id === null ? null : [
+                        'id' => $id,
+                        'class' => $targetClassName ? $this->registry->refFor($targetClassName) : null,
+                    ];
+                } else {
+                    $relations[$name] = $id;
+                }
+
                 continue;
             }
 

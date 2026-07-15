@@ -12,12 +12,13 @@ use SilverStripe\Core\Injector\Injector;
  * JSON payload. Productized from project-feedback's ApiFieldGuardExtension.
  *
  * Config keys (shared vocabulary with WriteApplicator):
- * - `api_writable_fields`: on THIS untrusted colymba surface a non-empty list
- *   is an allowlist — only listed fields may change. (The trusted population
- *   path — batch/compositions — is not restricted by this key; it stays
- *   guarded so it can write structural fields like ParentID/Sort. Use
- *   `api_write_policy: allowlist` or the global `WriteApplicator.policy` to
- *   restrict that path too — both are honoured here.)
+ * - `api_writable_fields`: a non-empty list is an allowlist — only listed
+ *   fields may change. Identical on every write surface: this untrusted
+ *   colymba surface AND the trusted population path (batch/compositions)
+ *   both honour a bare `api_writable_fields` as the opt-in into allowlist
+ *   mode (no separate `api_write_policy: allowlist` needed on either side —
+ *   that key only matters for a class with an empty `api_writable_fields`
+ *   that still wants allowlist-by-default semantics).
  * - `api_protected_fields` + global WriteApplicator `protected_fields`:
  *   never writable, and always win over the allowlist.
  * - `api_writable_relations`: has_many/many_many keys not listed are
@@ -136,9 +137,8 @@ class WriteGuardExtension extends Extension
                 $relationName = null;
             }
 
-            // Delegate to the single writability source of truth, restricting
-            // on a bare allowlist (this is the untrusted colymba surface).
-            $writable = $applicator->isFieldWritable($className, $column, $relationName, true);
+            // Delegate to the single writability source of truth.
+            $writable = $applicator->isFieldWritable($className, $column, $relationName);
 
             if (!$writable && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);

@@ -130,6 +130,20 @@ class PermissionPolicy
      * Hydrate has_one relations named in the payload (either `Relation` or
      * `RelationID` form) into a canCreate() context array.
      *
+     * A polymorphic has_one (declared `'Relation' => DataObject::class`)
+     * can't be hydrated via `DataObject::get_by_id($relationClass, $id)` —
+     * `$relationClass` is the literal abstract `DataObject::class`, and core
+     * refuses to query it directly ("cannot query non-subclass DataObject
+     * directly"). The concrete target class only exists if the payload named
+     * one via a "class" hint (the same convention WriteApplicator's
+     * resolveRelation() requires for the write itself). An absent value is
+     * skipped (the relation simply isn't in the payload), but a present,
+     * malformed, or unresolvable hint is rejected here with the same
+     * PAYLOAD_INVALID error resolveRelation() would raise for the identical
+     * shape during the write itself, rather than silently omitting the key
+     * from a tenant-scoped canCreate()'s context — a fail-open gap a project
+     * feedback lesson (see class doc) specifically warned against.
+     *
      * @return array<string, mixed>
      */
     protected function buildCreateContext(string $className, array $fields): array
@@ -139,6 +153,25 @@ class PermissionPolicy
 
         foreach ($hasOne as $relationName => $relationClass) {
             $value = $fields[$relationName] ?? $fields[$relationName . 'ID'] ?? null;
+            $isPolymorphic = $relationClass === DataObject::class;
+
+            if ($isPolymorphic) {
+                if ($value === null) {
+                    continue;
+                }
+
+                if (!is_array($value) || !isset($value['class'])) {
+                    throw new ApiError(
+                        ErrorCode::PAYLOAD_INVALID,
+                        sprintf(
+                            'Relation "%s" is polymorphic and requires an explicit "class" hint.',
+                            $relationName
+                        )
+                    );
+                }
+
+                $relationClass = $this->registry->resolve((string) $value['class']);
+            }
 
             $id = match (true) {
                 is_int($value), is_string($value) && ctype_digit((string) $value) => (int) $value,

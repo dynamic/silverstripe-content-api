@@ -29,7 +29,7 @@ class EnvironmentGate
      */
     public function checkPopulationAllowed(): void
     {
-        if (Environment::getEnv('SS_CONTENT_API_ALLOW_POPULATE')) {
+        if (self::overrideEnabled()) {
             return;
         }
 
@@ -46,5 +46,22 @@ class EnvironmentGate
                 )
             );
         }
+    }
+
+    /**
+     * Strictly parses `SS_CONTENT_API_ALLOW_POPULATE` rather than relying on PHP
+     * truthiness: a bare `if ($value)` would treat the literal string "false"
+     * (or "0", "off", "no") as truthy and silently disable the gate. `.env`
+     * files aren't parsed as plain strings either — SilverStripe's loader
+     * (`M1\Env\Parser`) coerces an unquoted `true`/`false` to a native PHP
+     * bool and a bare `1` to an int, so a string-only check would themselves
+     * reject the exact value this class's own error message recommends
+     * setting. `FILTER_VALIDATE_BOOLEAN` handles bool/int/string uniformly —
+     * the same function `AssetHandler::upload()` already uses for the same
+     * purpose — and defaults unrecognized/absent values to `false`.
+     */
+    private static function overrideEnabled(): bool
+    {
+        return filter_var(Environment::getEnv('SS_CONTENT_API_ALLOW_POPULATE'), FILTER_VALIDATE_BOOLEAN);
     }
 }

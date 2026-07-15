@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Control\HTTPResponse;
@@ -37,6 +38,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestElement::class,
         ApiTestElementItem::class,
         ApiTestCascadeObject::class,
+        ApiTestPolyObject::class,
     ];
 
     protected function setUp(): void
@@ -52,6 +54,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'BlockPageStub' => ApiTestBlockPage::class,
             'ApiTestElement' => ApiTestElement::class,
             'ElementContent' => \DNADesign\Elemental\Models\ElementContent::class,
+            'ApiTestPoly' => ApiTestPolyObject::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
@@ -64,6 +67,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,create,update,action');
         Config::modify()->set(ApiTestElement::class, 'api_access', true);
         Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
+        Config::modify()->set(ApiTestPolyObject::class, 'api_access', true);
     }
 
     /**
