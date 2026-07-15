@@ -117,16 +117,27 @@ class RecordsHandler
             $list = $this->applyFilters($list, $className, $request);
             $list = $this->applySort($list, $className, $request);
 
-            $total = $list->count();
-            $page = $list->limit($limit, $offset);
+            // canView is a per-record DataObject method (no generic SQL
+            // pushdown), so visibility must be resolved before total/limit/
+            // offset are computed — filtering after paginating both leaks
+            // the hidden-record count via meta.total and can return short
+            // pages that can never be paged around (#20). This trades a
+            // full-list iteration for correctness, consistent with the
+            // module's reject-rather-than-silently-degrade posture.
+            $visible = [];
+
+            foreach ($list as $record) {
+                if ($this->policy->canViewRecord($record, $context->member)) {
+                    $visible[] = $record;
+                }
+            }
+
+            $total = count($visible);
+            $page = array_slice($visible, $offset, $limit);
 
             $data = [];
 
             foreach ($page as $record) {
-                if (!$this->policy->canViewRecord($record, $context->member)) {
-                    continue;
-                }
-
                 $data[] = $this->serializer->serialize($record);
             }
 

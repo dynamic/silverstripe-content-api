@@ -24,9 +24,10 @@ class RecordsReadTest extends ContentApiTestCase
         $body = $this->decode($response);
 
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
-        $this->assertSame(6, $body['meta']['total']);
 
-        // Secret record is filtered by canView, so 5 of 6 come back.
+        // canView filtering runs before total/pagination are computed (#20),
+        // so total reflects only the 5 visible records, not the raw 6.
+        $this->assertSame(5, $body['meta']['total']);
         $this->assertCount(5, $body['data']);
 
         $first = $body['data'][0];
@@ -66,14 +67,34 @@ class RecordsReadTest extends ContentApiTestCase
     {
         $body = $this->decode($this->apiGet('records/ApiTest?sort=-Rank&limit=2', $this->token));
 
-        // Pagination applies before canView filtering: the raw page is
-        // [Secret (99), Beta Prime (3)] and Secret is then filtered out.
-        $this->assertCount(1, $body['data']);
+        // canView filtering runs before pagination (#20): Secret (Rank 99)
+        // is excluded from the visible set entirely, so a full 2-record
+        // page comes back — [Beta Prime, Beta] — instead of a short page
+        // with Secret silently occupying a slot and then vanishing.
+        $this->assertCount(2, $body['data']);
         $this->assertSame(2, $body['meta']['limit']);
+        $this->assertSame(5, $body['meta']['total']);
         $this->assertSame('Beta Prime', $body['data'][0]['fields']['Title']);
+        $this->assertSame('Beta', $body['data'][1]['fields']['Title']);
 
         $body = $this->decode($this->apiGet('records/ApiTest?sort=Rank&limit=2&offset=4', $this->token));
         $this->assertSame(4, $body['meta']['offset']);
+    }
+
+    public function testHiddenRecordsDoNotLeakViaTotalOrShortenPages(): void
+    {
+        // Secret sorts first (highest Rank) but is invisible to canView.
+        // Pre-#20 this both leaked its existence via meta.total (6 instead
+        // of 5) and returned a short page (1 record for limit=2, since
+        // Secret occupied a slot in the raw page before being dropped).
+        $body = $this->decode($this->apiGet('records/ApiTest?sort=-Rank&limit=2', $this->token));
+
+        $this->assertSame(5, $body['meta']['total'], 'total must not count invisible records');
+        $this->assertCount(2, $body['data'], 'a full page must be returned around hidden records');
+
+        foreach ($body['data'] as $record) {
+            $this->assertNotSame('Secret', $record['fields']['Title']);
+        }
     }
 
     public function testReadOneById(): void
