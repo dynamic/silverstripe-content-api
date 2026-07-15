@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Write\WriteApplicator;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Member;
@@ -31,11 +32,14 @@ class PermissionPolicy
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
         'externalIds' => '%$' . ExternalIdResolver::class,
+        'applicator' => '%$' . WriteApplicator::class,
     ];
 
     public ?ClassRegistry $registry = null;
 
     public ?ExternalIdResolver $externalIds = null;
+
+    public ?WriteApplicator $applicator = null;
 
     /**
      * Gate on the CONTENT_API_ACCESS permission alone, independent of any
@@ -153,6 +157,14 @@ class PermissionPolicy
      * numeric id, so a tenant-scoped canCreate() must see it hydrated too,
      * not silently treated as if the relation were absent from the payload.
      *
+     * A relation the client isn't even allowed to write is skipped before
+     * any of that resolution runs (matching
+     * WriteGuardExtension::translatePolymorphicHasOnes()'s "check
+     * writability before resolving" — #23): otherwise a bad class hint or
+     * unresolvable externalId on a field applyFields() would reject with
+     * READONLY_FIELD anyway surfaces a confusing NOT_FOUND/PAYLOAD_INVALID
+     * instead, for a field the request could never have written regardless.
+     *
      * @return array<string, mixed>
      */
     protected function buildCreateContext(string $className, array $fields): array
@@ -162,13 +174,22 @@ class PermissionPolicy
 
         foreach ($hasOne as $relationName => $relationClass) {
             $value = $fields[$relationName] ?? $fields[$relationName . 'ID'] ?? null;
+
+            if ($value === null) {
+                continue;
+            }
+
             $isPolymorphic = $relationClass === DataObject::class;
 
-            if ($isPolymorphic) {
-                if ($value === null) {
-                    continue;
-                }
+            $writable = $isPolymorphic
+                ? $this->applicator->isPolymorphicRelationWritable($className, $relationName)
+                : $this->applicator->isFieldWritable($className, $relationName . 'ID', $relationName);
 
+            if (!$writable) {
+                continue;
+            }
+
+            if ($isPolymorphic) {
                 $relationClass = $this->registry->resolvePolymorphicHint($relationName, $value);
             }
 
@@ -184,7 +205,6 @@ class PermissionPolicy
             }
 
             if (is_array($value) && isset($value['externalId'])) {
-                $this->externalIds->assertSupported($relationClass);
                 $context[$relationName] = $this->externalIds->find($relationClass, (string) $value['externalId']);
             }
         }

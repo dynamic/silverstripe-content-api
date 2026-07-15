@@ -256,25 +256,35 @@ class WriteGuardExtension extends Extension
         // bypassing the wrapped {"class","id"} shape
         // translatePolymorphicHasOnes() expects. The Class column can
         // never be legitimately set this way (see the unconditional revert
-        // below), so if the Class column's value actually changed, revert
-        // the FK alongside it rather than letting the FK half through —
-        // applying just the FK half of an untranslated pair produces
-        // exactly the torn FK-repointed/Class-stale state this mechanism
-        // exists to prevent.
+        // below), so if the *client's payload* actually changes the Class
+        // column, revert the FK alongside it rather than letting the FK
+        // half through — applying just the FK half of an untranslated pair
+        // produces exactly the torn FK-repointed/Class-stale state this
+        // mechanism exists to prevent.
         //
-        // Gating on $changed (not mere presence in $body) matters: a
-        // routine GET-then-PUT-verbatim round trip echoes the Class
-        // column's existing, unchanged value back in the same request as a
-        // legitimate FK repoint — that must not be treated as a bypass
-        // attempt and must not block the repoint (a bare FK key with no
-        // Class key at all is unaffected either way, falling through to
-        // the normal independent check below).
+        // Both conditions matter, for different reasons:
+        // - Requiring the key in $body (not just $changed) keeps this
+        //   scoped to what THIS request's payload actually named — this
+        //   method's own contract is "only keys named in the payload are
+        //   considered"; a sibling extension/hook mutating the Class
+        //   column for unrelated reasons must not trigger a revert of a
+        //   field the client's payload never touched.
+        // - Requiring the value in $changed (not just $body) handles the
+        //   routine GET-then-PUT-verbatim round trip, where the Class
+        //   column is echoed back unchanged alongside a legitimate FK
+        //   repoint — that must not be treated as a bypass attempt.
+        //
+        // A bare FK key with no Class key in the payload at all is
+        // unaffected either way, falling through to the normal independent
+        // check below.
         foreach ($hasOne as $relationName => $relationClass) {
             if ($relationClass !== DataObject::class || in_array($relationName, $translatedRelations, true)) {
                 continue;
             }
 
-            if (array_key_exists($relationName . 'Class', $changed)) {
+            $classKey = $relationName . 'Class';
+
+            if (array_key_exists($classKey, $body) && array_key_exists($classKey, $changed)) {
                 $polymorphicWritable[$relationName . 'ID'] = false;
             }
         }
