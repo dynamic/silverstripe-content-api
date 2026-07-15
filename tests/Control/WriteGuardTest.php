@@ -6,9 +6,11 @@ use Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Write\WriteGuardExtension;
+use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
 
@@ -21,6 +23,7 @@ class WriteGuardTest extends ContentApiTestCase
 {
     protected static $required_extensions = [
         ApiTestObject::class => [WriteGuardExtension::class],
+        ApiTestElement::class => [WriteGuardExtension::class],
     ];
 
     private string $token;
@@ -296,5 +299,52 @@ class WriteGuardTest extends ContentApiTestCase
         $record->write();
 
         $this->assertSame(42, (int) ApiTestObject::get()->byID($record->ID)->Rank);
+    }
+
+    public function testParentIdStaysReadonlyOnColymbaSurface(): void
+    {
+        // Module #27, security half: ParentID is server-derived and written
+        // internally by CompositionService via WriteApplicator's trusted
+        // $internalFields channel (see CompositionTest for the positive
+        // case) — it must never need adding to api_writable_fields, and
+        // must stay non-writable on the untrusted colymba PUT surface even
+        // though the composition path can set it.
+        Config::modify()->set(
+            DefaultQueryHandler::class,
+            'models',
+            ['ApiTest' => ApiTestObject::class, 'ApiTestElement' => ApiTestElement::class]
+        );
+        Config::modify()->set(ApiTestElement::class, 'api_access', 'GET,POST,PUT,DELETE');
+        Config::modify()->set(ApiTestElement::class, 'api_writable_fields', ['Title']);
+
+        $area = ElementalArea::create();
+        $area->write();
+
+        $otherArea = ElementalArea::create();
+        $otherArea->write();
+
+        $element = ApiTestElement::create();
+        $element->Title = 'Existing';
+        $element->ParentID = $area->ID;
+        $element->write();
+        $element->publishSingle();
+
+        // Generic /api is stage-unaware and (outside an authenticated CMS
+        // session) resolves to LIVE, same as any other front-end request —
+        // publish so colymba's PUT can find the record at all.
+        $response = $this->colymba('PUT', "ApiTestElement/{$element->ID}", [
+            'Title' => 'Renamed via colymba',
+            'ParentID' => $otherArea->ID,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestElement::get()->byID($element->ID);
+        $this->assertSame('Renamed via colymba', $fresh->Title, 'allowlisted field applied');
+        $this->assertSame(
+            (int) $area->ID,
+            (int) $fresh->ParentID,
+            'ParentID reverted — the trusted internal channel does not leak onto the public PUT surface'
+        );
     }
 }

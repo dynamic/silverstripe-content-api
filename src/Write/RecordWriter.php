@@ -42,13 +42,28 @@ class RecordWriter
     /**
      * Create a record, or upsert by external id when mode is `upsert`.
      *
+     * `$internalFields` is a trusted, request-independent channel (see
+     * `WriteApplicator::applyFields()`) for server-derived structural fields
+     * — it is a dedicated parameter, deliberately NOT a `$payload` key,
+     * because `$payload` here is frequently the caller's raw, client-supplied
+     * operation body verbatim (e.g. `BatchProcessor::runOperation()` passes
+     * the parsed request JSON straight through as `$payload`) — a request
+     * body must never be able to populate this channel merely by including a
+     * same-named key. Only pass a non-empty value from in-process code that
+     * itself computed it (e.g. `CompositionService`).
+     *
      * @param array{fields?: array, relations?: array, externalId?: string,
      *   publish?: string} $payload
      * @return array{record: DataObject, operation: string, warnings: array}
      * @throws ApiError
      */
-    public function upsert(string $className, array $payload, Member $member, string $mode = 'create'): array
-    {
+    public function upsert(
+        string $className,
+        array $payload,
+        Member $member,
+        string $mode = 'create',
+        array $internalFields = []
+    ): array {
         if (!in_array($mode, ['create', 'upsert'], true)) {
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'Write mode must be "create" or "upsert".');
         }
@@ -77,11 +92,19 @@ class RecordWriter
             $this->policy->checkClassAccess($className, 'update', $member);
             $this->policy->checkRecordAccess($existing, 'update', $member);
 
-            return $this->write($existing, $payload, 'updated');
+            return $this->write($existing, $payload, 'updated', $internalFields);
         }
 
         $this->policy->checkClassAccess($className, 'create', $member);
-        $this->policy->checkCreateAccess($className, $member, (array) ($payload['fields'] ?? []));
+
+        // canCreate() context hydration should see trusted fields too (e.g. a
+        // composition element's ParentID) — it only informs permission
+        // checks, it isn't a writability gate, so merging here is safe.
+        $this->policy->checkCreateAccess(
+            $className,
+            $member,
+            array_merge((array) ($payload['fields'] ?? []), $internalFields)
+        );
 
         /** @var DataObject $record */
         $record = Injector::inst()->create($className);
@@ -90,16 +113,17 @@ class RecordWriter
             $record->setField($this->externalIds->fieldName(), $externalId);
         }
 
-        return $this->write($record, $payload, 'created');
+        return $this->write($record, $payload, 'created', $internalFields);
     }
 
     /**
-     * Sparse update of an already-fetched record.
+     * Sparse update of an already-fetched record. See `upsert()` for why
+     * `$internalFields` is a dedicated parameter rather than a `$payload` key.
      *
      * @return array{record: DataObject, operation: string, warnings: array}
      * @throws ApiError
      */
-    public function update(DataObject $record, array $payload, Member $member): array
+    public function update(DataObject $record, array $payload, Member $member, array $internalFields = []): array
     {
         $className = get_class($record);
 
@@ -111,7 +135,7 @@ class RecordWriter
             $record->setField($this->externalIds->fieldName(), (string) $payload['externalId']);
         }
 
-        return $this->write($record, $payload, 'updated');
+        return $this->write($record, $payload, 'updated', $internalFields);
     }
 
     /**
@@ -149,7 +173,7 @@ class RecordWriter
      *
      * @return array{record: DataObject, operation: string, warnings: array}
      */
-    protected function write(DataObject $record, array $payload, string $operation): array
+    protected function write(DataObject $record, array $payload, string $operation, array $internalFields = []): array
     {
         $fields = (array) ($payload['fields'] ?? []);
         $relations = (array) ($payload['relations'] ?? []);
@@ -159,7 +183,7 @@ class RecordWriter
 
         $requestedUrlSegment = $fields['URLSegment'] ?? null;
 
-        $this->applicator->applyFields($record, $fields);
+        $this->applicator->applyFields($record, $fields, $internalFields);
 
         try {
             $record->write();

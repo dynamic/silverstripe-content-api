@@ -14,6 +14,7 @@ use Dynamic\ContentApi\Write\RecordWriter;
 use Dynamic\ContentApi\Write\WriteApplicator;
 use SilverStripe\CMS\Controllers\RootURLController;
 use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Validation\ValidationException;
@@ -473,10 +474,16 @@ class CompositionService
         $fields = $this->resolveRefs((array) ($entry['fields'] ?? []));
         $relations = $this->resolveRefs((array) ($entry['relations'] ?? []));
 
-        $fields['ParentID'] = (int) $area->ID;
+        // ParentID (the ElementalArea FK) is always server-derived — it never
+        // needs to appear in a class's api_writable_fields, which would also
+        // expose it on the untrusted colymba PUT surface (module #27). Sort
+        // is server-derived only as a default; a user-supplied Sort stays in
+        // $fields and is still subject to the normal allowlist, like any
+        // other content field.
+        $internalFields = ['ParentID' => (int) $area->ID];
 
         if (!isset($fields['Sort'])) {
-            $fields['Sort'] = $index + 1;
+            $internalFields['Sort'] = $index + 1;
         }
 
         $result = $this->writer->upsert($elementClass, [
@@ -484,7 +491,7 @@ class CompositionService
             'fields' => $fields,
             'relations' => $relations,
             'publish' => 'none',
-        ], $member, 'upsert');
+        ], $member, 'upsert', $internalFields);
 
         $element = $result['record'];
 
@@ -496,7 +503,13 @@ class CompositionService
 
         foreach ((array) ($entry['children'] ?? []) as $relationName => $items) {
             foreach (array_values((array) $items) as $childIndex => $childEntry) {
-                $children[] = $this->processChild($element, (string) $relationName, (array) $childEntry, $childIndex);
+                $children[] = $this->processChild(
+                    $element,
+                    (string) $relationName,
+                    (array) $childEntry,
+                    $childIndex,
+                    $member
+                );
             }
         }
 
@@ -513,12 +526,22 @@ class CompositionService
     }
 
     /**
-     * Children are owned records written under the element's aggregate — no
-     * separate class-level ACL, upsert by externalId, attached via the
-     * has_many list (which sets the FK).
+     * Children are owned records written under the element's aggregate,
+     * upsert by externalId, attached via the has_many list (which sets the
+     * FK). They still enforce the same class-level ACL and canCreate()/
+     * canEdit() gate as every other write surface (module #19) — a
+     * `CONTENT_API_POPULATE` grant is not itself sufficient to write an
+     * arbitrary has_many-target class. The externalId lookup is scoped to
+     * this element's own relation list, so a composition can't adopt or
+     * re-parent a child that currently belongs to a different element.
      */
-    protected function processChild(DataObject $element, string $relationName, array $entry, int $index): array
-    {
+    protected function processChild(
+        DataObject $element,
+        string $relationName,
+        array $entry,
+        int $index,
+        Member $member
+    ): array {
         $childClass = DataObject::getSchema()->hasManyComponent(get_class($element), $relationName);
 
         if (!$childClass) {
@@ -553,17 +576,24 @@ class CompositionService
         }
 
         $this->externalIds->assertSupported($childClass);
-        $child = $this->externalIds->tryFind($childClass, $externalId);
-        $operation = 'updated';
+        $child = $this->findChildScopedToElement($element, $relationName, $childClass, $externalId);
+        $fields = $this->resolveRefs((array) ($entry['fields'] ?? []));
 
-        if (!$child) {
+        if ($child) {
+            $this->policy->checkClassAccess($childClass, 'update', $member);
+            $this->policy->checkRecordAccess($child, 'update', $member);
+            $operation = 'updated';
+        } else {
+            $this->policy->checkClassAccess($childClass, 'create', $member);
+            $this->policy->checkCreateAccess($childClass, $member, $fields);
+
             /** @var DataObject $child */
             $child = Injector::inst()->create($childClass);
             $child->setField($this->externalIds->fieldName(), $externalId);
             $operation = 'created';
         }
 
-        $this->applicator->applyFields($child, $this->resolveRefs((array) ($entry['fields'] ?? [])));
+        $this->applicator->applyFields($child, $fields);
 
         try {
             $child->write();
@@ -583,6 +613,39 @@ class CompositionService
             'status' => $operation,
             'record' => $child,
         ];
+    }
+
+    /**
+     * Find an existing child by external id, scoped to this element's own
+     * has_many list AND narrowed to $childClass (its full subclass tree, to
+     * mirror `DataObject::get()`'s own class filtering) before counting
+     * matches — a same-relation sibling of a different subclass sharing the
+     * external id must never trip a false MULTIPLE_MATCHES, and must never
+     * be returned as a match. `ExternalIdResolver::tryFind()` is a global
+     * lookup by design (it has no notion of an owning element); using it
+     * directly here would let a composition silently adopt/re-parent a
+     * child that currently belongs to a *different* element (module #19). A
+     * global external-id collision under a different element is therefore
+     * treated as not-found — a new child is created instead, and any
+     * resulting duplicate-identifier ambiguity surfaces the same way it
+     * would for any other externally-identified record.
+     *
+     * @throws ApiError MULTIPLE_MATCHES when more than one of this element's
+     *   own children of this class under this relation share the external id
+     */
+    protected function findChildScopedToElement(
+        DataObject $element,
+        string $relationName,
+        string $childClass,
+        string $externalId
+    ): ?DataObject {
+        $list = $element->{$relationName}()->filter('ClassName', ClassInfo::subclassesFor($childClass));
+
+        return $this->externalIds->tryFindScoped(
+            $list,
+            $externalId,
+            sprintf('%s record under this element', $childClass)
+        );
     }
 
     /**

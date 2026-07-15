@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\ORM\DataList;
 use SilverStripe\ORM\DataObject;
 
 /**
@@ -48,20 +49,37 @@ class ExternalIdResolver
     {
         $this->assertSupported($className);
 
-        $matches = DataObject::get($className)
-            ->filter($this->fieldName(), $externalId)
-            ->limit(2);
+        return $this->resolveSingleMatch(
+            DataObject::get($className)->filter($this->fieldName(), $externalId),
+            sprintf('%s record', $className),
+            $externalId
+        );
+    }
 
-        $records = $matches->toArray();
+    /**
+     * Same matching/MULTIPLE_MATCHES semantics as tryFind(), scoped to an
+     * already-fetched list (e.g. an owning record's has_many relation)
+     * instead of a fresh DataObject::get() query — for callers that must not
+     * adopt a record living outside that list's scope (module #19).
+     *
+     * @throws ApiError MULTIPLE_MATCHES
+     */
+    public function tryFindScoped(DataList $list, string $externalId, string $errorLabel = 'record'): ?DataObject
+    {
+        return $this->resolveSingleMatch($list->filter($this->fieldName(), $externalId), $errorLabel, $externalId);
+    }
+
+    /**
+     * @throws ApiError MULTIPLE_MATCHES
+     */
+    private function resolveSingleMatch(DataList $matches, string $errorLabel, string $externalId): ?DataObject
+    {
+        $records = $matches->limit(2)->toArray();
 
         if (count($records) > 1) {
             throw new ApiError(
                 ErrorCode::MULTIPLE_MATCHES,
-                sprintf(
-                    'External id "%s" matches more than one %s record.',
-                    $externalId,
-                    $className
-                )
+                sprintf('External id "%s" matches more than one %s.', $externalId, $errorLabel)
             );
         }
 

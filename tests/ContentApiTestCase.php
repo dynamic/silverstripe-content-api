@@ -66,6 +66,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestPage::class, 'api_access', true);
         Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,create,update,action');
         Config::modify()->set(ApiTestElement::class, 'api_access', true);
+        Config::modify()->set(ApiTestElementItem::class, 'api_access', true);
         Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
         Config::modify()->set(ApiTestPolyObject::class, 'api_access', true);
     }
