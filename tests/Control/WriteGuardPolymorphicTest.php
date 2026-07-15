@@ -120,6 +120,38 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         $this->assertNotSame(ApiTestObject::class, $fresh->OwnerClass);
     }
 
+    public function testFkOnlyRepointIsNotDroppedWhenClassColumnIsProtectedButUntouched(): void
+    {
+        // A request that only sends OwnerID (repointing an already-typed
+        // relation to a different record, without resending the class)
+        // must not be blocked just because the untouched OwnerClass column
+        // happens to be protected — the FK/Class pairing only applies when
+        // a request actually writes both columns together.
+        Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title', 'Owner']);
+        Config::modify()->set(ApiTestPolyObject::class, 'api_protected_fields', ['OwnerClass']);
+
+        $firstOwner = $this->objFromFixture(ApiTestObject::class, 'one');
+        $secondOwner = $this->objFromFixture(ApiTestObject::class, 'two');
+
+        $poly = ApiTestPolyObject::create(['Title' => 'Already typed']);
+        $poly->setField('OwnerID', $firstOwner->ID);
+        $poly->setField('OwnerClass', ApiTestObject::class);
+        $poly->write();
+
+        $response = $this->colymba('PUT', "Poly/{$poly->ID}", [
+            'OwnerID' => (int) $secondOwner->ID,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestPolyObject::get()->byID($poly->ID);
+        $this->assertSame(
+            (int) $secondOwner->ID,
+            (int) $fresh->OwnerID,
+            'FK-only repoint must not be dropped just because the untouched Class column is protected'
+        );
+    }
+
     public function testPolymorphicHasOneFullyDeniedRevertsBothColumns(): void
     {
         Config::modify()->set(ApiTestPolyObject::class, 'api_writable_fields', ['Title']);

@@ -126,7 +126,29 @@ class WriteApplicator
         foreach ($combined as $name => $value) {
             $isHasOne = isset($hasOne[$name]);
             $isHasOneFk = str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)]);
+            $isPolymorphicClassColumn = str_ends_with($name, 'Class')
+                && ($hasOne[substr($name, 0, -5)] ?? null) === DataObject::class;
             $isDbField = $schema->fieldSpec($className, $name) !== null;
+
+            // A polymorphic has_one's companion {Name}Class column is only
+            // ever set as a side effect of resolving its relation key (see
+            // resolveRelation() below) — never directly. Otherwise a client
+            // could set an arbitrary raw class name with no
+            // ClassRegistry/resolveRelation() validation at all, and
+            // independently of the FK's own writability (#25).
+            if ($isPolymorphicClassColumn) {
+                $problems[] = [
+                    'field' => $name,
+                    'code' => ErrorCode::READONLY_FIELD->value,
+                    'message' => sprintf(
+                        'Field "%s" can only be set via its relation ("%s") with an explicit class hint,'
+                            . ' not directly.',
+                        $name,
+                        substr($name, 0, -5)
+                    ),
+                ];
+                continue;
+            }
 
             if (!$isHasOne && !$isDbField && !$isHasOneFk) {
                 if ($this->unknownFieldMode($className) === 'strict') {
@@ -170,17 +192,17 @@ class WriteApplicator
             // second column this same payload key writes to (see below) —
             // it must be independently gated too, not silently write
             // alongside the FK for free just because the FK passed (#25).
-            if ($relationName !== null && ($hasOne[$relationName] ?? null) === DataObject::class) {
-                $classColumn = $relationName . 'Class';
-
-                if (!$this->isFieldWritable($className, $classColumn, $relationName, $trusted)) {
-                    $problems[] = [
-                        'field' => $name,
-                        'code' => ErrorCode::READONLY_FIELD->value,
-                        'message' => sprintf('Field "%s" is not writable via the content API.', $classColumn),
-                    ];
-                    continue;
-                }
+            if (
+                $relationName !== null
+                && ($hasOne[$relationName] ?? null) === DataObject::class
+                && !$this->isPolymorphicRelationWritable($className, $relationName, $trusted)
+            ) {
+                $problems[] = [
+                    'field' => $name,
+                    'code' => ErrorCode::READONLY_FIELD->value,
+                    'message' => sprintf('Field "%s" is not writable via the content API.', $relationName . 'Class'),
+                ];
+                continue;
             }
 
             $plan[] = [$name, $columnName, $relationName, $value];
@@ -354,6 +376,21 @@ class WriteApplicator
 
         return in_array($columnName, $allowed, true)
             || ($relationName && in_array($relationName, $allowed, true));
+    }
+
+    /**
+     * Whether a polymorphic has_one's FK and companion {Name}Class column
+     * are BOTH writable — the pair is gated as a single unit, not two
+     * independent columns (#25). Every caller that needs to know whether a
+     * polymorphic relation itself can be written (WriteApplicator's own
+     * apply loop, SchemaService's advertised writability, WriteGuardExtension's
+     * revert guard) shares this one decision rather than each re-deriving
+     * the same FK-AND-Class check.
+     */
+    public function isPolymorphicRelationWritable(string $className, string $relationName, bool $trusted = false): bool
+    {
+        return $this->isFieldWritable($className, $relationName . 'ID', $relationName, $trusted)
+            && $this->isFieldWritable($className, $relationName . 'Class', $relationName, $trusted);
     }
 
     protected function unknownFieldMode(string $className): string

@@ -200,13 +200,21 @@ class WriteGuardExtension extends Extension
         $applicator = Injector::inst()->get(WriteApplicator::class);
 
         // A polymorphic has_one's FK and companion Class column must be
-        // reverted together, not independently — checking each column's
-        // writability separately would let an asymmetric allowlist (e.g.
-        // protecting OwnerClass but allowing Owner) leave the FK pointing
-        // at a real record while the Class column reverts, corrupting the
-        // relation rather than just narrowing what's writable. Precompute
-        // one combined decision per polymorphic relation present in the
-        // payload, so both columns share it.
+        // reverted together, not independently, WHEN BOTH are actually
+        // being written in this request (the normal case: colymba wrote
+        // both raw columns from the same translatePolymorphicHasOnes()
+        // pass) — checking each column's writability separately there
+        // would let an asymmetric allowlist (e.g. protecting OwnerClass
+        // but allowing Owner) leave the FK pointing at a real record while
+        // the Class column reverts, corrupting the relation rather than
+        // just narrowing what's writable.
+        //
+        // But if a request only touches ONE of the two columns (e.g. a
+        // client re-pointing an already-typed relation's FK to a different
+        // record of the same class, without re-sending the class), pairing
+        // it with the untouched column's writability would silently drop a
+        // perfectly legitimate single-column write. Only pair the two
+        // columns' decisions when the payload actually writes both.
         $polymorphicWritable = [];
 
         foreach ($hasOne as $relationName => $relationClass) {
@@ -217,16 +225,13 @@ class WriteGuardExtension extends Extension
             $idKey = $relationName . 'ID';
             $classKey = $relationName . 'Class';
 
-            if (
-                !array_key_exists($relationName, $body)
-                && !array_key_exists($idKey, $body)
-                && !array_key_exists($classKey, $body)
-            ) {
+            if (!array_key_exists($idKey, $body) || !array_key_exists($classKey, $body)) {
                 continue;
             }
 
-            $polymorphicWritable[$relationName] = $applicator->isFieldWritable($className, $idKey, $relationName)
-                && $applicator->isFieldWritable($className, $classKey, $relationName);
+            $combined = $applicator->isPolymorphicRelationWritable($className, $relationName);
+            $polymorphicWritable[$idKey] = $combined;
+            $polymorphicWritable[$classKey] = $combined;
         }
 
         foreach (array_keys($body) as $attribute) {
@@ -256,11 +261,10 @@ class WriteGuardExtension extends Extension
             }
 
             // Delegate to the single writability source of truth, except
-            // for a polymorphic relation's pair of columns, which share the
-            // precomputed combined decision above.
-            $writable = $relationName !== null && isset($polymorphicWritable[$relationName])
-                ? $polymorphicWritable[$relationName]
-                : $applicator->isFieldWritable($className, $column, $relationName);
+            // for a polymorphic relation whose pair is both present in this
+            // request, which share the precomputed combined decision above.
+            $writable = $polymorphicWritable[$column]
+                ?? $applicator->isFieldWritable($className, $column, $relationName);
 
             if (!$writable && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);

@@ -131,6 +131,16 @@ class SchemaService
                 continue;
             }
 
+            // A polymorphic has_one's companion {Name}Class column is
+            // managed as part of the relation (see hasOne below), never
+            // independently writable as a standalone field (#25).
+            if (
+                str_ends_with($name, 'Class')
+                && ($singleton->hasOne()[substr($name, 0, -5)] ?? null) === DataObject::class
+            ) {
+                continue;
+            }
+
             $field = [
                 'type' => $spec,
                 'writable' => $this->applicator->isFieldWritable($className, $name),
@@ -157,11 +167,9 @@ class SchemaService
             // writability alone would tell a client a relation is writable
             // when a real write could still be rejected over the Class
             // column, or vice versa.
-            $writable = $this->applicator->isFieldWritable($className, $name . 'ID', $name);
-
-            if ($relationClass === DataObject::class) {
-                $writable = $writable && $this->applicator->isFieldWritable($className, $name . 'Class', $name);
-            }
+            $writable = $relationClass === DataObject::class
+                ? $this->applicator->isPolymorphicRelationWritable($className, $name)
+                : $this->applicator->isFieldWritable($className, $name . 'ID', $name);
 
             $hasOne[$name] = [
                 'class' => $relationClass,
