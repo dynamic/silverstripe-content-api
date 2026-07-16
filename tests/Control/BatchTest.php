@@ -375,6 +375,18 @@ class BatchTest extends ContentApiTestCase
         $this->assertNull($body['error'], 'create must not 500 or TypeError on resolveRelation()');
         $this->assertSame('created', $body['data']['results'][0]['status']);
 
+        // Regression for #34 code review: a successful write of a
+        // multirelational has_one must not report as unqualified success —
+        // the reciprocal has_many side won't see this record until
+        // {Name}Relation is set some other way, and this API has no way to
+        // set that column, so the caller needs a way to discover that
+        // limitation rather than the response looking fully functional.
+        $this->assertNotEmpty(
+            $body['data']['results'][0]['warnings'] ?? [],
+            'expected a warning about the reciprocal has_many gap'
+        );
+        $this->assertSame('FEATURE_UNAVAILABLE', $body['data']['results'][0]['warnings'][0]['code']);
+
         $created = ApiTestMultiRelationalPolyObject::get()->filter('FixtureIdentifier', 'multi-poly-new')->first();
         $this->assertNotNull($created);
         $this->assertSame((int) $owner->ID, (int) $created->OwnerID, 'FK column set');
@@ -385,6 +397,33 @@ class BatchTest extends ContentApiTestCase
             ['id' => (int) $owner->ID, 'class' => 'ApiTest'],
             $read['data']['relations']['Owner']
         );
+    }
+
+    /**
+     * Regression for #34 code review: the plain-string polymorphic form
+     * (not multirelational) must NOT get this warning — only the
+     * multirelational form has an unset reciprocal has_many column at all.
+     */
+    public function testPlainPolymorphicHasOneCreateDoesNotGetTheMultiRelationalWarning(): void
+    {
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTestPoly',
+                    'externalId' => 'plain-poly-no-warning',
+                    'fields' => [
+                        'Title' => 'Plain poly record',
+                        'Owner' => ['class' => 'ApiTest', 'id' => (int) $owner->ID],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertArrayNotHasKey('warnings', $body['data']['results'][0]);
     }
 
     /**

@@ -72,13 +72,14 @@ framework normalizes both to the same class string before any of this module's c
 The one difference: this form gets a third physical column, `{Name}Relation`
 (`DBPolymorphicRelationAwareForeignKey`'s own composite field — SilverStripe's internal
 disambiguator for which reciprocal has_many a record belongs to). Nothing in this module
-resolves a value for it, so it's **never** a writable payload key, not even for trusted
-internal code — a write attempt against it is rejected the same way a bare `{Name}Class` key
-is. This means a multirelational has_one is currently only *partially* writable through this
-API: the has_one itself (FK + Class) writes and reads correctly, but the record won't show up
-via the reciprocal has_many side until `{Name}Relation` is set some other way (e.g. the CMS, or
-a direct ORM write) — assigning it via a client-specified relation name isn't yet a feature this
-API exposes.
+resolves a value for it, so it's **never** a writable payload key — a write attempt against it
+is rejected with the same `READONLY_FIELD` error class a bare `{Name}Class` key gets, though
+not identically: unlike `{Name}Class`, there's no trusted-internal-code exception, since no
+in-process code in this module has a way to resolve the correct value either. This means a
+multirelational has_one is currently only *partially* writable through this API: the has_one
+itself (FK + Class) writes and reads correctly, but the record won't show up via the reciprocal
+has_many side until `{Name}Relation` is set some other way (e.g. the CMS, or a direct ORM write)
+— assigning it via a client-specified relation name isn't yet a feature this API exposes.
 
 This only applies to writes going through this module's own pipeline (single-record writes,
 batch, compositions). Colymba's generic `/api` write path applies payload keys directly to DB

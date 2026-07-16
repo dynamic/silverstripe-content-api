@@ -253,6 +253,28 @@ class WriteApplicator
                 // relations never touch this column.
                 if ($resolved['polymorphic']) {
                     $record->setField($relationName . 'Class', $resolved['class']);
+
+                    // A multirelational polymorphic has_one's {Name}Relation
+                    // column is never set by this write (see
+                    // polymorphicRelationColumnRelation()'s docblock) — the
+                    // record won't appear via its reciprocal has_many side
+                    // until that column is set some other way. Surface this
+                    // the same way a lenient unknown-field write already
+                    // does, rather than reporting an unqualified "created"/
+                    // "updated" that looks fully functional (#34).
+                    if ($schema->hasOneComponentHandlesMultipleRelations($className, $relationName)) {
+                        $this->warnings[] = [
+                            'code' => ErrorCode::FEATURE_UNAVAILABLE->value,
+                            'message' => sprintf(
+                                'Field "%s" is set, but this record will not appear via its reciprocal '
+                                    . 'has_many relation until "%sRelation" is also set — this API has no way '
+                                    . 'to write that column yet.',
+                                $name,
+                                $relationName
+                            ),
+                            'field' => $name,
+                        ];
+                    }
                 }
             } else {
                 $record->setCastedField($columnName, $value);
