@@ -48,15 +48,21 @@ SilverStripe\Assets\File:
 
 ## 3. Grant permissions and mint a token
 
-Grant *Access the content API* (`CONTENT_API_ACCESS`) and, for population endpoints, *Use
-content population endpoints* (`CONTENT_API_POPULATE`) to the service account's group, then:
+Grant *Access the content API* (`CONTENT_API_ACCESS`) **and `VIEW_DRAFT_CONTENT`** to the
+service account's group — reads default to the draft stage, and without `VIEW_DRAFT_CONTENT`
+the account can't read back its own draft-only writes once draft and live diverge (see
+[Security model](04_security-model.md#service-account-permissions)). Add *Use content
+population endpoints* (`CONTENT_API_POPULATE`) too if the account needs batch/compositions/asset
+writes/page actions. A task provisions all of this in one step:
 
 ```bash
+sake tasks:SetupContentApiServiceAccount --group="API Service Accounts" [--populate]
 sake tasks:MintContentApiToken --email=agent@example.com
 ```
 
-The plaintext token is printed once — see [Authentication](03_authentication.md) for storage
-and rotation.
+(Assign the member to the group first if `MintContentApiToken` doesn't do so itself — the two
+tasks are independent.) The plaintext token is printed once — see
+[Authentication](03_authentication.md) for storage and rotation.
 
 ## 4. Call it
 

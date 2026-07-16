@@ -11,6 +11,33 @@ then (for writes) **field-level**. A request that passes all three still has to 
 | `CONTENT_API_ACCESS` | Every content API endpoint | Record-level `canView`/`canEdit`/`canDelete`/`canCreate` still applies on top |
 | `CONTENT_API_POPULATE` | Batch, compositions, asset uploads, page actions | Population-domain endpoints only |
 | `CONTENT_API_SCHEMA` | Schema introspection | Implicitly granted to anyone with `CONTENT_API_ACCESS` |
+| `VIEW_DRAFT_CONTENT` | Reading a record once its draft and live stages diverge | A core `silverstripe/versioned` permission, not module-specific — see [Service account permissions](#service-account-permissions) |
+
+## Service account permissions
+
+Reads default to the **draft** stage (see [Publishing & stages](10_publishing-and-stages.md)),
+and `canView()` is evaluated while the current stage is draft. Core
+`Versioned::canViewNonLive()` requires one of a fixed permission list —
+`CMS_ACCESS_LeftAndMain`, `CMS_ACCESS_CMSMain`, `VIEW_DRAFT_CONTENT`, `CAN_DEV_BUILD` — the
+moment a record's draft and live stages differ (`stagesDiffer()`), and
+`DataObject::extendedCan()` takes the **minimum** of every extension's answer for a hook — a
+`false` from this core check denies the read even if an app-level `canView()` extension answers
+`true`.
+
+A service account holding only `CONTENT_API_ACCESS` (this module's own documented pattern: no
+real CMS login, just an app-level `canView()`/`canEdit()` grant extension) holds none of those
+four codes by default. The result: the very first draft-only write (`POST batch`/compositions
+with the default `publish: "none"`) makes that same record's draft **unreadable to the same
+account that just wrote it** — `GET records/$Class/$ID` (draft is the default stage) 403s
+`FORBIDDEN_RECORD` immediately after, even though `_stage=live` still reads fine (no divergence
+there).
+
+**Grant `VIEW_DRAFT_CONTENT` alongside `CONTENT_API_ACCESS`** to any service account that reads
+back a `publish: "none"` write before publishing — the natural "write draft, read back to
+verify, then publish" flow batch/compositions are designed to support. It doesn't require any
+CMS login capability, so the account stays API-scoped.
+`sake tasks:SetupContentApiServiceAccount` provisions both grants (plus `CONTENT_API_POPULATE`
+with `--populate`) in one step — see [Quick start](01_quickstart.md#3-grant-permissions-and-mint-a-token).
 
 ## Class-level gate
 
