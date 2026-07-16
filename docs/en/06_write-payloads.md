@@ -65,6 +65,21 @@ independently pass the writability check. A polymorphic relation's `{Name}Class`
 never be set as a bare payload key directly (only as a side effect of resolving the relation via
 its FK) — that would let a client set an arbitrary raw class name with no registry validation.
 
+**Multirelational polymorphic has_one** (declared `['class' => DataObject::class,
+'multirelational' => true]`, when the same polymorphic has_one is shared by more than one
+reciprocal has_many) writes and reads identically to the plain-string form above — the
+framework normalizes both to the same class string before any of this module's code sees them.
+The one difference: this form gets a third physical column, `{Name}Relation`
+(`DBPolymorphicRelationAwareForeignKey`'s own composite field — SilverStripe's internal
+disambiguator for which reciprocal has_many a record belongs to). Nothing in this module
+resolves a value for it, so it's **never** a writable payload key, not even for trusted
+internal code — a write attempt against it is rejected the same way a bare `{Name}Class` key
+is. This means a multirelational has_one is currently only *partially* writable through this
+API: the has_one itself (FK + Class) writes and reads correctly, but the record won't show up
+via the reciprocal has_many side until `{Name}Relation` is set some other way (e.g. the CMS, or
+a direct ORM write) — assigning it via a client-specified relation name isn't yet a feature this
+API exposes.
+
 This only applies to writes going through this module's own pipeline (single-record writes,
 batch, compositions). Colymba's generic `/api` write path applies payload keys directly to DB
 columns with no relation-shape handling at all — `WriteGuardExtension` only guards *which*

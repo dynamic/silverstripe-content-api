@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\ORM\DataObject;
 
 class SchemaTest extends ContentApiTestCase
 {
@@ -123,6 +124,29 @@ class SchemaTest extends ContentApiTestCase
             $body['data']['hasOne']['Owner']['writable'],
             'Owner must report unwritable while its companion Class column is protected'
         );
+    }
+
+    /**
+     * Regression coverage for #34: a has_one declared via the array/
+     * `multirelational` form must report identically to the plain-string
+     * polymorphic form in schema introspection — `hasOne()` normalizes both
+     * to the same bare class string before SchemaService ever sees them.
+     *
+     * Also asserts the multirelational-only `{Name}Relation` companion
+     * column (a code-review finding: DBPolymorphicRelationAwareForeignKey's
+     * own extra composite field, absent from the plain polymorphic form)
+     * is excluded from the standalone `fields` map — it isn't a payload
+     * shape a client can write (see WriteApplicator's guard), so
+     * advertising it would be misleading.
+     */
+    public function testMultiRelationalPolymorphicHasOneSchemaMatchesPlainPolymorphic(): void
+    {
+        $body = $this->decode($this->apiGet('schema/ApiTestMultiRelationalPoly', $this->token));
+
+        $this->assertSame(DataObject::class, $body['data']['hasOne']['Owner']['class']);
+        $this->assertTrue($body['data']['hasOne']['Owner']['writable']);
+        $this->assertArrayNotHasKey('OwnerClass', $body['data']['fields']);
+        $this->assertArrayNotHasKey('OwnerRelation', $body['data']['fields']);
     }
 
     public function testSchemaRequiresPermission(): void

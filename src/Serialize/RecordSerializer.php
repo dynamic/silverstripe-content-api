@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Serialize;
 
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Write\WriteApplicator;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
@@ -58,6 +59,7 @@ class RecordSerializer
         'registry' => '%$' . ClassRegistry::class,
         'externalIds' => '%$' . ExternalIdResolver::class,
         'logger' => '%$' . LoggerInterface::class,
+        'applicator' => '%$' . WriteApplicator::class,
     ];
 
     public ?ClassRegistry $registry = null;
@@ -65,6 +67,8 @@ class RecordSerializer
     public ?ExternalIdResolver $externalIds = null;
 
     public ?LoggerInterface $logger = null;
+
+    public ?WriteApplicator $applicator = null;
 
     /**
      * Dedupes relation-read warnings by shape (relation + class), not by
@@ -233,6 +237,21 @@ class RecordSerializer
 
             // Skip the has_one FK columns; they surface under relations.
             if (str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)])) {
+                continue;
+            }
+
+            // A polymorphic has_one's companion {Name}Class column (and,
+            // for a multirelational one, {Name}Relation too) is managed as
+            // part of the relation — see the "class" key folded into
+            // relations[$name] above — never independently exposed as a
+            // standalone field. Mirrors SchemaService's own exclusion (#25,
+            // #34); leaking the raw FQCN or SilverStripe's internal
+            // relation-disambiguator string here would also bypass the
+            // ClassRegistry short-ref allowlist the "class" key enforces.
+            if (
+                $this->applicator->polymorphicClassColumnRelation($name, $hasOne) !== null
+                || $this->applicator->polymorphicRelationColumnRelation($name, $className, $hasOne) !== null
+            ) {
                 continue;
             }
 

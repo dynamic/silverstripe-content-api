@@ -291,6 +291,24 @@ class WriteGuardExtension extends Extension
 
         foreach (array_keys($body) as $attribute) {
             $polymorphicClassRelation = $applicator->polymorphicClassColumnRelation($attribute, $hasOne);
+            $polymorphicMultiRelation = $applicator->polymorphicRelationColumnRelation(
+                $attribute,
+                $className,
+                $hasOne
+            );
+
+            // A multirelational polymorphic has_one's companion
+            // {Name}Relation column disambiguates which reciprocal has_many
+            // a record belongs to — nothing on this surface (or the
+            // module's own pipeline) ever legitimately resolves a value
+            // for it, so it's always reverted if colymba's deserializer
+            // wrote it. #34.
+            if ($polymorphicMultiRelation !== null) {
+                if (array_key_exists($attribute, $changed)) {
+                    $owner->setField($attribute, $changed[$attribute]['before']);
+                }
+                continue;
+            }
 
             // Resolve the payload key to the DB column colymba actually wrote
             // (the FK column for a has_one) and the relation name, so the

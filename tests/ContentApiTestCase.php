@@ -9,6 +9,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
+use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
@@ -41,6 +42,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestPlainChildObject::class,
         ApiTestCascadeObject::class,
         ApiTestPolyObject::class,
+        ApiTestMultiRelationalPolyObject::class,
     ];
 
     protected function setUp(): void
@@ -57,6 +59,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestElement' => ApiTestElement::class,
             'ElementContent' => \DNADesign\Elemental\Models\ElementContent::class,
             'ApiTestPoly' => ApiTestPolyObject::class,
+            'ApiTestMultiRelationalPoly' => ApiTestMultiRelationalPolyObject::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
@@ -72,6 +75,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestPlainChildObject::class, 'api_access', true);
         Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
         Config::modify()->set(ApiTestPolyObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestMultiRelationalPolyObject::class, 'api_access', true);
     }
 
     /**
