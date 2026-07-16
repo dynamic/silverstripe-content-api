@@ -45,6 +45,42 @@ class RecordActionsTest extends ContentApiTestCase
         $this->assertErrorCode($response, 'NOT_FOUND', 404);
     }
 
+    /**
+     * Regression for #45: archive is a soft-delete from both stages, so it
+     * must gate on canDelete(), independent of canEdit(). ApiTestVersionedObject
+     * grants canEdit() to any member but canDelete() to ADMIN only — apiUser
+     * (CONTENT_API_ACCESS, no ADMIN) can publish/unpublish (see
+     * testRecordStageActions for that with adminUser) but not archive.
+     */
+    public function testArchiveRequiresCanDeleteNotCanEdit(): void
+    {
+        $token = $this->mintTokenFor('apiUser');
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $response = $this->apiPost("records/ApiTestVersioned/{$record->ID}/archive", [], $token);
+        $this->assertErrorCode($response, 'FORBIDDEN_RECORD', 403);
+    }
+
+    /**
+     * Regression for #45: the class-level gate must also vary by action —
+     * a class exposing 'action' but not 'delete' must reject archive at the
+     * class level even for a member whose canDelete() would otherwise allow it.
+     */
+    public function testArchiveRequiresClassDeleteVerb(): void
+    {
+        \SilverStripe\Core\Config\Config::modify()
+            ->set(ApiTestVersionedObject::class, 'api_access', 'read,action');
+
+        $token = $this->mintTokenFor('adminUser');
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $publish = $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token);
+        $this->assertSame(200, $publish->getStatusCode());
+
+        $response = $this->apiPost("records/ApiTestVersioned/{$record->ID}/archive", [], $token);
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+    }
+
     public function testActionRequiresVerb(): void
     {
         \SilverStripe\Core\Config\Config::modify()

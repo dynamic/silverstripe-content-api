@@ -30,6 +30,12 @@ on a real, loaded record.
 `read`→`canView()`, `update`/`action`→`canEdit()`, `delete`→`canDelete()`. This is your model's
 existing ACL — the content API adds nothing here beyond calling it.
 
+The `publish`/`unpublish`/`archive` stage actions (`POST records/$Class/$ID/{action}`) are not
+all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit()`), but
+`archive` — a soft-delete from both Draft and Live — uses the `delete` verb (`canDelete()`).
+Granting `action` in `api_access` to let a consumer publish/unpublish does **not** also grant
+archive; that requires `canDelete()` to independently allow it.
+
 **Create** is different: `checkCreateAccess()` calls `canCreate($member, $context)` with a
 `$context` array hydrated from the payload's has_one keys (`buildCreateContext()`), because a
 tenant-scoped `canCreate()` often needs the *parent* record to decide, and that parent doesn't

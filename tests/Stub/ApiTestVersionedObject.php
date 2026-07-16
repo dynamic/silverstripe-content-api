@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Stub;
 use Dynamic\ContentApi\Identity\ExternalIdentifierExtension;
 use SilverStripe\Dev\TestOnly;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\Security\Permission;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -29,5 +30,18 @@ class ApiTestVersionedObject extends DataObject implements TestOnly
     public function canView($member = null): bool
     {
         return true;
+    }
+
+    // Any authenticated member can edit — deliberately looser than canDelete()
+    // so tests can exercise the archive/canDelete() split (#45) without the
+    // default ADMIN-only canEdit() also blocking publish/unpublish.
+    public function canEdit($member = null): bool
+    {
+        return true;
+    }
+
+    public function canDelete($member = null): bool
+    {
+        return (bool) Permission::checkMember($member, 'ADMIN');
     }
 }
