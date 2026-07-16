@@ -690,20 +690,32 @@ class CompositionService
     /**
      * Publish the page (recursively) plus every written area/element/child
      * individually — page publishRecursive does not cascade into elements.
+     *
+     * Not every has_many child model is Versioned (e.g. Essentials'
+     * StatCounter is a plain DataObject) — publishSingle() is only called
+     * where it actually exists, same guard LinkTransformer already applies
+     * for the same class of problem.
      */
     protected function publishAll(SiteTree $page, DataObject $area, array $elementResults): void
     {
-        $area->publishSingle();
+        $this->publishSingleIfVersioned($area);
 
         foreach ($elementResults as $result) {
-            $result['record']->publishSingle();
+            $this->publishSingleIfVersioned($result['record']);
 
             foreach ($result['children'] as $childResult) {
-                $childResult['record']->publishSingle();
+                $this->publishSingleIfVersioned($childResult['record']);
             }
         }
 
         $page->publishRecursive();
+    }
+
+    private function publishSingleIfVersioned(DataObject $record): void
+    {
+        if ($record->hasMethod('publishSingle')) {
+            $record->publishSingle();
+        }
     }
 
     /**

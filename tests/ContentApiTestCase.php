@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
@@ -37,6 +38,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestBlockPage::class,
         ApiTestElement::class,
         ApiTestElementItem::class,
+        ApiTestPlainChildObject::class,
         ApiTestCascadeObject::class,
         ApiTestPolyObject::class,
     ];
@@ -67,6 +69,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,create,update,action');
         Config::modify()->set(ApiTestElement::class, 'api_access', true);
         Config::modify()->set(ApiTestElementItem::class, 'api_access', true);
+        Config::modify()->set(ApiTestPlainChildObject::class, 'api_access', true);
         Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
         Config::modify()->set(ApiTestPolyObject::class, 'api_access', true);
     }
