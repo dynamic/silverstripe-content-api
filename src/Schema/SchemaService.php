@@ -139,6 +139,14 @@ class SchemaService
                 continue;
             }
 
+            // A multirelational polymorphic has_one's companion
+            // {Name}Relation column is never settable via this API at all
+            // (see WriteApplicator::polymorphicRelationColumnRelation()) —
+            // never advertise it as a standalone field either (#34).
+            if ($this->applicator->polymorphicRelationColumnRelation($name, $className, $hasOneSpec) !== null) {
+                continue;
+            }
+
             $field = [
                 'type' => $spec,
                 'writable' => $this->applicator->isFieldWritable($className, $name),

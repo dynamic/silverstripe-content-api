@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Write\WriteGuardExtension;
@@ -20,6 +21,7 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
 {
     protected static $required_extensions = [
         ApiTestPolyObject::class => [WriteGuardExtension::class],
+        ApiTestMultiRelationalPolyObject::class => [WriteGuardExtension::class],
     ];
 
     private string $token;
@@ -33,8 +35,10 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         Config::modify()->set(DefaultQueryHandler::class, 'models', [
             'ApiTest' => ApiTestObject::class,
             'Poly' => ApiTestPolyObject::class,
+            'MultiPoly' => ApiTestMultiRelationalPolyObject::class,
         ]);
         Config::modify()->set(ApiTestPolyObject::class, 'api_access', 'GET,POST,PUT,DELETE');
+        Config::modify()->set(ApiTestMultiRelationalPolyObject::class, 'api_access', 'GET,POST,PUT,DELETE');
     }
 
     private function colymba(string $method, string $path, ?array $body = null): HTTPResponse
@@ -289,5 +293,35 @@ class WriteGuardPolymorphicTest extends ContentApiTestCase
         $fresh = ApiTestPolyObject::get()->byID($poly->ID);
         $this->assertSame($originalOwnerId, (int) $fresh->OwnerID, 'FK reverted: Owner not in the allowlist');
         $this->assertNotSame(ApiTestObject::class, $fresh->OwnerClass, 'Class column reverted too');
+    }
+
+    /**
+     * Regression for #34 code review: a multirelational polymorphic
+     * has_one's {Name}Relation column (SilverStripe's own internal
+     * disambiguator for which reciprocal has_many a record belongs to,
+     * present only on this form) is never legitimately writable — colymba's
+     * deserializer applies it with no writability check at all, so
+     * WriteGuardExtension must always revert it, the same as an
+     * untranslated bare {Name}Class key.
+     */
+    public function testMultiRelationalRelationColumnIsAlwaysRevertedOnNativeSurface(): void
+    {
+        $poly = ApiTestMultiRelationalPolyObject::create(['Title' => 'Native multi poly']);
+        $poly->write();
+        $original = ApiTestMultiRelationalPolyObject::get()->byID($poly->ID);
+        $originalRelation = $original->OwnerRelation;
+
+        $response = $this->colymba('PUT', "MultiPoly/{$poly->ID}", [
+            'OwnerRelation' => 'AnythingAtAll',
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestMultiRelationalPolyObject::get()->byID($poly->ID);
+        $this->assertSame(
+            $originalRelation,
+            $fresh->OwnerRelation,
+            'a bare Relation-column key must always be reverted, never independently writable'
+        );
     }
 }

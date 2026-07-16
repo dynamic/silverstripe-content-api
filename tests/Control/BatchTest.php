@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
@@ -338,6 +339,164 @@ class BatchTest extends ContentApiTestCase
         $read = $this->decode($this->apiGet("records/ApiTestPoly/{$created->ID}", $this->adminToken));
         $this->assertSame(
             ['id' => (int) $created->ID, 'class' => 'ApiTest'],
+            $read['data']['relations']['Owner']
+        );
+    }
+
+    /**
+     * Regression coverage for #34: a has_one declared via the array/
+     * `multirelational` form (`['class' => DataObject::class,
+     * 'multirelational' => true]`, required when the same polymorphic
+     * relation is shared by more than one reciprocal has_many) must behave
+     * identically to the plain-string polymorphic form — every module call
+     * site reads the spec through `hasOne()`, which the framework already
+     * normalizes to the bare class string before any module code sees it,
+     * so this mirrors testPolymorphicHasOneCreateWithClassHint() above
+     * verbatim against ApiTestMultiRelationalPolyObject.
+     */
+    public function testMultiRelationalPolymorphicHasOneCreateWithClassHint(): void
+    {
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTestMultiRelationalPoly',
+                    'externalId' => 'multi-poly-new',
+                    'fields' => [
+                        'Title' => 'Multirelational poly record',
+                        'Owner' => ['class' => 'ApiTest', 'id' => (int) $owner->ID],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'create must not 500 or TypeError on resolveRelation()');
+        $this->assertSame('created', $body['data']['results'][0]['status']);
+
+        // Regression for #34 code review: a successful write of a
+        // multirelational has_one must not report as unqualified success —
+        // the reciprocal has_many side won't see this record until
+        // {Name}Relation is set some other way, and this API has no way to
+        // set that column, so the caller needs a way to discover that
+        // limitation rather than the response looking fully functional.
+        $this->assertNotEmpty(
+            $body['data']['results'][0]['warnings'] ?? [],
+            'expected a warning about the reciprocal has_many gap'
+        );
+        $this->assertSame('FEATURE_UNAVAILABLE', $body['data']['results'][0]['warnings'][0]['code']);
+
+        $created = ApiTestMultiRelationalPolyObject::get()->filter('FixtureIdentifier', 'multi-poly-new')->first();
+        $this->assertNotNull($created);
+        $this->assertSame((int) $owner->ID, (int) $created->OwnerID, 'FK column set');
+        $this->assertSame(ApiTestObject::class, $created->OwnerClass, 'companion Class column set');
+
+        $read = $this->decode($this->apiGet("records/ApiTestMultiRelationalPoly/{$created->ID}", $this->adminToken));
+        $this->assertSame(
+            ['id' => (int) $owner->ID, 'class' => 'ApiTest'],
+            $read['data']['relations']['Owner']
+        );
+    }
+
+    /**
+     * Regression for #34 code review: the plain-string polymorphic form
+     * (not multirelational) must NOT get this warning — only the
+     * multirelational form has an unset reciprocal has_many column at all.
+     */
+    public function testPlainPolymorphicHasOneCreateDoesNotGetTheMultiRelationalWarning(): void
+    {
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTestPoly',
+                    'externalId' => 'plain-poly-no-warning',
+                    'fields' => [
+                        'Title' => 'Plain poly record',
+                        'Owner' => ['class' => 'ApiTest', 'id' => (int) $owner->ID],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertArrayNotHasKey('warnings', $body['data']['results'][0]);
+    }
+
+    /**
+     * Regression for #34 code review: a multirelational polymorphic
+     * has_one gets a third physical column, {Name}Relation
+     * (DBPolymorphicRelationAwareForeignKey's own composite field,
+     * SilverStripe's internal disambiguator for which reciprocal has_many
+     * a record belongs to), that only exists for this form — unlike
+     * {Name}Class, nothing in this module ever legitimately resolves a
+     * value for it, so it must never be settable as a bare payload key,
+     * even though it's a real column isFieldWritable() would otherwise
+     * allow under the default 'guarded' policy.
+     */
+    public function testMultiRelationalPolymorphicRelationColumnIsNeverDirectlyWritable(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTestMultiRelationalPoly',
+                    'externalId' => 'multi-poly-relation-column',
+                    'fields' => [
+                        'Title' => 'Attempted Relation write',
+                        'OwnerRelation' => 'AnythingAtAll',
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('READONLY_FIELD', $body['data']['results'][0]['error']['code']);
+        $this->assertNull(
+            ApiTestMultiRelationalPolyObject::get()->filter('FixtureIdentifier', 'multi-poly-relation-column')->first(),
+            'the whole payload must reject, nothing partially applied'
+        );
+    }
+
+    /**
+     * Regression for #34 code review: the flat `fields` map must not leak
+     * a polymorphic has_one's companion {Name}Class/{Name}Relation columns
+     * — SchemaService already excludes them from its own field listing and
+     * WriteApplicator/WriteGuardExtension make them entirely unwritable, so
+     * RecordSerializer must be consistent rather than exposing the raw
+     * internal FQCN and relation-disambiguator string redundantly
+     * alongside the proper `relations.Owner` shape.
+     */
+    public function testCompanionColumnsAreExcludedFromTheFlatFieldsMap(): void
+    {
+        $owner = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTestMultiRelationalPoly',
+                    'externalId' => 'multi-poly-fields-leak',
+                    'fields' => [
+                        'Title' => 'No leaked companion columns',
+                        'Owner' => ['class' => 'ApiTest', 'id' => (int) $owner->ID],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $created = ApiTestMultiRelationalPolyObject::get()
+            ->filter('FixtureIdentifier', 'multi-poly-fields-leak')
+            ->first();
+        $read = $this->decode($this->apiGet("records/ApiTestMultiRelationalPoly/{$created->ID}", $this->adminToken));
+
+        $this->assertArrayNotHasKey('OwnerID', $read['data']['fields']);
+        $this->assertArrayNotHasKey('OwnerClass', $read['data']['fields']);
+        $this->assertArrayNotHasKey('OwnerRelation', $read['data']['fields']);
+        $this->assertSame(
+            ['id' => (int) $owner->ID, 'class' => 'ApiTest'],
             $read['data']['relations']['Owner']
         );
     }

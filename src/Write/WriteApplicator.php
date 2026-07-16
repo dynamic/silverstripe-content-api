@@ -127,6 +127,7 @@ class WriteApplicator
             $isHasOne = isset($hasOne[$name]);
             $isHasOneFk = str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)]);
             $polymorphicClassRelation = $this->polymorphicClassColumnRelation($name, $hasOne);
+            $polymorphicMultiRelation = $this->polymorphicRelationColumnRelation($name, $className, $hasOne);
             $isDbField = $schema->fieldSpec($className, $name) !== null;
             $trusted = isset($internalFields[$name]);
 
@@ -148,6 +149,25 @@ class WriteApplicator
                             . ' not directly.',
                         $name,
                         $polymorphicClassRelation
+                    ),
+                ];
+                continue;
+            }
+
+            // A *multirelational* polymorphic has_one's companion
+            // {Name}Relation column disambiguates which reciprocal has_many
+            // a record belongs to — this module's write path has no
+            // mechanism to determine the correct value for it (that would
+            // require the client to name a specific has_many, a feature
+            // this API doesn't yet expose), so it's never a settable
+            // payload key at all, not even for trusted internal code. #34.
+            if ($polymorphicMultiRelation !== null) {
+                $problems[] = [
+                    'field' => $name,
+                    'code' => ErrorCode::READONLY_FIELD->value,
+                    'message' => sprintf(
+                        'Field "%s" is not writable via the content API.',
+                        $name
                     ),
                 ];
                 continue;
@@ -233,6 +253,28 @@ class WriteApplicator
                 // relations never touch this column.
                 if ($resolved['polymorphic']) {
                     $record->setField($relationName . 'Class', $resolved['class']);
+
+                    // A multirelational polymorphic has_one's {Name}Relation
+                    // column is never set by this write (see
+                    // polymorphicRelationColumnRelation()'s docblock) — the
+                    // record won't appear via its reciprocal has_many side
+                    // until that column is set some other way. Surface this
+                    // the same way a lenient unknown-field write already
+                    // does, rather than reporting an unqualified "created"/
+                    // "updated" that looks fully functional (#34).
+                    if ($schema->hasOneComponentHandlesMultipleRelations($className, $relationName)) {
+                        $this->warnings[] = [
+                            'code' => ErrorCode::FEATURE_UNAVAILABLE->value,
+                            'message' => sprintf(
+                                'Field "%s" is set, but this record will not appear via its reciprocal '
+                                    . 'has_many relation until "%sRelation" is also set — this API has no way '
+                                    . 'to write that column yet.',
+                                $name,
+                                $relationName
+                            ),
+                            'field' => $name,
+                        ];
+                    }
                 }
             } else {
                 $record->setCastedField($columnName, $value);
@@ -409,13 +451,72 @@ class WriteApplicator
      */
     public function polymorphicClassColumnRelation(string $columnName, array $hasOne): ?string
     {
-        if (!str_ends_with($columnName, 'Class')) {
+        return $this->polymorphicCompanionColumnRelation($columnName, 'Class', $hasOne);
+    }
+
+    /**
+     * Whether $columnName is the companion {Name}Relation column a
+     * *multirelational* polymorphic has_one gets in addition to {Name}ID/
+     * {Name}Class (`DBPolymorphicRelationAwareForeignKey`'s extra
+     * `Relation` composite field — the string SilverStripe itself uses to
+     * disambiguate which reciprocal has_many a record belongs to when more
+     * than one shares the same polymorphic has_one). $hasOne (from
+     * `DataObject::hasOne()`) has already been normalized to a bare class
+     * string by the framework and no longer carries the `multirelational`
+     * flag, so this checks the schema directly. #34.
+     */
+    public function polymorphicRelationColumnRelation(string $columnName, string $className, array $hasOne): ?string
+    {
+        return $this->polymorphicCompanionColumnRelation($columnName, 'Relation', $hasOne, $className);
+    }
+
+    /**
+     * Shared naming-convention detection for both companion-column checks
+     * above: strip $suffix from $columnName and confirm the remainder is a
+     * polymorphic has_one in $hasOne. $className/multirelational-only is
+     * required for the 'Relation' suffix (only a multirelational has_one
+     * gets that column); omitted for 'Class' (every polymorphic has_one
+     * gets that one).
+     *
+     * A column whose stripped name is *itself* a distinct, genuinely
+     * declared has_one relation (e.g. a class with both a multirelational
+     * 'Owner' and an unrelated has_one literally named 'OwnerRelation')
+     * never matches — the real relation always wins over the naming-
+     * convention guess, which exists only to catch the synthetic companion
+     * column, not to shadow a legitimately named one.
+     *
+     * A plain `$db` field sharing the exact same name (e.g. a class
+     * declaring both the 'Owner' multirelational has_one and its own
+     * `'OwnerRelation' => 'Varchar'` db field) isn't a case this needs to
+     * disambiguate: `DataObjectSchema::databaseFields()` merges has_one-
+     * derived composite columns *after* plain `$db` fields, so the
+     * synthetic column unconditionally wins in the schema itself before
+     * this method ever runs — there's no independently-meaningful "genuine
+     * field" left at this layer to protect.
+     */
+    private function polymorphicCompanionColumnRelation(
+        string $columnName,
+        string $suffix,
+        array $hasOne,
+        ?string $className = null
+    ): ?string {
+        if (!str_ends_with($columnName, $suffix) || isset($hasOne[$columnName])) {
             return null;
         }
 
-        $relationName = substr($columnName, 0, -5);
+        $relationName = substr($columnName, 0, -strlen($suffix));
 
-        return ($hasOne[$relationName] ?? null) === DataObject::class ? $relationName : null;
+        if (($hasOne[$relationName] ?? null) !== DataObject::class) {
+            return null;
+        }
+
+        if ($className === null) {
+            return $relationName;
+        }
+
+        return DataObject::getSchema()->hasOneComponentHandlesMultipleRelations($className, $relationName)
+            ? $relationName
+            : null;
     }
 
     protected function unknownFieldMode(string $className): string
