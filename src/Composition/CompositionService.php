@@ -49,6 +49,7 @@ class CompositionService
         'externalIds' => '%$' . ExternalIdResolver::class,
         'serializer' => '%$' . RecordSerializer::class,
         'policy' => '%$' . PermissionPolicy::class,
+        'publisher' => '%$' . PublishOrchestrator::class,
     ];
 
     public ?ClassRegistry $registry = null;
@@ -64,6 +65,8 @@ class CompositionService
     public ?RecordSerializer $serializer = null;
 
     public ?PermissionPolicy $policy = null;
+
+    public ?PublishOrchestrator $publisher = null;
 
     /**
      * @var array<string, DataObject> resolved $ref aliases for this run
@@ -690,16 +693,24 @@ class CompositionService
     /**
      * Publish the page (recursively) plus every written area/element/child
      * individually — page publishRecursive does not cascade into elements.
+     *
+     * Not every has_many child model is Versioned (e.g. Essentials'
+     * StatCounter is a plain DataObject) — routing through
+     * PublishOrchestrator::publish() (already the single source of truth for
+     * "is this record publishable", used by every other publish/unpublish/
+     * archive action on this surface) rather than a second, duck-typed
+     * hasMethod('publishSingle') check keeps that answer from being able to
+     * diverge between call sites.
      */
     protected function publishAll(SiteTree $page, DataObject $area, array $elementResults): void
     {
-        $area->publishSingle();
+        $this->publisher->publish($area, 'single');
 
         foreach ($elementResults as $result) {
-            $result['record']->publishSingle();
+            $this->publisher->publish($result['record'], 'single');
 
             foreach ($result['children'] as $childResult) {
-                $childResult['record']->publishSingle();
+                $this->publisher->publish($childResult['record'], 'single');
             }
         }
 

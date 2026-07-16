@@ -9,6 +9,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestLink;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Write\Transformers\LinkTransformer;
 use DNADesign\Elemental\Models\ElementContent;
 use SilverStripe\Assets\Dev\TestAssetStore;
@@ -304,6 +305,45 @@ class CompositionTest extends ContentApiTestCase
         $this->assertNull($body['error']);
         $this->assertSame('converted', $body['data']['page']['operation']);
         $this->assertSame(ApiTestBlockPage::class, SiteTree::get()->byID($about->ID)->ClassName);
+    }
+
+    public function testPublishRecursiveDoesNotCrashOnNonVersionedChild(): void
+    {
+        // #37: a has_many child that isn't Versioned (the shape of the real
+        // Dynamic\Elements\StatCounters\Model\StatCounter — a plain
+        // DataObject with no publishSingle()) must not 500 the whole
+        // composition when publish:recursive is requested.
+        $payload = [
+            'page' => ['match' => ['id' => (int) $this->blockPage()->ID]],
+            'publish' => 'recursive',
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'plain-child-e1',
+                    'fields' => ['Title' => 'Has a non-versioned child'],
+                    'children' => [
+                        'PlainItems' => [
+                            ['externalId' => 'plain-child-i1', 'fields' => ['Title' => 'Plain child', 'SortOrder' => 1]],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+        $body = $this->decode($response);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertNull($body['error']);
+
+        $element = ApiTestElement::get()->filter('FixtureIdentifier', 'plain-child-e1')->first();
+        $this->assertNotNull($element);
+        $this->assertTrue($element->isPublished(), 'the versioned parent element still publishes');
+        $this->assertSame(1, $element->PlainItems()->count());
+        $this->assertSame(
+            'Plain child',
+            ApiTestPlainChildObject::get()->filter('FixtureIdentifier', 'plain-child-i1')->first()->Title
+        );
     }
 
     public function testElementRequiresExternalId(): void

@@ -28,6 +28,7 @@ class ApiTestElement extends BaseElement implements TestOnly
 
     private static array $has_many = [
         'Items' => ApiTestElementItem::class,
+        'PlainItems' => ApiTestPlainChildObject::class,
     ];
 
     private static array $extensions = [
