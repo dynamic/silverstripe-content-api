@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-07-16
+
+Found and fixed while recreating a real Essentials homepage end-to-end through the
+content API immediately after 1.2.0.
+
+### Added
+- `filePath` as an alternative to `base64` on `content_asset_upload`'s spec (#39). Lets an
+  MCP client resolve a local file path itself (reading and base64-encoding it before the
+  request is sent) instead of requiring the caller to reproduce the entire base64 payload
+  as literal text — the companion `dynamic/silverstripe-content-api-mcp` release
+  implements the client-side resolution.
+- Restored a `relations` field description on `content_batch`/`content_compose_page`'s
+  spec documenting the polymorphic has_one `{"class", "id"|"externalId"}` hint
+  requirement — previously only ever patched into the MCP repo's bundled spec copy, never
+  fed back here, so a spec re-sync had silently dropped it downstream.
+
+### Fixed
+- `CompositionService::publishAll()` called `publishSingle()` unconditionally on the area,
+  every top-level element, and every has_many child (#37). Any child model that isn't
+  Versioned — e.g. `Dynamic\Elements\StatCounters\Model\StatCounter`, a plain `DataObject`
+  and real has_many child of the stock `ElementStatCounters` block — crashed the whole
+  composition with a `BadMethodCallException`. Now routes through
+  `PublishOrchestrator::publish()` (mode `single`), the same "is this record publishable"
+  check already used everywhere else on this surface, instead of a second, divergent
+  duck-typed check.
+
 ## [1.2.0] - 2026-07-15
 
 Security- and correctness-focused release closing every issue found during a full
@@ -66,6 +92,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.3.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.0.0...1.1.0
 [1.0.0]: https://github.com/dynamic/silverstripe-content-api/releases/tag/1.0.0
