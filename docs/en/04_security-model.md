@@ -16,21 +16,22 @@ then (for writes) **field-level**. A request that passes all three still has to 
 ## Service account permissions
 
 Reads default to the **draft** stage (see [Publishing & stages](10_publishing-and-stages.md)),
-and `canView()` is evaluated while the current stage is draft. Core
-`Versioned::canViewNonLive()` requires one of a fixed permission list —
-`CMS_ACCESS_LeftAndMain`, `CMS_ACCESS_CMSMain`, `VIEW_DRAFT_CONTENT`, `CAN_DEV_BUILD` — the
-moment a record's draft and live stages differ (`stagesDiffer()`), and
-`DataObject::extendedCan()` takes the **minimum** of every extension's answer for a hook — a
-`false` from this core check denies the read even if an app-level `canView()` extension answers
-`true`.
+and `canView()` is evaluated while the current stage is draft. Core `Versioned::canViewVersioned()`
+falls back to a fixed permission list — `CMS_ACCESS_LeftAndMain`, `CMS_ACCESS_CMSMain`,
+`VIEW_DRAFT_CONTENT`, `CAN_DEV_BUILD` (the `non_live_permissions` config) — the moment a
+record's draft and live stages differ (`stagesDiffer()`) and no extension answers the
+`canViewNonLive` extend hook, and `DataObject::extendedCan()` takes the **minimum** of every
+extension's answer for a hook — a `false` from this core fallback denies the read even if an
+app-level `canView()` extension answers `true`.
 
 A service account holding only `CONTENT_API_ACCESS` (this module's own documented pattern: no
 real CMS login, just an app-level `canView()`/`canEdit()` grant extension) holds none of those
 four codes by default. The result: the very first draft-only write (`POST batch`/compositions
 with the default `publish: "none"`) makes that same record's draft **unreadable to the same
 account that just wrote it** — `GET records/$Class/$ID` (draft is the default stage) 403s
-`FORBIDDEN_RECORD` immediately after, even though `_stage=live` still reads fine (no divergence
-there).
+`FORBIDDEN_RECORD` immediately after. A `_stage=live` read is unaffected — it bypasses this
+check entirely rather than passing it, since a live-stage read never invokes the non-live
+fallback in the first place.
 
 **Grant `VIEW_DRAFT_CONTENT` alongside `CONTENT_API_ACCESS`** to any service account that reads
 back a `publish: "none"` write before publishing — the natural "write draft, read back to

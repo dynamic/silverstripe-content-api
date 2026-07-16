@@ -30,7 +30,8 @@ use Symfony\Component\Console\Input\InputOption;
  * needs an app-level canView()/canEdit() grant extension on the classes it
  * writes — that's application code this task can't inject.
  *
- * Usage: `sake tasks:SetupContentApiServiceAccount --group="API Service Accounts" [--populate]`
+ * Usage: `sake tasks:SetupContentApiServiceAccount --group="Content API Service Accounts"`
+ * (add `--populate` too if the account needs batch/compositions/asset writes/page actions).
  */
 class SetupServiceAccountTask extends BuildTask
 {
@@ -63,7 +64,7 @@ class SetupServiceAccountTask extends BuildTask
 
     protected function execute(InputInterface $input, PolyOutput $output): int
     {
-        $title = (string) $input->getOption('group');
+        $title = trim((string) $input->getOption('group'));
 
         if ($title === '') {
             $output->writeln('<error>--group cannot be empty.</error>');
@@ -71,7 +72,21 @@ class SetupServiceAccountTask extends BuildTask
             return Command::INVALID;
         }
 
-        $group = Group::get()->filter('Title', $title)->first();
+        $matches = Group::get()->filter('Title', $title);
+
+        if ($matches->count() > 1) {
+            $output->writeln(sprintf(
+                '<error>Multiple groups titled "%s" found (IDs: %s) — refusing to guess which one to '
+                    . 'grant content API permissions to. Disambiguate by renaming or deleting the '
+                    . 'unintended group, then re-run.</error>',
+                $title,
+                implode(', ', $matches->column('ID'))
+            ));
+
+            return Command::FAILURE;
+        }
+
+        $group = $matches->first();
 
         if (!$group) {
             $group = Group::create();

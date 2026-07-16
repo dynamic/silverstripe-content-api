@@ -56,9 +56,12 @@ population endpoints* (`CONTENT_API_POPULATE`) too if the account needs batch/co
 writes/page actions. A task provisions all of this in one step:
 
 ```bash
-sake tasks:SetupContentApiServiceAccount --group="API Service Accounts" [--populate]
+sake tasks:SetupContentApiServiceAccount --group="Content API Service Accounts"
 sake tasks:MintContentApiToken --email=agent@example.com
 ```
+
+Add `--populate` to the first command too if the account needs batch/compositions/asset
+writes/page actions.
 
 (Assign the member to the group first if `MintContentApiToken` doesn't do so itself — the two
 tasks are independent.) The plaintext token is printed once — see
