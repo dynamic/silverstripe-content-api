@@ -50,7 +50,8 @@ class RecordActionsTest extends ContentApiTestCase
      * must gate on canDelete(), independent of canEdit(). ApiTestVersionedObject
      * grants canEdit() to any member but canDelete() to ADMIN only — apiUser
      * (CONTENT_API_ACCESS, no ADMIN) can publish/unpublish (see
-     * testRecordStageActions for that with adminUser) but not archive.
+     * testApiUserCanPublishAndUnpublishWithoutCanDelete for that positive
+     * half of the split) but not archive.
      */
     public function testArchiveRequiresCanDeleteNotCanEdit(): void
     {
@@ -59,6 +60,30 @@ class RecordActionsTest extends ContentApiTestCase
 
         $response = $this->apiPost("records/ApiTestVersioned/{$record->ID}/archive", [], $token);
         $this->assertErrorCode($response, 'FORBIDDEN_RECORD', 403);
+    }
+
+    /**
+     * Regression for #45 code review: the positive half of the canEdit()/
+     * canDelete() split — asserted in prose by the neighbouring test's
+     * docblock but never actually exercised anywhere in the suite (only
+     * adminUser's publish/unpublish is tested, in testRecordStageActions).
+     * If publish/unpublish were ever mistakenly also moved onto the
+     * 'delete' verb, no existing test would have caught it.
+     */
+    public function testApiUserCanPublishAndUnpublishWithoutCanDelete(): void
+    {
+        $token = $this->mintTokenFor('apiUser');
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $published = $this->decode(
+            $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token)
+        );
+        $this->assertTrue($published['data']['stage']['live']);
+
+        $unpublished = $this->decode(
+            $this->apiPost("records/ApiTestVersioned/{$record->ID}/unpublish", [], $token)
+        );
+        $this->assertFalse($unpublished['data']['stage']['live']);
     }
 
     /**
