@@ -55,12 +55,18 @@ class RecordActionsHandler
             );
         }
 
-        $this->policy->checkClassAccess($className, 'action', $context->member);
+        // Archive is a soft-delete from both stages — gate it on the 'delete'
+        // verb (canDelete() at record level, the class's delete grant at class
+        // level), not 'action'/canEdit(). publish/unpublish stay on 'action'
+        // since those really are edit operations. See #45.
+        $verb = $action === 'archive' ? 'delete' : 'action';
+
+        $this->policy->checkClassAccess($className, $verb, $context->member);
         $body = $this->jsonBody($request);
 
-        return $this->inDraft(function () use ($request, $className, $action, $body, $context) {
+        return $this->inDraft(function () use ($request, $className, $action, $body, $context, $verb) {
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
-            $this->policy->checkRecordAccess($record, 'action', $context->member);
+            $this->policy->checkRecordAccess($record, $verb, $context->member);
 
             switch ($action) {
                 case 'publish':
