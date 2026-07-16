@@ -16,6 +16,12 @@ collide with framework behavior outside this module's control.
 
 For unversioned classes, `_stage` is a no-op (`RecordsHandler::withStage()` short-circuits).
 
+**Reading the default draft stage once it diverges from live requires `VIEW_DRAFT_CONTENT`** —
+a core `silverstripe/versioned` permission this module doesn't grant on its own. A service
+account with only `CONTENT_API_ACCESS` can write a draft-only record but then can't read it
+back until that permission is also granted. See
+[Security model](04_security-model.md#service-account-permissions).
+
 ## Generic `/api` writes are stage-unaware
 
 Colymba's own CRUD surface has no concept of `_stage` — a write lands on whatever the

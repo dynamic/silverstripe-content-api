@@ -3,6 +3,17 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `sake tasks:SetupContentApiServiceAccount --group="X"` (add `--populate` too if needed) —
+  idempotently provisions a service-account Group with `CONTENT_API_ACCESS` +
+  `VIEW_DRAFT_CONTENT` always, `CONTENT_API_POPULATE` with `--populate` (#42).
+
+### Docs
+- Documented that a service account needs `VIEW_DRAFT_CONTENT` alongside
+  `CONTENT_API_ACCESS` to read back its own draft-only writes (#42).
+
 ## [1.3.0] - 2026-07-16
 
 Found and fixed while recreating a real Essentials homepage end-to-end through the
