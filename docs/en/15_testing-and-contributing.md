@@ -85,12 +85,9 @@ endpoint's name, description, method, path, and input schema is authored here, t
 verbatim into the MCP repo. When you add or change an endpoint:
 
 1. Update `schema/endpoints.json` (and bump its `version` field).
-2. In the MCP repo, run `scripts/sync-spec.sh <path-to-this-checkout>` — **the script's default
-   path is stale** (`~/Sites/silverstripe-content-api`, a checkout that no longer exists), so
-   pass this module's path explicitly, e.g.:
-   ```bash
-   scripts/sync-spec.sh ~/Sites/content-api-testbed/vendor/dynamic/silverstripe-content-api
-   ```
+2. In the MCP repo, run `scripts/sync-spec.sh [path-to-this-module-checkout]` — the path argument
+   is optional; the script's default already points at this project's vendor checkout location.
+   Pass a path explicitly only if your module checkout lives somewhere else.
 3. Review the diff, bump the MCP repo's `pyproject.toml` version, PR, and tag a release so
    consumers pick up the change.
 

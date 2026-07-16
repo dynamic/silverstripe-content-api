@@ -14,7 +14,7 @@ sake tasks:MintContentApiToken --email=agent@example.com
 colymba's `TokenAuthenticator::resetToken()` + `getToken()`, and prints:
 
 ```
-Token minted for agent@example.com (member #12), expires 2026-07-22T00:00:00+00:00:
+Token minted for agent@example.com (member #12), expires <ISO-8601 timestamp, mint time + tokenLife>:
 
   <plaintext-token>
 

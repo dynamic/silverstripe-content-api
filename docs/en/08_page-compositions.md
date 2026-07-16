@@ -110,7 +110,7 @@ hand-authored CMS content (no external id) is invisible to prune and never touch
 
 ## `publish`
 
-Top-level, accepts only `"none"` or `"recursive"` — **not** `"single"**. A composition is
+Top-level, accepts only `"none"` or `"recursive"` — **not** `"single"`. A composition is
 inherently multi-record (page + area + elements + children); "publish just one record" has no
 well-defined meaning at this level and would leave the rest on draft behind a live page.
 `"single"` remains valid at the per-record level: individual batch `op`s, and per-element
