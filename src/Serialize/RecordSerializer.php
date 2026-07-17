@@ -20,10 +20,16 @@ use Throwable;
  * {
  *   "id": 42, "classRef": "ElementCard", "className": "...", "externalId": "home-hero",
  *   "fields": { "Title": "Welcome", "Sort": 2 },
- *   "relations": { "Image": 91, "Slides": [3, 4] },
+ *   "relations": { "Image": 91, "Slides": [3, 4],
+ *                   "Tags": [ { "id": 5, "extraFields": { "SortOrder": 1 } } ] },
  *   "stage": { "draft": true, "live": true, "modifiedOnDraft": false }
  * }
  * ```
+ *
+ * A many_many relation declaring `many_many_extraFields` (like `Tags` above)
+ * serializes each item as `{"id", "extraFields"}` instead of a bare id, so
+ * the join-table data round-trips — every other has_many/many_many stays a
+ * bare id array.
  *
  * Field names stay PascalCase (native SilverStripe names) so GET responses
  * round-trip directly into PATCH/composition payloads. A per-class
@@ -217,7 +223,13 @@ class RecordSerializer
                 // still be discoverable, not indistinguishable from a
                 // genuinely empty relation (#22).
                 try {
-                    $relations[$name] = array_map('intval', $record->{$name}()->column('ID'));
+                    $extraFields = isset($manyMany[$name])
+                        ? $schema->manyManyExtraFieldsForComponent($className, $name)
+                        : null;
+
+                    $relations[$name] = $extraFields
+                        ? $this->serializeManyManyWithExtraFields($record->{$name}(), array_keys($extraFields))
+                        : array_map('intval', $record->{$name}()->column('ID'));
                 } catch (Throwable $exception) {
                     $this->warnOnceForRelation(
                         sprintf('read:%s:%s', $className, $name),
@@ -272,6 +284,38 @@ class RecordSerializer
     private function recordLabel(string $className, DataObject $record): string
     {
         return sprintf('%s#%d', $className, (int) $record->ID);
+    }
+
+    /**
+     * `{"id", "extraFields"}` per item for a many_many relation that
+     * declares `many_many_extraFields` — a bare id array would silently
+     * drop join-table data (e.g. SortOrder) that `WriteApplicator` can
+     * write but a GET→PUT round-trip could never see, the reverse of the
+     * `{"id", "class"}` shape `WriteApplicator::resolveRelationItem()`
+     * already accepts on write. Emitted only for relations that actually
+     * declare extraFields — every other many_many/has_many keeps the
+     * existing bare-id-array shape unchanged.
+     *
+     * @return array<int, array{id: int, extraFields: array<string, mixed>}>
+     */
+    private function serializeManyManyWithExtraFields(iterable $list, array $extraFieldNames): array
+    {
+        $items = [];
+
+        foreach ($list as $item) {
+            $extraValues = [];
+
+            foreach ($extraFieldNames as $fieldName) {
+                $extraValues[$fieldName] = $item->getField($fieldName);
+            }
+
+            $items[] = [
+                'id' => (int) $item->ID,
+                'extraFields' => $extraValues,
+            ];
+        }
+
+        return $items;
     }
 
     /**
