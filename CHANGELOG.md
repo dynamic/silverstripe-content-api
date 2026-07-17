@@ -3,16 +3,34 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.4.0] - 2026-07-17
 
 ### Added
 - `sake tasks:SetupContentApiServiceAccount --group="X"` (add `--populate` too if needed) —
   idempotently provisions a service-account Group with `CONTENT_API_ACCESS` +
   `VIEW_DRAFT_CONTENT` always, `CONTENT_API_POPULATE` with `--populate` (#42).
 
+### Fixed
+- Archive was gated through the same check as publish/unpublish (`canEdit()`), so any
+  member/class granted the `action` verb could silently archive without `canDelete()`
+  (#45). `RecordActionsHandler::recordAction()` now computes the verb per action —
+  archive maps to `delete` (`canDelete()` at record level, the class's `delete` grant at
+  class level); publish/unpublish stay on `action`/`canEdit()`.
+- A multirelational polymorphic has_one's `{Name}Relation` disambiguator column (the
+  composite field SilverStripe uses to tell which reciprocal has_many a record belongs
+  to) was unguarded — a client could write an arbitrary string into it via batch upsert,
+  and it leaked in schema introspection and GET responses (#34). Now guarded the same
+  way as the existing `{Name}Class` companion column: rejected as `READONLY_FIELD` on
+  write, excluded from schema and flat-fields-map responses. `RecordSerializer` also now
+  excludes `{Name}Class`/`{Name}Relation` for the plain (non-multirelational) polymorphic
+  form, a pre-existing leak there too.
+
 ### Docs
 - Documented that a service account needs `VIEW_DRAFT_CONTENT` alongside
   `CONTENT_API_ACCESS` to read back its own draft-only writes (#42).
+- Comprehensive `docs/en/` reference buildout (16 pages: installation through
+  architecture/testing); `README.md` trimmed to a scannable entry point linking into it
+  (#44).
 
 ## [1.3.0] - 2026-07-16
 
@@ -103,6 +121,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.4.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.3.0...1.4.0
 [1.3.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.0.0...1.1.0
