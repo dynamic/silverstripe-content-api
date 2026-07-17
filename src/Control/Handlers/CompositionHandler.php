@@ -8,9 +8,9 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Security\PermissionPolicy;
+use Dynamic\ContentApi\Write\DbTransaction;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\Injector\Injectable;
-use SilverStripe\ORM\DB;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -58,13 +58,13 @@ class CompositionHandler
         $data = null;
 
         try {
-            DB::get_conn()->withTransaction(function () use ($body, $context, &$data) {
+            DbTransaction::run(function () use ($body, $context, &$data) {
                 $data = Versioned::withVersionedMode(function () use ($body, $context) {
                     Versioned::set_stage(Versioned::DRAFT);
 
                     return $this->composition->compose($body, $context->member);
                 });
-            }, null, false, true);
+            });
         } catch (ApiError $error) {
             throw new ApiError(
                 $error->getErrorCode(),

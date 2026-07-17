@@ -80,6 +80,40 @@ class BatchTest extends ContentApiTestCase
         $this->assertNotNull(ApiTestObject::get()->filter('FixtureIdentifier', 'iso-3')->first());
     }
 
+    /**
+     * Regression: RecordWriter::write() used to persist the record before
+     * applying relations, so a relation that fails to resolve (e.g. a
+     * nonexistent related id) left a half-written draft record behind even
+     * though the op reports "error" — corrupting the retry-failed-indices
+     * contract a non-atomic batch caller relies on. The record write and its
+     * relation writes must land or fail together.
+     */
+    public function testCreateOpLeavesNoRecordWhenARelationFailsToResolve(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'relation-fail',
+                    'fields' => ['Title' => 'Should Not Persist'],
+                    'relations' => [
+                        'Children' => ['mode' => 'set', 'items' => [999999999]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'transport succeeds even with op errors');
+        $this->assertSame('NOT_FOUND', $body['data']['results'][0]['error']['code']);
+        $this->assertNull(
+            ApiTestObject::get()->filter('FixtureIdentifier', 'relation-fail')->first(),
+            'a relation failure must roll back the record write too, not just report an error'
+        );
+    }
+
     public function testAtomicBatchRollsBack(): void
     {
         $response = $this->apiPost('batch', [
