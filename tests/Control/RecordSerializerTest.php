@@ -4,8 +4,10 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
 use Psr\Log\LoggerInterface;
@@ -129,6 +131,56 @@ class RecordSerializerTest extends ContentApiTestCase
             $this->logHandler->hasWarningThatContains('no companion'),
             'expected a warning logged when the id is set but the Class column is empty'
         );
+    }
+
+    /**
+     * Regression: a many_many relation declaring many_many_extraFields
+     * (e.g. SortOrder) used to serialize as a bare id array, silently
+     * dropping the extraFields data — WriteApplicator can write it
+     * ({"id", "extraFields"} per item, see resolveRelationItem()), but a
+     * GET->PUT round-trip could never see it come back.
+     */
+    public function testManyManyExtraFieldsRoundTripOnRead(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $tagOne = $this->objFromFixture(ApiTestTag::class, 'tagOne');
+        $tagTwo = $this->objFromFixture(ApiTestTag::class, 'tagTwo');
+
+        $record->Tags()->add($tagOne, ['SortOrder' => 3]);
+        $record->Tags()->add($tagTwo, ['SortOrder' => 1]);
+
+        $body = $this->decode($this->apiGet("records/ApiTest/{$record->ID}", $this->token));
+
+        $tags = $body['data']['relations']['Tags'];
+        $this->assertCount(2, $tags);
+
+        $byId = [];
+        foreach ($tags as $tag) {
+            $this->assertArrayHasKey('id', $tag);
+            $this->assertArrayHasKey('extraFields', $tag);
+            $byId[$tag['id']] = $tag['extraFields'];
+        }
+
+        $this->assertSame(['SortOrder' => 3], $byId[$tagOne->ID]);
+        $this->assertSame(['SortOrder' => 1], $byId[$tagTwo->ID]);
+    }
+
+    /**
+     * A has_many (or a many_many with no declared extraFields) must keep
+     * the existing bare-id-array shape — the {"id","extraFields"} shape is
+     * only for relations that actually have extra join-table data.
+     */
+    public function testRelationWithoutExtraFieldsStaysABareIdArray(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $child = ApiTestChildObject::create(['Title' => 'A child']);
+        $child->write();
+        $child->setField('ParentID', $record->ID);
+        $child->write();
+
+        $body = $this->decode($this->apiGet("records/ApiTest/{$record->ID}", $this->token));
+
+        $this->assertSame([(int) $child->ID], $body['data']['relations']['Children']);
     }
 
     public function testUnreadableRelationWarningIsDedupedAcrossRecordsInAListRead(): void

@@ -136,6 +136,10 @@ Populate-fixtures resolver, which logged and left the literal token string in pl
 - Unknown relation → `422 UNKNOWN_RELATION`; not in the allowlist → `422 READONLY_FIELD`;
   malformed `mode`/`items` → `400 PAYLOAD_INVALID`.
 
+`extraFields` round-trips on read too: a GET response serializes a many_many relation that
+declares `many_many_extraFields` as `[{"id", "extraFields"}, ...]` (`RecordSerializer`), not a
+bare id array — the same shape `items` accepts on write.
+
 ## `externalId`
 
 Sets/matches the [external id](#external-ids) column for this write's target record.
