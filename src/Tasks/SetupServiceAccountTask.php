@@ -28,6 +28,11 @@ use SilverStripe\Security\Permission;
  *
  * Usage: `sake tasks:SetupContentApiServiceAccount group="Content API Service Accounts"`
  * (add `populate=1` too if the account needs batch/compositions/asset writes/page actions).
+ *
+ * SS5-branch note: this file uses the legacy BuildTask::run($request)
+ * signature (branch `1`'s SS6 line uses execute(InputInterface, PolyOutput))
+ * — there is no shared entry point between the two branches, so a business-
+ * logic fix here must be manually ported to branch `1`'s copy and vice versa.
  */
 class SetupServiceAccountTask extends BuildTask
 {
@@ -77,7 +82,11 @@ class SetupServiceAccountTask extends BuildTask
 
         $codes = [ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT'];
 
-        if ($request->getVar('populate')) {
+        // Presence-based, not value-based — matches the old VALUE_NONE
+        // --populate flag's semantics (there was no way to pass "false" to
+        // it either). A PHP truthy check on the raw string would otherwise
+        // treat `populate=false` or `populate=no` as granting it.
+        if ($request->getVar('populate') !== null) {
             $codes[] = ContentApiPermissions::POPULATE;
         }
 

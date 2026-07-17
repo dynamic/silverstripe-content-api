@@ -10,8 +10,10 @@ sake tasks:MintContentApiToken email=agent@example.com
 ```
 
 `MintApiTokenTask` (command name `MintContentApiToken`) finds the member by `email`
-(required — `Command::INVALID` if missing, `Command::FAILURE` if no member matches), calls
-colymba's `TokenAuthenticator::resetToken()` + `getToken()`, and prints:
+(required — prints an error message and stops if missing or no member matches; a legacy
+`BuildTask::run()` on this branch has no exit-code contract, so check the printed output rather
+than the process exit code), calls colymba's `TokenAuthenticator::resetToken()` + `getToken()`,
+and prints:
 
 ```
 Token minted for agent@example.com (member #12), expires <ISO-8601 timestamp, mint time + tokenLife>:

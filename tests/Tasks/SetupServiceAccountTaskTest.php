@@ -132,8 +132,13 @@ class SetupServiceAccountTaskTest extends SapphireTest
             'Test Ambiguous Title'
         ));
 
-        $this->runTask(['group' => 'Test Ambiguous Title']);
+        $output = $this->runTask(['group' => 'Test Ambiguous Title']);
 
+        $this->assertStringContainsString(
+            'refusing to guess',
+            $output,
+            'must report why it declined, not just silently do nothing'
+        );
         $this->assertSame(
             0,
             Permission::get()->filter([
@@ -144,18 +149,29 @@ class SetupServiceAccountTaskTest extends SapphireTest
         );
     }
 
+    /**
+     * Regression for #52 code review: assert on the task's own rejection
+     * message, not just the absence of a group titled "" — an assertion on
+     * absence alone can't distinguish "correctly rejected" from "silently
+     * fell back to the default title" (a real risk if the null-check on
+     * $rawGroup were ever loosened to an empty() check).
+     */
     public function testExplicitEmptyGroupIsRejected(): void
     {
-        $this->runTask(['group' => '']);
+        $output = $this->runTask(['group' => '']);
 
+        $this->assertStringContainsString('cannot be empty', $output);
         $this->assertNull(Group::get()->filter('Title', '')->first());
+        $this->assertNull(Group::get()->filter('Title', 'Content API Service Accounts')->first());
     }
 
     public function testWhitespaceOnlyGroupIsRejected(): void
     {
-        $this->runTask(['group' => '   ']);
+        $output = $this->runTask(['group' => '   ']);
 
+        $this->assertStringContainsString('cannot be empty', $output);
         $this->assertNull(Group::get()->filter('Title', '   ')->first());
+        $this->assertNull(Group::get()->filter('Title', 'Content API Service Accounts')->first());
     }
 
     /**
@@ -184,14 +200,15 @@ class SetupServiceAccountTaskTest extends SapphireTest
         }
     }
 
-    protected function runTask(array $vars): void
+    protected function runTask(array $vars): string
     {
         $task = SetupServiceAccountTask::create();
         $request = new HTTPRequest('GET', '/', $vars);
 
         ob_start();
         $task->run($request);
-        ob_end_clean();
+
+        return ob_get_clean();
     }
 
     protected function assertGranted(Group $group, string $code): void

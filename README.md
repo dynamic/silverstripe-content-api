@@ -99,7 +99,7 @@ SilverStripe\Assets\File:
 3. **Grant permissions and mint a token**:
 
 ```bash
-sake tasks:MintContentApiToken --email=agent@example.com
+sake tasks:MintContentApiToken email=agent@example.com
 ```
 
 4. **Call it**:

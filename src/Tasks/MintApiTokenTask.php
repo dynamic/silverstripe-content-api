@@ -14,6 +14,11 @@ use SilverStripe\Security\Member;
  * both the /api and /content-api/v1 surfaces.
  *
  * Usage: `sake tasks:MintContentApiToken email=agent@example.com`
+ *
+ * SS5-branch note: this file uses the legacy BuildTask::run($request)
+ * signature (branch `1`'s SS6 line uses execute(InputInterface, PolyOutput))
+ * — there is no shared entry point between the two branches, so a business-
+ * logic fix here must be manually ported to branch `1`'s copy and vice versa.
  */
 class MintApiTokenTask extends BuildTask
 {
@@ -27,7 +32,7 @@ class MintApiTokenTask extends BuildTask
 
     public function run($request)
     {
-        $email = (string) $request->getVar('email');
+        $email = trim((string) $request->getVar('email'));
 
         if ($email === '') {
             echo "Missing required option: email\n";
