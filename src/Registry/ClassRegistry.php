@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Registry;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
@@ -19,9 +20,67 @@ use SilverStripe\Core\Injector\Injectable;
  *
  * Exposure is deny-by-default: a class must be in the merged map AND carry an
  * `api_access` (or `content_api_access`) config value before any endpoint will
- * touch it.
+ * touch it — UNLESS it's reachable only via `discovery_roots` (see below), in
+ * which case a missing `api_access` falls back to `discovery_write_policy`
+ * rather than "not exposed". An *explicit* `api_access`/`content_api_access`
+ * (including an explicit `false` or `''` deny) always wins over the discovery
+ * fallback — `accessVerbs()` distinguishes "key never set" from "key set to a
+ * falsy value" via `Config::exists()`, not a plain falsy check, so an explicit
+ * deny can't be silently overridden.
  *
  * Verbs: read, create, update, delete, action (publish/unpublish/archive).
+ *
+ * ## Auto-discovery
+ *
+ * `discovery_roots` (e.g. `[DNADesign\Elemental\Models\BaseElement::class,
+ * SilverStripe\CMS\Model\SiteTree::class]`) opt a project into automatically
+ * mapping every concrete subclass of each root, without a hand-written
+ * `models:` entry per class. Runtime safety doesn't come from the map —
+ * every operation still passes through `canView()`/`canEdit()` and
+ * `WriteApplicator::isFieldWritable()`'s denylist regardless of how a class
+ * reached the map — so discovery only ever grants what `discovery_write_policy`
+ * says and never fabricates a writable-field allowlist.
+ *
+ * `discovery_write_policy: 'off'` (the default) is not just "no verbs" —
+ * discovered classes are excluded from the map entirely (`resolve()` throws
+ * `UNKNOWN_CLASS` for them, same as before discovery existed), not merely
+ * "mapped but zero-verb". A ref that's mapped-but-empty-verbs would still be
+ * resolvable to callers that never re-check `accessVerbs()` after resolving
+ * (schema introspection, page-conversion targets, a polymorphic has_one's
+ * serialized class name) — several of those call sites only ever checked
+ * "does this class resolve at all", a question that was safe to answer
+ * loosely when only classes someone deliberately listed in `models` could
+ * resolve. Discovery would turn that into "does an entire subclass tree
+ * resolve", so `'off'` keeps the discovery map itself empty rather than
+ * populated-but-unauthorized.
+ *
+ * Discovery does NOT auto-apply `ExternalIdentifierExtension` — confirmed by
+ * a live `dev/build` test that adding an extension at request time (even from
+ * the module's own `_config.php`, which runs on every boot) does not reliably
+ * add the extension's `db` field to the built schema; DataObjectSchema's
+ * field-spec caching for a class is already settled by the time a
+ * config-manifest-phase PHP file could retroactively change its extension
+ * list. A discovered class is therefore read-addressable by numeric id only
+ * until a project applies `ExternalIdentifierExtension` to it explicitly via
+ * normal YAML (same as any other class) — that's a one-line addition, not
+ * the 10-20-line block discovery is meant to avoid for read access.
+ *
+ * `discovery_exclude` adds project-specific classes/roots to skip (excluding
+ * a class also excludes its own subclasses). A small denylist of
+ * framework/auth classes (`Member`, `Group`, `Permission`, …) — and *their*
+ * subclasses — is always excluded regardless of config; the reason
+ * Drupal-style expose-everything is wrong for this module.
+ *
+ * Discovery only walks concrete classes (`ReflectionClass::isAbstract()`
+ * filtered) — `ClassInfo::subclassesFor()` alone doesn't distinguish an
+ * abstract intermediate class from a real leaf type.
+ *
+ * A short ref collision between two discovered classes under different
+ * roots is resolved by `discovery_roots` array order: whichever root is
+ * processed first claims the ref, the later one is silently skipped (not
+ * mapped at all — it never had a ref before discovery either, so this isn't
+ * a new failure mode, just an ordering-dependent one). Give it a manual
+ * `models` entry under a different ref if both need to be reachable.
  */
 class ClassRegistry
 {
@@ -37,9 +96,73 @@ class ClassRegistry
     private static array $models = [];
 
     /**
-     * The unified map: colymba's models base + our overlay.
+     * FQCNs to auto-discover concrete subclasses of. Empty by default —
+     * auto-discovery is entirely opt-in.
+     */
+    private static array $discovery_roots = [];
+
+    /**
+     * Additional FQCNs (or their subclasses) to exclude from discovery, on
+     * top of the mandatory denylist below.
+     */
+    private static array $discovery_exclude = [];
+
+    /**
+     * Verbs granted to a class reached only via discovery and carrying no
+     * explicit `api_access` of its own. `'off'` (default) excludes discovered
+     * classes from the map entirely — see the class docblock for why that's
+     * not the same as "mapped but zero verbs". `'read'` grants read-only.
+     * There is deliberately no write-granting policy value: a discovered
+     * class's writable fields would otherwise have to be inferred, which is
+     * exactly the #27 ParentID mistake this module already fixed once —
+     * writes always require an explicit `api_writable_fields` on the class.
+     */
+    private static string $discovery_write_policy = 'off';
+
+    /**
+     * Always excluded from discovery, regardless of project config — classes
+     * whose exposure (even read-only) would be a security or data-integrity
+     * mistake by default. Not a config value, so a project can't accidentally
+     * relax it away; use `discovery_roots` more narrowly instead. Subclasses
+     * of these are excluded too (expanded in `discoveryDenylist()`).
+     */
+    private const MANDATORY_DISCOVERY_DENYLIST = [
+        \SilverStripe\Security\Member::class,
+        \SilverStripe\Security\Group::class,
+        \SilverStripe\Security\Permission::class,
+        \SilverStripe\Security\PermissionRole::class,
+        \SilverStripe\Security\PermissionRoleCode::class,
+        \SilverStripe\Security\LoginAttempt::class,
+        \SilverStripe\Security\RememberLoginHash::class,
+        \SilverStripe\Security\MemberPassword::class,
+    ];
+
+    /**
+     * The unified map: colymba's models base + our overlay + discovered
+     * classes. Manual config always wins over a discovered entry sharing the
+     * same ref.
+     *
+     * Deliberately uncached: an earlier version memoized these per-instance,
+     * on the reasoning that ClassRegistry is resolved fresh per request. It
+     * isn't — `Injectable::singleton()` returns one instance for the whole
+     * process, so a cached result from one test (or one differently-scoped
+     * request context) leaked into the next, silently returning a stale
+     * empty/populated map after `Config::modify()->set()` changed
+     * `discovery_roots` mid-lifetime. Caught by the test suite itself (4
+     * failures) before this shipped. Revisit with real cache invalidation
+     * (a Config-change hook, not a plain property) if the Config-lookup cost
+     * across `allExposed()`'s per-class loop is ever measured as a problem.
      */
     protected function mergedModels(): array
+    {
+        return array_merge($this->discoveredModels(), $this->manualModels());
+    }
+
+    /**
+     * The hand-configured map only (colymba's base + our own `models`),
+     * excluding anything discovery would add.
+     */
+    protected function manualModels(): array
     {
         $base = (array) Config::inst()->get(
             'Colymba\\RESTfulAPI\\QueryHandlers\\DefaultQueryHandler',
@@ -47,6 +170,123 @@ class ClassRegistry
         );
 
         return array_merge($base, (array) static::config()->get('models'));
+    }
+
+    /**
+     * Ref => FQCN for every concrete, non-denylisted subclass of a
+     * `discovery_roots` entry, when `discovery_write_policy` grants
+     * something — `'off'` returns an empty map outright (see class
+     * docblock). A discovered ref colliding with an existing manual ref, or
+     * a class already reachable via a manual mapping under a different ref,
+     * is skipped — manual config always wins and never gets a silent
+     * discovery-added alias.
+     */
+    protected function discoveredModels(): array
+    {
+        $roots = (array) static::config()->get('discovery_roots');
+
+        if ($roots === [] || $this->discoveryDefaultVerbs() === []) {
+            return [];
+        }
+
+        $manual = $this->manualModels();
+        $manualClasses = array_values($manual);
+        $denylist = $this->discoveryDenylist();
+        $discovered = [];
+
+        foreach ($roots as $root) {
+            if (!is_string($root) || !class_exists($root)) {
+                continue;
+            }
+
+            foreach (array_values(ClassInfo::subclassesFor($root, false)) as $className) {
+                if (in_array($className, $denylist, true) || in_array($className, $manualClasses, true)) {
+                    continue;
+                }
+
+                if (!(new \ReflectionClass($className))->isInstantiable()) {
+                    continue;
+                }
+
+                $ref = ClassInfo::shortName($className);
+
+                if (isset($manual[$ref]) || isset($discovered[$ref])) {
+                    continue;
+                }
+
+                $discovered[$ref] = $className;
+            }
+        }
+
+        return $discovered;
+    }
+
+    /**
+     * The mandatory denylist plus any project-configured `discovery_exclude`
+     * entries — an excluded root (mandatory or configured) also excludes its
+     * subclasses.
+     */
+    protected function discoveryDenylist(): array
+    {
+        $configured = (array) static::config()->get('discovery_exclude');
+        $roots = array_merge(self::MANDATORY_DISCOVERY_DENYLIST, $configured);
+        $expanded = [];
+
+        foreach (array_unique($roots) as $entry) {
+            if (!is_string($entry) || !class_exists($entry)) {
+                continue;
+            }
+
+            $expanded[] = $entry;
+            $expanded = array_merge($expanded, array_values(ClassInfo::subclassesFor($entry, false)));
+        }
+
+        return array_unique($expanded);
+    }
+
+    /**
+     * Whether $className is reachable ONLY via discovery — never through an
+     * explicit `models` mapping (colymba's or ours) — and isn't denylisted.
+     * Used to decide whether a class with no `api_access` of its own still
+     * gets the discovery fallback verbs, versus genuinely not exposed.
+     */
+    protected function isDiscoveredOnly(string $className): bool
+    {
+        if (in_array($className, array_values($this->manualModels()), true)) {
+            return false;
+        }
+
+        if (in_array($className, $this->discoveryDenylist(), true)) {
+            return false;
+        }
+
+        foreach ((array) static::config()->get('discovery_roots') as $root) {
+            if (!is_string($root) || !class_exists($root) || strcasecmp($className, $root) === 0) {
+                // The root class itself is never "discovered" (matches
+                // discoveredModels()'s includeBaseClass: false) — a root
+                // pointed directly at a concrete/instantiable class (e.g.
+                // SiteTree, per this class's own docblock example) must not
+                // grant itself the discovery fallback via is_a() matching
+                // self, only its subclasses.
+                continue;
+            }
+
+            if (is_a($className, $root, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Verbs granted by discovery alone (no explicit `api_access` on the
+     * class). Currently binary: `'read'` or nothing — see
+     * `$discovery_write_policy`'s docblock for why there's no write option.
+     */
+    protected function discoveryDefaultVerbs(): array
+    {
+        return static::config()->get('discovery_write_policy') === 'read' ? ['read'] : [];
     }
 
     /**
@@ -127,16 +367,58 @@ class ClassRegistry
      * The verbs a class is exposed for. `content_api_access` wins over
      * `api_access` when both are set (colymba coexistence).
      *
+     * `content_api_access` reliably distinguishes "never configured" from
+     * "explicitly set, including to a falsy deny" via `Config::exists()` —
+     * it's a module-specific key, so nothing else in the framework declares
+     * it. `api_access` can't use the same check: `SilverStripe\ORM\DataObject`
+     * itself declares `private static $api_access = false` as a *built-in*
+     * config property (unrelated to this module, an older colymba-era
+     * mechanism) — every DataObject subclass "has" that key whether or not a
+     * project ever touched it, so `Config::exists($class, 'api_access')` is
+     * always `true` framework-wide and can never mean "explicitly set" for
+     * this key specifically. `api_access` is therefore read by *value*: a
+     * project wanting to explicitly deny a class that `discovery_roots`
+     * would otherwise pick up needs `content_api_access: false` or
+     * `discovery_exclude`, not `api_access: false` — the latter is
+     * indistinguishable from DataObject's own untouched default.
+     *
+     * A class with neither an explicit `content_api_access` nor a truthy
+     * `api_access`, reached only via `discovery_roots`, falls back to
+     * `discoveryDefaultVerbs()` instead of "not exposed". This is the single
+     * source of truth every write/read path already calls, so the fallback
+     * applies uniformly, not just to the schema listing.
+     *
      * @return string[] subset of ClassRegistry::VERBS, empty = not exposed
      */
     public function accessVerbs(string $className): array
     {
-        $access = Config::inst()->get($className, 'content_api_access');
+        $config = Config::inst();
 
-        if ($access === null) {
-            $access = Config::inst()->get($className, 'api_access');
+        if ($config->exists($className, 'content_api_access')) {
+            return $this->parseAccess($config->get($className, 'content_api_access'));
         }
 
+        $access = $config->get($className, 'api_access');
+
+        if ($access === true) {
+            return ClassRegistry::VERBS;
+        }
+
+        if (is_string($access) && trim($access) !== '') {
+            return $this->parseAccess($access);
+        }
+
+        return $this->isDiscoveredOnly($className) ? $this->discoveryDefaultVerbs() : [];
+    }
+
+    /**
+     * Parses an `api_access`/`content_api_access` value already confirmed
+     * present into verbs: `true` = all, a CSV of colymba-style HTTP verbs
+     * (or bare verb names) maps via `METHOD_VERB_MAP`, anything else
+     * (`false`, `''`, ...) is an explicit deny.
+     */
+    protected function parseAccess(mixed $access): array
+    {
         if ($access === true) {
             return ClassRegistry::VERBS;
         }

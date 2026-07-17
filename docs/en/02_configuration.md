@@ -28,10 +28,34 @@ from colymba's.
 | Key | Default | Purpose |
 |---|---|---|
 | `models` | `[]` | Content-api-only short-ref → FQCN map. Merged **over** colymba's `DefaultQueryHandler.models` (this module's entries win per key on conflict) |
+| `discovery_roots` | `[]` | FQCNs (e.g. `BaseElement::class`, `SiteTree::class`) to auto-map every concrete subclass of, without a hand-written `models:` entry per class. Off by default — entirely opt-in |
+| `discovery_exclude` | `[]` | Additional FQCNs (and their subclasses) to skip during discovery, on top of the mandatory denylist (`Member`, `Group`, `Permission`, etc. — not configurable, can't be relaxed away) |
+| `discovery_write_policy` | `'off'\|'read'` | `'off'` | Verbs granted to a class reached **only** via discovery, carrying no `api_access` of its own. `'read'` grants read-only. There is no write-granting value — a discovered class's writable fields would have to be inferred, the same mistake `api_writable_fields` hoisting already caused once (#27); writes always require an explicit `api_writable_fields` on the class |
 
 `ClassRegistry::VERBS` (not configurable, informational): `read`, `create`, `update`, `delete`,
 `action`. Colymba-style `api_access: 'GET,POST'` values are mapped `GET→read`, `POST→create`,
 `PUT`/`PATCH→update`, `DELETE→delete`; a bare verb name (`action`) is also accepted directly.
+
+### Auto-discovery
+
+A class with its own explicit `api_access`/`content_api_access` always uses that, whether or not
+it's also reachable via `discovery_roots` — discovery only ever fills the gap when neither is set.
+Runtime safety doesn't come from the map itself: every operation still passes through
+`canView()`/`canEdit()` and `WriteApplicator::isFieldWritable()`'s denylist regardless of how a
+class reached the map, which is what makes discovery safe to automate for reads.
+
+Discovery does **not** auto-apply `ExternalIdentifierExtension` — confirmed by a live test that
+adding an extension at request time doesn't reliably affect the schema `dev/build` already
+computed. A discovered class is read-addressable by numeric id only until a project applies the
+extension to it explicitly via normal YAML (a one-line addition, not the full exposure block).
+
+```yaml
+Dynamic\ContentApi\Registry\ClassRegistry:
+  discovery_roots:
+    - DNADesign\Elemental\Models\BaseElement
+    - SilverStripe\CMS\Model\SiteTree
+  discovery_write_policy: 'read'
+```
 
 ## Per-exposed-class config
 
