@@ -11,7 +11,6 @@ use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Validation\ValidationException;
 use SilverStripe\ORM\DataObject;
-use SilverStripe\ORM\DB;
 use SilverStripe\Security\Member;
 
 /**
@@ -195,13 +194,10 @@ class RecordWriter
         // behind while the operation reports "error", corrupting a batch's
         // retry-failed-indices contract (a retry could double-create).
         try {
-            DB::get_conn()->withTransaction(function () use ($record, $relations) {
+            DbTransaction::run(function () use ($record, $relations) {
                 $record->write();
-
-                if ($relations !== []) {
-                    $this->applicator->applyRelations($record, $relations);
-                }
-            }, null, false, true);
+                $this->applicator->applyRelations($record, $relations);
+            });
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception);
         }
