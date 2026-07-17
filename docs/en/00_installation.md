@@ -49,7 +49,7 @@ Then run `dev/build flush=1` and continue to [Quick start](01_quickstart.md).
 - Member columns change: `ContentApiTokenHash`/`ContentApiTokenExpire` are abandoned (orphan
   columns; drop manually if you care) — colymba's `ApiToken`/`ApiTokenExpire` are created on
   `dev/build`. **Hashed 1.0.x tokens cannot be carried over — re-mint every service account**
-  (`sake tasks:MintContentApiToken --email=…`).
+  (`sake tasks:MintContentApiToken email=…`).
 - Removed endpoints → replacements: `POST records/$Class` → `POST api/$Class` or a batch
   `create`/`upsert` op; `PATCH records/$Class/$ID` → `PUT api/$Class/$ID` or a batch `update`
   op; `DELETE records/$Class/$ID` → `DELETE api/$Class/$ID` (hard delete!) or a batch `delete`

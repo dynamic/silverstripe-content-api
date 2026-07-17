@@ -4,21 +4,17 @@ namespace Dynamic\ContentApi\Tests\Tasks;
 
 use Dynamic\ContentApi\Security\ContentApiPermissions;
 use Dynamic\ContentApi\Tasks\SetupServiceAccountTask;
+use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Dev\SapphireTest;
-use SilverStripe\PolyExecution\PolyOutput;
+use SilverStripe\ORM\DB;
 use SilverStripe\Security\Group;
 use SilverStripe\Security\Permission;
-use Symfony\Component\Console\Command\Command;
-use Symfony\Component\Console\Input\ArrayInput;
-use Symfony\Component\Console\Input\InputDefinition;
 
 class SetupServiceAccountTaskTest extends SapphireTest
 {
     public function testCreatesGroupWithBaseGrants(): void
     {
-        $result = $this->runTask(['--group' => 'Test Service Accounts']);
-
-        $this->assertSame(Command::SUCCESS, $result);
+        $this->runTask(['group' => 'Test Service Accounts']);
 
         $group = Group::get()->filter('Title', 'Test Service Accounts')->first();
         $this->assertNotNull($group);
@@ -29,7 +25,7 @@ class SetupServiceAccountTaskTest extends SapphireTest
 
     public function testPopulateFlagAlsoGrantsPopulate(): void
     {
-        $this->runTask(['--group' => 'Test Populate Accounts', '--populate' => true]);
+        $this->runTask(['group' => 'Test Populate Accounts', 'populate' => '1']);
 
         $group = Group::get()->filter('Title', 'Test Populate Accounts')->first();
         $this->assertGranted($group, ContentApiPermissions::ACCESS);
@@ -39,8 +35,8 @@ class SetupServiceAccountTaskTest extends SapphireTest
 
     public function testIsIdempotent(): void
     {
-        $this->runTask(['--group' => 'Test Idempotent']);
-        $this->runTask(['--group' => 'Test Idempotent']);
+        $this->runTask(['group' => 'Test Idempotent']);
+        $this->runTask(['group' => 'Test Idempotent']);
 
         $groups = Group::get()->filter('Title', 'Test Idempotent');
         $this->assertSame(1, $groups->count(), 're-running must not create a duplicate group');
@@ -56,36 +52,36 @@ class SetupServiceAccountTaskTest extends SapphireTest
     /**
      * Regression for #42 code review: the realistic operational sequence of
      * provisioning an account plain, then later deciding it also needs
-     * population access. Nothing before this asserted --populate actually
+     * population access. Nothing before this asserted populate=1 actually
      * takes effect on a group that already exists.
      */
     public function testRerunningWithPopulateAddsTheGrantToAnExistingGroup(): void
     {
         $this->deleteGroupsTitled('Test Upgrade To Populate');
 
-        $this->runTask(['--group' => 'Test Upgrade To Populate']);
+        $this->runTask(['group' => 'Test Upgrade To Populate']);
         $group = Group::get()->filter('Title', 'Test Upgrade To Populate')->first();
         $this->assertNotGranted($group, ContentApiPermissions::POPULATE);
 
-        $this->runTask(['--group' => 'Test Upgrade To Populate', '--populate' => true]);
+        $this->runTask(['group' => 'Test Upgrade To Populate', 'populate' => '1']);
 
         $this->assertGranted($group, ContentApiPermissions::POPULATE);
     }
 
     /**
      * Regression for #42 code review: the task has no revoke path — it must
-     * not be mistaken for one. Omitting --populate on a later run must not
+     * not be mistaken for one. Omitting populate on a later run must not
      * remove a grant a prior run already made.
      */
     public function testRerunningWithoutPopulateDoesNotRevokeAnExistingGrant(): void
     {
         $this->deleteGroupsTitled('Test Keep Populate');
 
-        $this->runTask(['--group' => 'Test Keep Populate', '--populate' => true]);
+        $this->runTask(['group' => 'Test Keep Populate', 'populate' => '1']);
         $group = Group::get()->filter('Title', 'Test Keep Populate')->first();
         $this->assertGranted($group, ContentApiPermissions::POPULATE);
 
-        $this->runTask(['--group' => 'Test Keep Populate']);
+        $this->runTask(['group' => 'Test Keep Populate']);
 
         $this->assertGranted($group, ContentApiPermissions::POPULATE);
     }
@@ -106,7 +102,7 @@ class SetupServiceAccountTaskTest extends SapphireTest
         Permission::grant((int) $group->ID, ContentApiPermissions::ACCESS);
         $this->assertNotGranted($group, 'VIEW_DRAFT_CONTENT');
 
-        $this->runTask(['--group' => 'Test Partial Grants']);
+        $this->runTask(['group' => 'Test Partial Grants']);
 
         $this->assertGranted($group, ContentApiPermissions::ACCESS);
         $this->assertGranted($group, 'VIEW_DRAFT_CONTENT');
@@ -125,15 +121,19 @@ class SetupServiceAccountTaskTest extends SapphireTest
     {
         $this->deleteGroupsTitled('Test Ambiguous Title');
 
-        foreach ([1, 2] as $_) {
-            $duplicate = Group::create();
-            $duplicate->Title = 'Test Ambiguous Title';
-            $duplicate->write(false, false, false, false, true);
-        }
+        // Group::write() enforces a unique Title via validate(), which has no
+        // skip-validation write() flag on this framework line — insert the
+        // second row directly to construct the pre-existing-duplicate-data
+        // scenario the task must defend against.
+        Group::create(['Title' => 'Test Ambiguous Title'])->write();
+        DB::query(sprintf(
+            "INSERT INTO \"Group\" (\"ClassName\", \"Title\") VALUES ('%s', '%s')",
+            Group::class,
+            'Test Ambiguous Title'
+        ));
 
-        $result = $this->runTask(['--group' => 'Test Ambiguous Title']);
+        $this->runTask(['group' => 'Test Ambiguous Title']);
 
-        $this->assertSame(Command::FAILURE, $result);
         $this->assertSame(
             0,
             Permission::get()->filter([
@@ -146,29 +146,27 @@ class SetupServiceAccountTaskTest extends SapphireTest
 
     public function testExplicitEmptyGroupIsRejected(): void
     {
-        $result = $this->runTask(['--group' => '']);
+        $this->runTask(['group' => '']);
 
-        $this->assertSame(Command::INVALID, $result);
+        $this->assertNull(Group::get()->filter('Title', '')->first());
     }
 
     public function testWhitespaceOnlyGroupIsRejected(): void
     {
-        $result = $this->runTask(['--group' => '   ']);
+        $this->runTask(['group' => '   ']);
 
-        $this->assertSame(Command::INVALID, $result);
+        $this->assertNull(Group::get()->filter('Title', '   ')->first());
     }
 
     /**
-     * Regression for #42 code review: --group is VALUE_REQUIRED with a
-     * default, so omitting the flag never actually leaves it empty — this
-     * confirms the default title applies rather than the task silently
-     * accepting some other unintended state.
+     * Regression for #42 code review: omitting group entirely (vs passing
+     * it explicitly empty) falls back to the default title rather than
+     * being rejected — confirms the two are distinguished, not conflated.
      */
     public function testOmittingGroupFallsBackToTheDefaultTitle(): void
     {
-        $result = $this->runTask([]);
+        $this->runTask([]);
 
-        $this->assertSame(Command::SUCCESS, $result);
         $this->assertNotNull(Group::get()->filter('Title', 'Content API Service Accounts')->first());
     }
 
@@ -186,14 +184,14 @@ class SetupServiceAccountTaskTest extends SapphireTest
         }
     }
 
-    protected function runTask(array $options): int
+    protected function runTask(array $vars): void
     {
         $task = SetupServiceAccountTask::create();
-        $definition = new InputDefinition($task->getOptions());
-        $input = new ArrayInput($options, $definition);
-        $output = PolyOutput::create(PolyOutput::FORMAT_ANSI);
+        $request = new HTTPRequest('GET', '/', $vars);
 
-        return $task->run($input, $output);
+        ob_start();
+        $task->run($request);
+        ob_end_clean();
     }
 
     protected function assertGranted(Group $group, string $code): void

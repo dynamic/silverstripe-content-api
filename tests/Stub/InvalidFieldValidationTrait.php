@@ -2,7 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Stub;
 
-use SilverStripe\Core\Validation\ValidationResult;
+use SilverStripe\ORM\ValidationResult;
 
 /**
  * Shared validate() sentinel used across test stubs: a record whose named

@@ -3,7 +3,7 @@
 namespace Dynamic\ContentApi\Tests\Stub;
 
 use SilverStripe\CMS\Model\SiteTree;
-use SilverStripe\Core\Validation\ValidationResult;
+use SilverStripe\ORM\ValidationResult;
 use SilverStripe\Dev\TestOnly;
 
 /**

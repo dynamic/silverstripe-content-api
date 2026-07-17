@@ -3,8 +3,8 @@
 namespace Dynamic\ContentApi\Tests\Errors;
 
 use Dynamic\ContentApi\Errors\ApiError;
-use SilverStripe\Core\Validation\ValidationException;
-use SilverStripe\Core\Validation\ValidationResult;
+use SilverStripe\ORM\ValidationException;
+use SilverStripe\ORM\ValidationResult;
 use SilverStripe\Dev\SapphireTest;
 
 class ApiErrorTest extends SapphireTest

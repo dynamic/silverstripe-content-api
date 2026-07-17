@@ -6,10 +6,10 @@ but `/content-api/v1` enforces it more strictly than colymba's own `/api` does.
 ## Minting tokens
 
 ```bash
-sake tasks:MintContentApiToken --email=agent@example.com
+sake tasks:MintContentApiToken email=agent@example.com
 ```
 
-`MintApiTokenTask` (command name `MintContentApiToken`) finds the member by `--email`
+`MintApiTokenTask` (command name `MintContentApiToken`) finds the member by `email`
 (required — `Command::INVALID` if missing, `Command::FAILURE` if no member matches), calls
 colymba's `TokenAuthenticator::resetToken()` + `getToken()`, and prints:
 

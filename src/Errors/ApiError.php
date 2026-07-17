@@ -3,7 +3,7 @@
 namespace Dynamic\ContentApi\Errors;
 
 use Exception;
-use SilverStripe\Core\Validation\ValidationException;
+use SilverStripe\ORM\ValidationException;
 
 /**
  * Throwable carrying a machine-readable error code, HTTP status and optional

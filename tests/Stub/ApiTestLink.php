@@ -2,7 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Stub;
 
-use SilverStripe\Core\Validation\ValidationResult;
+use SilverStripe\ORM\ValidationResult;
 use SilverStripe\Dev\TestOnly;
 use SilverStripe\LinkField\Models\Link;
 
