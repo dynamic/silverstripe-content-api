@@ -11,7 +11,6 @@ use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Validation\ValidationException;
 use SilverStripe\ORM\DataObject;
-use SilverStripe\ORM\DB;
 use SilverStripe\Security\Member;
 
 /**
@@ -188,20 +187,8 @@ class RecordWriter
 
         $this->applicator->applyFields($record, $fields, $internalFields);
 
-        // The DB write and any relation writes it enables (has_one FK
-        // repoints, has_many/many_many attaches) must land or fail together —
-        // a relation that resolves to NOT_FOUND after the record itself is
-        // already persisted would otherwise leave a half-written draft record
-        // behind while the operation reports "error", corrupting a batch's
-        // retry-failed-indices contract (a retry could double-create).
         try {
-            DB::get_conn()->withTransaction(function () use ($record, $relations) {
-                $record->write();
-
-                if ($relations !== []) {
-                    $this->applicator->applyRelations($record, $relations);
-                }
-            }, null, false, true);
+            $record->write();
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception);
         }
@@ -220,6 +207,10 @@ class RecordWriter
                 ),
                 'field' => 'URLSegment',
             ];
+        }
+
+        if ($relations !== []) {
+            $this->applicator->applyRelations($record, $relations);
         }
 
         $this->publisher->publish($record, $publishMode);
