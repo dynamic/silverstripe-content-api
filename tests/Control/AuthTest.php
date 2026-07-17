@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use SilverStripe\Security\Member;
+use SilverStripe\Security\Permission;
 
 /**
  * Authentication is colymba/silverstripe-restfulapi's TokenAuthenticator;
@@ -25,8 +26,28 @@ class AuthTest extends ContentApiTestCase
         $this->assertSame('agent@example.com', $body['data']['email']);
         $this->assertContains('CONTENT_API_ACCESS', $body['data']['permissions']);
         $this->assertNotContains('CONTENT_API_POPULATE', $body['data']['permissions']);
+        $this->assertNotContains('VIEW_DRAFT_CONTENT', $body['data']['permissions']);
         $this->assertGreaterThan(time(), $body['data']['expires']);
         $this->assertSame('colymba/silverstripe-restfulapi', $body['meta']['tokenProvider']);
+    }
+
+    /**
+     * Regression: a service account needs VIEW_DRAFT_CONTENT to read back its
+     * own draft-only writes (docs/en/04_security-model.md), but the session
+     * endpoint used to hardcode only the three CONTENT_API_* codes — an agent
+     * had no way to introspect whether it actually held this permission.
+     */
+    public function testSessionReportsViewDraftContentWhenGranted(): void
+    {
+        $token = $this->mintTokenFor('apiUser');
+
+        /** @var Member $member */
+        $member = $this->objFromFixture(Member::class, 'apiUser');
+        Permission::grant((int) $member->Groups()->first()->ID, 'VIEW_DRAFT_CONTENT');
+
+        $body = $this->decode($this->apiGet('auth/session', $token));
+
+        $this->assertContains('VIEW_DRAFT_CONTENT', $body['data']['permissions']);
     }
 
     public function testRequestWithoutTokenIsRejected(): void
