@@ -109,6 +109,78 @@ class SchemaTest extends ContentApiTestCase
         $this->assertFalse($body['data']['fields']['Rank']['writable']);
     }
 
+    public function testClassSchemaSurfacesComputedFieldFlag(): void
+    {
+        Config::modify()->set(
+            ApiTestObject::class,
+            'api_computed_fields',
+            ['Title' => 'Overwritten from ParentPage.Title on save']
+        );
+
+        $body = $this->decode($this->apiGet('schema/ApiTest', $this->token));
+        $fields = $body['data']['fields'];
+
+        $this->assertTrue($fields['Title']['computed']);
+        $this->assertSame('Overwritten from ParentPage.Title on save', $fields['Title']['note']);
+        // Advisory only — writability itself is untouched.
+        $this->assertTrue($fields['Title']['writable']);
+        // A field with no honesty flag configured carries neither key.
+        $this->assertArrayNotHasKey('computed', $fields['Rank']);
+        $this->assertArrayNotHasKey('importOwned', $fields['Rank']);
+    }
+
+    public function testClassSchemaSurfacesImportOwnedFieldFlag(): void
+    {
+        Config::modify()->set(
+            ApiTestObject::class,
+            'api_import_owned_fields',
+            ['Rank' => 'Owned by the nightly import; overwritten on next sync']
+        );
+
+        $body = $this->decode($this->apiGet('schema/ApiTest', $this->token));
+        $fields = $body['data']['fields'];
+
+        $this->assertTrue($fields['Rank']['importOwned']);
+        $this->assertSame(
+            'Owned by the nightly import; overwritten on next sync',
+            $fields['Rank']['note']
+        );
+        $this->assertArrayNotHasKey('computed', $fields['Rank']);
+    }
+
+    public function testClassSchemaHonestyFlagsAreIndependentWhenBothConfigured(): void
+    {
+        // A field can be both computed and import-owned at once (e.g. a
+        // value the model recomputes from an imported source field) — the
+        // two flags must not be mutually exclusive.
+        Config::modify()->set(ApiTestObject::class, 'api_computed_fields', ['Title']);
+        Config::modify()->set(
+            ApiTestObject::class,
+            'api_import_owned_fields',
+            ['Title' => 'Sourced from the nightly import']
+        );
+
+        $body = $this->decode($this->apiGet('schema/ApiTest', $this->token));
+        $field = $body['data']['fields']['Title'];
+
+        $this->assertTrue($field['computed']);
+        $this->assertTrue($field['importOwned']);
+        $this->assertSame('Sourced from the nightly import', $field['note']);
+    }
+
+    public function testClassSchemaHonestyFlagsAcceptBareFieldList(): void
+    {
+        // A bare list of field names (no notes) normalizes to a flag with
+        // no `note` key, rather than erroring or emitting `note: null`.
+        Config::modify()->set(ApiTestObject::class, 'api_computed_fields', ['Title']);
+
+        $body = $this->decode($this->apiGet('schema/ApiTest', $this->token));
+        $field = $body['data']['fields']['Title'];
+
+        $this->assertTrue($field['computed']);
+        $this->assertArrayNotHasKey('note', $field);
+    }
+
     public function testPolymorphicHasOneWritabilityReflectsCompanionClassColumn(): void
     {
         // #25: a polymorphic has_one's writability must account for the
