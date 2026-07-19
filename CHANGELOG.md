@@ -6,11 +6,28 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **many_many `through` support**: a many_many relation backed by an explicit join DataObject
+  (`['through' => JoinClass, 'from' => ..., 'to' => ...]`, e.g. a `ProductSizeGTINProduct` join
+  carrying `IsCurrent`/`SortOrder`) now round-trips its extra join data the same way a classic
+  `many_many_extraFields` relation does: `RecordSerializer` emits `{"id", "extraFields"}` per
+  item (reading the join object's own `$db` fields via `getJoin()`), and `schema/$ClassRef`
+  advertises the field names under the relation's new `extraFields` key — for both the through
+  and classic case, which previously went unreported entirely.
 - Schema honesty flags: `api_computed_fields`/`api_import_owned_fields` per-class config marks
   fields that accept a write but then silently overwrite it — recomputed by the model itself
   (e.g. an `onBeforeWrite` trap) or owned by an external feed. Surfaced in `schema/$ClassRef` as
   `computed`/`importOwned` (+ optional `note`) on the field entry. Advisory only — `writable` is
   unaffected; pair with `api_protected_fields` to reject the write outright.
+
+### Fixed
+- `WriteApplicator` and `SchemaService` resolved a many_many `through` relation's target class
+  by reading the config's `to` value directly as if it were a class name — it's actually the
+  *name* of a has_one on the join class (framework
+  `DataObjectSchema::parseManyManyComponent()`). A through relation with a `to` value that
+  didn't happen to collide with a real class name (the common case) made every write to it
+  throw `ReflectionException: Class "..." does not exist`, and its schema entry reported a
+  bogus `class`. Both now resolve the real target via
+  `DataObject::getSchema()->manyManyComponent()`.
 
 ## [1.4.0] - 2026-07-17
 

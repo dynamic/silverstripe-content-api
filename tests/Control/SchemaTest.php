@@ -98,6 +98,26 @@ class SchemaTest extends ContentApiTestCase
         );
     }
 
+    /**
+     * A many_many relation's schema entry advertises the extra-data field
+     * names before a client round-trips it — same shape for the classic
+     * many_many_extraFields case (Tags) and a many_many through relation
+     * (ThroughTags), whose fields live on the join class instead. A plain
+     * many_many/has_many with no extra data keeps the existing
+     * class+writable-only entry.
+     */
+    public function testClassSchemaAdvertisesManyManyExtraFields(): void
+    {
+        $body = $this->decode($this->apiGet('schema/ApiTest', $this->token));
+
+        $this->assertSame(['SortOrder'], $body['data']['manyMany']['Tags']['extraFields']);
+        $this->assertSame(
+            ['SortOrder', 'IsCurrent'],
+            $body['data']['manyMany']['ThroughTags']['extraFields']
+        );
+        $this->assertArrayNotHasKey('extraFields', $body['data']['hasMany']['Children']);
+    }
+
     public function testClassSchemaReflectsAllowlistPolicy(): void
     {
         Config::modify()->set(ApiTestObject::class, 'api_write_policy', 'allowlist');

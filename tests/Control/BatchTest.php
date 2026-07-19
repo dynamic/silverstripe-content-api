@@ -685,6 +685,45 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame(3, (int) $record->Tags()->first()->SortOrder);
     }
 
+    /**
+     * A many_many `through` relation accepts the same {"id","extraFields"}
+     * write shape as the classic many_many_extraFields case — confirms the
+     * write path needed no code change: WriteApplicator already resolves
+     * the through target class and ManyManyThroughList::add() writes
+     * extraFields onto the join record.
+     */
+    public function testThroughRelationExtraFieldsRoundTripOnWrite(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['ThroughTags']);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $tag = $this->objFromFixture(ApiTestTag::class, 'tagOne');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => [
+                        'ThroughTags' => [
+                            'mode' => 'add',
+                            'items' => [
+                                ['id' => (int) $tag->ID, 'extraFields' => ['SortOrder' => 4, 'IsCurrent' => true]],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+
+        $join = $record->ThroughTags()->first()->getJoin();
+        $this->assertSame(4, (int) $join->SortOrder);
+        $this->assertTrue((bool) $join->IsCurrent);
+    }
+
     public function testUnlistedAndUnknownRelations(): void
     {
         Config::modify()->set(ApiTestObject::class, 'api_writable_relations', []);

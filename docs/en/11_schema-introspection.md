@@ -50,7 +50,8 @@ One class's full payload contract:
                                     "note": "Auto-derived from content on save" } },
   "hasOne": { "Image": { "class": "SilverStripe\\Assets\\Image", "payload": "assetRef", "writable": true } },
   "hasMany": { "Panels": { "class": "App\\Model\\Panel", "writable": true } },
-  "manyMany": { "Staff": { "class": "App\\Model\\StaffMember", "writable": false } }
+  "manyMany": { "Staff": { "class": "App\\Model\\StaffMember", "writable": false,
+                           "extraFields": ["SortOrder"] } }
 }
 ```
 
@@ -69,7 +70,12 @@ One class's full payload contract:
   subclass target), or `recordRef` (anything else). For a **polymorphic** has_one, `writable`
   reflects the FK-and-Class-column pair check (`isPolymorphicRelationWritable()`) — never just
   the FK alone.
-- `hasMany`/`manyMany`: `writable` reflects membership in `api_writable_relations`.
+- `hasMany`/`manyMany`: `writable` reflects membership in `api_writable_relations`. An
+  `extraFields` array appears when the relation carries extra join data — either a classic
+  `many_many_extraFields` map or a `many_many through` relation backed by a join DataObject
+  (see [Write payloads](06_write-payloads.md#relations-has_many--many_many)) — naming the
+  fields a GET returns nested under each item's `extraFields` and a write can set the same way.
+  Absent entirely for a plain has_many/many_many with no extra data.
 
 `externalIdField` is `null` when the class lacks
 [`ExternalIdentifierExtension`](02_configuration.md#externalidentifierextension).
