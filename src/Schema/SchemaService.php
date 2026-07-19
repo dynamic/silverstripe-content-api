@@ -218,14 +218,43 @@ class SchemaService
 
         foreach (['hasMany' => $singleton->hasMany(), 'manyMany' => $singleton->manyMany()] as $kind => $relations) {
             foreach ((array) $relations as $name => $relationClass) {
+                // Advisory only, mirroring the `computed`/`importOwned`
+                // field flags above: tells a client what shape a GET will
+                // return (bare id vs `{"id","extraFields"}`) before it round
+                // -trips, without affecting `writable`. Two sources of
+                // "extra data on a relation": a many_many through join
+                // class's own $db fields, or a classic
+                // many_many_extraFields map.
+                $extraFieldNames = null;
+
                 if (is_array($relationClass)) {
-                    $relationClass = $relationClass['to'] ?? '';
+                    // A many_many through spec's 'to' is the *name* of a
+                    // has_one on the join class, not a class name
+                    // (framework DataObjectSchema::parseManyManyComponent())
+                    // — resolve the actual target class via the schema
+                    // helper rather than reading ['to'] as if it were one.
+                    // Its extra data lives as real $db fields on the join
+                    // class itself.
+                    if (isset($relationClass['through'])) {
+                        $extraFieldNames = array_keys((array) Config::inst()->get($relationClass['through'], 'db'));
+                    }
+
+                    $relationClass = $schema->manyManyComponent($className, $name)['childClass'] ?? '';
+                } elseif ($kind === 'manyMany') {
+                    $extraFields = $schema->manyManyExtraFieldsForComponent($className, $name);
+                    $extraFieldNames = $extraFields ? array_keys($extraFields) : null;
                 }
 
-                $many[$kind][$name] = [
+                $relationEntry = [
                     'class' => strtok((string) $relationClass, '.'),
                     'writable' => in_array($name, $writableRelations, true),
                 ];
+
+                if ($extraFieldNames) {
+                    $relationEntry['extraFields'] = $extraFieldNames;
+                }
+
+                $many[$kind][$name] = $relationEntry;
             }
         }
 

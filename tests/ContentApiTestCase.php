@@ -15,6 +15,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
+use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
@@ -34,6 +35,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestObject::class,
         ApiTestChildObject::class,
         ApiTestTag::class,
+        ApiTestThroughJoin::class,
         ApiTestVersionedObject::class,
         ApiTestPage::class,
         ApiTestBlockPage::class,

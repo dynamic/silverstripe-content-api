@@ -166,6 +166,40 @@ class RecordSerializerTest extends ContentApiTestCase
     }
 
     /**
+     * A many_many `through` relation (backed by an explicit join
+     * DataObject rather than a many_many_extraFields map) must get the
+     * same {"id","extraFields"} treatment as the classic case above — its
+     * join fields (SortOrder, IsCurrent) live on the join object, reached
+     * via getJoin(), not on the item itself.
+     */
+    public function testManyManyThroughRoundTripOnRead(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $tagOne = $this->objFromFixture(ApiTestTag::class, 'tagOne');
+        $tagTwo = $this->objFromFixture(ApiTestTag::class, 'tagTwo');
+
+        $record->ThroughTags()->add($tagOne, ['SortOrder' => 2, 'IsCurrent' => true]);
+        $record->ThroughTags()->add($tagTwo, ['SortOrder' => 5, 'IsCurrent' => false]);
+
+        $body = $this->decode($this->apiGet("records/ApiTest/{$record->ID}", $this->token));
+
+        $throughTags = $body['data']['relations']['ThroughTags'];
+        $this->assertCount(2, $throughTags);
+
+        $byId = [];
+        foreach ($throughTags as $item) {
+            $this->assertArrayHasKey('id', $item);
+            $this->assertArrayHasKey('extraFields', $item);
+            $byId[$item['id']] = $item['extraFields'];
+        }
+
+        // getField() reads the DBBoolean's raw stored value (1/0), not a
+        // cast PHP bool — same accessor the classic extraFields path uses.
+        $this->assertSame(['SortOrder' => 2, 'IsCurrent' => 1], $byId[$tagOne->ID]);
+        $this->assertSame(['SortOrder' => 5, 'IsCurrent' => 0], $byId[$tagTwo->ID]);
+    }
+
+    /**
      * A has_many (or a many_many with no declared extraFields) must keep
      * the existing bare-id-array shape — the {"id","extraFields"} shape is
      * only for relations that actually have extra join-table data.
