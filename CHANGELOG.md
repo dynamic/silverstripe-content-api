@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Schema honesty flags: `api_computed_fields`/`api_import_owned_fields` per-class config marks
+  fields that accept a write but then silently overwrite it — recomputed by the model itself
+  (e.g. an `onBeforeWrite` trap) or owned by an external feed. Surfaced in `schema/$ClassRef` as
+  `computed`/`importOwned` (+ optional `note`) on the field entry. Advisory only — `writable` is
+  unaffected; pair with `api_protected_fields` to reject the write outright.
+
 ## [1.4.0] - 2026-07-17
 
 ### Added

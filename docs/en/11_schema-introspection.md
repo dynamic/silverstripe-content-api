@@ -45,7 +45,9 @@ One class's full payload contract:
   "classRef": "ElementContent", "className": "DNADesign\\Elemental\\Models\\ElementContent",
   "access": ["read", "create", "update"], "versioned": true, "externalIdField": "FixtureIdentifier",
   "fields": { "Title": { "type": "Varchar(255)", "writable": true },
-              "BackgroundColor": { "type": "Varchar(7)", "writable": true, "tokens": "palette" } },
+              "BackgroundColor": { "type": "Varchar(7)", "writable": true, "tokens": "palette" },
+              "MetaDescription": { "type": "Varchar(255)", "writable": true, "computed": true,
+                                    "note": "Auto-derived from content on save" } },
   "hasOne": { "Image": { "class": "SilverStripe\\Assets\\Image", "payload": "assetRef", "writable": true } },
   "hasMany": { "Panels": { "class": "App\\Model\\Panel", "writable": true } },
   "manyMany": { "Staff": { "class": "App\\Model\\StaffMember", "writable": false } }
@@ -57,6 +59,12 @@ One class's full payload contract:
   part of the relation, never independently). `writable` reflects the live
   guarded/allowlist decision (see [Security model](04_security-model.md)). `values` appears for
   `DBEnum` fields. `tokens` appears when the field is in `SchemaService.field_tokens`.
+  `computed`/`importOwned` (+ optional `note`) are **honesty flags**: a write to that field will be
+  accepted (`writable` is unaffected) but then silently overwritten — by the model itself
+  (`computed`, e.g. an `onBeforeWrite` trap recomputing a field from another) or by an external
+  feed (`importOwned`). Configure via `api_computed_fields`/`api_import_owned_fields` (see
+  [Configuration](02_configuration.md#per-exposed-class-config)); these are advisory only, so pair
+  with `api_protected_fields` if the write should be rejected outright rather than merely flagged.
 - `hasOne`: `payload` is one of `assetRef` (File subclass target), `link` (linkfield `Link`
   subclass target), or `recordRef` (anything else). For a **polymorphic** has_one, `writable`
   reflects the FK-and-Class-column pair check (`isPolymorphicRelationWritable()`) — never just

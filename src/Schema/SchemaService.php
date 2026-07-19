@@ -119,6 +119,12 @@ class SchemaService
         $schema = DataObject::getSchema();
         $tokens = (array) static::config()->get('field_tokens');
         $hasOneSpec = (array) $singleton->hasOne();
+        $computedFields = $this->normalizeFieldNotes(
+            (array) Config::inst()->get($className, 'api_computed_fields')
+        );
+        $importOwnedFields = $this->normalizeFieldNotes(
+            (array) Config::inst()->get($className, 'api_import_owned_fields')
+        );
 
         $fields = [];
 
@@ -160,6 +166,29 @@ class SchemaService
 
             if (isset($tokens[$name])) {
                 $field['tokens'] = $tokens[$name];
+            }
+
+            // Honesty flags: advisory only, do not affect `writable` above.
+            // A computed field (onBeforeWrite trap) or import-owned field
+            // (external feed) can accept a write and then silently clobber
+            // it — these flags let a client know before it wastes one. To
+            // also reject the write outright, use api_protected_fields. The
+            // two are independent (a field can be both), so each is checked
+            // on its own rather than as an if/elseif.
+            $note = null;
+
+            if (array_key_exists($name, $computedFields)) {
+                $field['computed'] = true;
+                $note = $computedFields[$name];
+            }
+
+            if (array_key_exists($name, $importOwnedFields)) {
+                $field['importOwned'] = true;
+                $note ??= $importOwnedFields[$name];
+            }
+
+            if ($note !== null) {
+                $field['note'] = $note;
             }
 
             $fields[$name] = $field;
@@ -213,6 +242,28 @@ class SchemaService
             'hasMany' => $many['hasMany'] ?? [],
             'manyMany' => $many['manyMany'] ?? [],
         ];
+    }
+
+    /**
+     * Normalizes an `api_computed_fields`/`api_import_owned_fields` config
+     * value into a field-name => ?note map. Accepts either a bare list of
+     * field names (`['Title', 'Rank']`) or a name => note map
+     * (`['Title' => 'Overwritten from ParentPage on save']`); a list entry
+     * carries no note.
+     */
+    protected function normalizeFieldNotes(array $config): array
+    {
+        $notes = [];
+
+        foreach ($config as $key => $value) {
+            if (is_int($key)) {
+                $notes[$value] = null;
+            } else {
+                $notes[$key] = $value;
+            }
+        }
+
+        return $notes;
     }
 
     protected function payloadKind(string $relationClass): string

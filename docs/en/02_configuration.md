@@ -72,6 +72,8 @@ Set directly on each DataObject class you expose — not on the module. These ar
 | `api_writable_relations` | `string[]` | `[]` | Allowlist of writable has_many/many_many relation names (a separate gate from `api_writable_fields`, which only covers db fields and has_one) |
 | `api_unknown_fields` | `'strict'\|'lenient'` | unset (falls back to `WriteApplicator.unknown_fields`) | Per-class override: `strict` rejects an unrecognized payload key with `UNKNOWN_FIELD`; `lenient` warns and continues |
 | `api_fields` | `string[]` | unset (all fields serialized) | `RecordSerializer` output whitelist. Entries may be db fields, relation names, **or `getFoo()` getter-backed properties** (getters are only honored when `api_fields` is explicitly set) |
+| `api_computed_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields recomputed by the model itself (e.g. an `onBeforeWrite` trap) — a write lands, then the model overwrites it in the same request. Surfaced as `computed: true` (+ optional `note`) in `SchemaService::classSchema()`. **Advisory only** — does not affect `writable`; pair with `api_protected_fields` to also reject the write |
+| `api_import_owned_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields owned by an external import/feed that will overwrite a client's write on its next sync. Surfaced as `importOwned: true` (+ optional `note`). Same advisory-only caveat as `api_computed_fields` |
 
 See [Security model](04_security-model.md) for how these combine into the guarded/allowlist
 decision, and [Write payloads](06_write-payloads.md) for the payload shapes they gate.
