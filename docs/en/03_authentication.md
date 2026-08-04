@@ -6,7 +6,7 @@ but `/content-api/v1` enforces it more strictly than colymba's own `/api` does.
 ## Minting tokens
 
 ```bash
-sake tasks:MintContentApiToken email=agent@example.com
+sake dev/tasks/MintContentApiToken email=agent@example.com
 ```
 
 `MintApiTokenTask` (command name `MintContentApiToken`) finds the member by `email`

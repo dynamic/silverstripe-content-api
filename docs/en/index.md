@@ -1,8 +1,9 @@
 # silverstripe-content-api documentation
 
-Content population layer for SilverStripe 6, built on
+Content population layer for SilverStripe 5.2+, built on
 [colymba/silverstripe-restfulapi](https://github.com/colymba/silverstripe-restfulapi) (the
-silverstripeltd-maintained SS6 line).
+silverstripeltd-maintained `feature/v5` line — see [Installation](00_installation.md)). This is
+the `ss5` branch; branch `1` targets SilverStripe 6.
 
 Two cooperating surfaces share one token and one models map:
 

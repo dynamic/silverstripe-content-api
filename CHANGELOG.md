@@ -39,6 +39,22 @@ All notable changes to this project are documented here. Format loosely follows
   upgrade message instead of falling through. Writes previously (incorrectly) accepted on an
   affected site now return 422.
 
+## [Unreleased] — ss5
+
+This branch tracks branch `1` (synced via `git merge origin/1`, never cherry-picked) and carries
+every entry above, plus the SS5-specific differences below. Baseline: SilverStripe `^5.2`, PHP
+`^8.1`. See the README's Branch policy section for what's allowed to permanently differ between
+the two branches.
+
+### Changed
+- Tasks invoke via SS5's legacy `sake dev/tasks/<Segment> key=value` syntax, not branch `1`'s SS6
+  `sake tasks:<Segment> --flag` syntax.
+- `colymba/silverstripe-restfulapi` comes from silverstripeltd's `feature/v5` branch (unreleased),
+  with a composer patch (`patches/colymba-restfulapi-ss5-removed-methods.patch`, applied via
+  `cweagans/composer-patches`) fixing 4 calls to methods removed in SilverStripe 4+
+  (`Member::login()`/`logout()`, `DataObject::stat()`). See
+  [docs/en/upstream-issues.md](docs/en/upstream-issues.md).
+
 ## [1.4.0] - 2026-07-17
 
 ### Added

@@ -1,0 +1,5 @@
+{
+  "checks": [
+    { "label": "ss5 doc drift (SS6 requirements / sake tasks: syntax)", "run": "scripts/check-doc-drift.sh" }
+  ]
+}

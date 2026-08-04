@@ -67,6 +67,21 @@ resolves the token itself rather than delegating the query-var-accepting
 `authenticate()`), so the fallback is closed on our endpoints; colymba's `/api`
 surface still accepts it.
 
+## 7. `feature/v5` calls 4 methods removed in SilverStripe 4+ — filed: [silverstripeltd#7](https://github.com/silverstripeltd/silverstripe-restfulapi/issues/7)
+
+`feature/v5` (this module's `ss5` branch depends on it) targets `silverstripe/framework: ^5.2`,
+but `TokenAuthenticator::login()`/`logout()` call `$member->login()`/`$member->logout()`, and
+`RESTfulAPI::api_access_config_check()` / `DefaultSerializer::formatDataObject()` call
+`$object->stat(...)` — all removed in SilverStripe 4+. This repo's own
+`feature/cms-6-compatibility` branch already carries the correct fix for all four
+(`IdentityStore::logIn()`/`logOut()`, `config()->get()`), with no SS6-only dependency — the fix
+would work unchanged on `feature/v5`.
+
+*Until upstream:* `ss5`'s `composer.json` declares a patch (via `cweagans/composer-patches`,
+`patches/colymba-restfulapi-ss5-removed-methods.patch`) applying the same four-line fix on top of
+`feature/v5`. Drop the patch once upstream backports it, or once a tagged release supersedes the
+branch entirely.
+
 ## Design note — our auth adapter does not call colymba's `authenticate()`
 
 Items 1, 5 and colymba's lax token-expiry window (`ApiTokenExpire > now −

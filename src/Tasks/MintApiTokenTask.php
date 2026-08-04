@@ -13,7 +13,7 @@ use SilverStripe\Security\Member;
  * colymba/silverstripe-restfulapi's TokenAuthenticator, so the token works on
  * both the /api and /content-api/v1 surfaces.
  *
- * Usage: `sake tasks:MintContentApiToken email=agent@example.com`
+ * Usage: `sake dev/tasks/MintContentApiToken email=agent@example.com`
  *
  * SS5-branch note: this file uses the legacy BuildTask::run($request)
  * signature (branch `1`'s SS6 line uses execute(InputInterface, PolyOutput))

@@ -26,7 +26,7 @@ use SilverStripe\Security\Permission;
  * needs an app-level canView()/canEdit() grant extension on the classes it
  * writes — that's application code this task can't inject.
  *
- * Usage: `sake tasks:SetupContentApiServiceAccount group="Content API Service Accounts"`
+ * Usage: `sake dev/tasks/SetupContentApiServiceAccount group="Content API Service Accounts"`
  * (add `populate=1` too if the account needs batch/compositions/asset writes/page actions).
  *
  * SS5-branch note: this file uses the legacy BuildTask::run($request)
@@ -99,6 +99,6 @@ class SetupServiceAccountTask extends BuildTask
         echo "This task provisions permission codes only. A service account also needs an "
             . "app-level canView()/canEdit() grant extension on the classes it writes — that's "
             . "application code this task can't inject. Assign a Member to this group, then mint "
-            . "a token: sake tasks:MintContentApiToken email=<member-email>\n";
+            . "a token: sake dev/tasks/MintContentApiToken email=<member-email>\n";
     }
 }

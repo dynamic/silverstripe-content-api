@@ -37,7 +37,7 @@ fallback in the first place.
 back a `publish: "none"` write before publishing — the natural "write draft, read back to
 verify, then publish" flow batch/compositions are designed to support. It doesn't require any
 CMS login capability, so the account stays API-scoped.
-`sake tasks:SetupContentApiServiceAccount` provisions both grants (plus `CONTENT_API_POPULATE`
+`sake dev/tasks/SetupContentApiServiceAccount` provisions both grants (plus `CONTENT_API_POPULATE`
 with `populate=1`) in one step — see [Quick start](01_quickstart.md#3-grant-permissions-and-mint-a-token).
 
 ## Class-level gate
