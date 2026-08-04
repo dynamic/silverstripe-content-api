@@ -1,9 +1,10 @@
 # silverstripe-content-api documentation
 
 Content population layer for SilverStripe 5.2+, built on
-[colymba/silverstripe-restfulapi](https://github.com/colymba/silverstripe-restfulapi) (the
-silverstripeltd-maintained `feature/v5` line — see [Installation](00_installation.md)). This is
-the `ss5` branch; branch `1` targets SilverStripe 6.
+[colymba/silverstripe-restfulapi](https://github.com/colymba/silverstripe-restfulapi) (via
+[dynamic/silverstripe-restfulapi](https://github.com/dynamic/silverstripe-restfulapi), a
+maintained SS5-compatible fork — see [Installation](00_installation.md)). This is the `ss5`
+branch; branch `1` targets SilverStripe 6.
 
 Two cooperating surfaces share one token and one models map:
 
@@ -24,7 +25,7 @@ Two cooperating surfaces share one token and one models map:
 
 | # | Page | What it covers |
 |---|---|---|
-| 00 | [Installation](00_installation.md) | Requirements, the colymba dev-branch install, optional integrations, upgrade notes |
+| 00 | [Installation](00_installation.md) | Requirements, the colymba fork install, optional integrations, upgrade notes |
 | 01 | [Quick start](01_quickstart.md) | Expose a class, mint a token, first calls on both surfaces |
 | 02 | [Configuration reference](02_configuration.md) | Every config option across every class, with defaults |
 | 03 | [Authentication](03_authentication.md) | Token model, minting, the hardened `/content-api/v1` auth check, colymba `/api` caveats |

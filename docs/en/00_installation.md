@@ -47,6 +47,15 @@ composer require dynamic/silverstripe-content-api
 
 Then run `dev/build flush=1` and continue to [Quick start](01_quickstart.md).
 
+**Already on the earlier composer-patch setup?** (`colymba/silverstripe-restfulapi:
+dev-feature/v5`, a `repositories` entry pointing at `silverstripeltd/silverstripe-restfulapi`,
+`cweagans/composer-patches` in `require` and `config.allow-plugins`): update your root
+composer.json to the form above — change the colymba constraint to `^5.0`, repoint the
+`repositories` entry at `dynamic/silverstripe-restfulapi`, and remove the `cweagans/composer-patches`
+requirement and `allow-plugins` entry (the fork's fix no longer needs a patch layered on top of
+it). Then `composer update colymba/silverstripe-restfulapi cweagans/composer-patches`, and delete
+`patches.lock.json` if it was committed.
+
 ## Upgrading from 1.0.x
 
 1.1.0 replaced the module's own auth with colymba's:

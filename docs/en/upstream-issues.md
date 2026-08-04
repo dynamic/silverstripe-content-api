@@ -1,17 +1,19 @@
 # Upstream support workstream — colymba/silverstripe-restfulapi
 
 This module deliberately builds on the silverstripeltd-maintained line of
-`colymba/silverstripe-restfulapi`. The gaps below are all handled inside this module or a
-Dynamic-maintained fork today (noted per item) — **not** filed as issues or PRs against any
-third-party repo (`silverstripeltd/silverstripe-restfulapi`, `colymba/silverstripe-restfulapi`, or
-otherwise); that's a Dynamic policy, not a reflection on either project. Where an item references
-an older issue number filed before that policy existed, the reference is historical — it was not
-re-filed and should not be treated as an open channel.
+`colymba/silverstripe-restfulapi`. Items 1–6 below were filed against
+`silverstripeltd/silverstripe-restfulapi` on 2026-07-10 and closed by the maintainer on 2026-07-12
+— that history is kept for reference, since the write-ups still describe real gaps this module
+works around, but treat the linked issues as closed, not as open channels. **Dynamic's current
+policy is not to file issues or PRs against third-party repos** — item 7 below was briefly filed
+under the old approach and closed the same day once that policy was clarified; nothing has been
+filed there since.
 
-Response time on the silverstripeltd fork specifically has been slow to nonexistent — their own
-PR proposing `feature/cms-6-compatibility` into `main` sat roughly 11 months with zero comments as
-of when item 7 below was found. This module carries its own workarounds (`WriteGuardExtension`,
-the `dynamic/silverstripe-restfulapi` fork) as the practical default, not a stopgap pending an
+Response time on the silverstripeltd fork specifically has been slow to nonexistent —
+`silverstripeltd#1` (their own PR proposing `feature/cms-6-compatibility` into their own `main`,
+not into colymba's original repo) sat roughly 11 months with zero comments as of when item 7 below
+was found. This module carries its own workarounds (`WriteGuardExtension`, the
+`dynamic/silverstripe-restfulapi` fork) as the practical default, not a stopgap pending an
 imminent upstream fix.
 
 ## 1. Opt-in hashed token storage — filed: [silverstripeltd#2](https://github.com/silverstripeltd/silverstripe-restfulapi/issues/2)
@@ -73,7 +75,7 @@ resolves the token itself rather than delegating the query-var-accepting
 `authenticate()`), so the fallback is closed on our endpoints; colymba's `/api`
 surface still accepts it.
 
-## 7. `feature/v5` calls 4 methods removed in SilverStripe 4+ — carried as a maintained fork, not filed upstream
+## 7. `feature/v5` calls 4 methods removed in SilverStripe 4+ — carried as a maintained fork (briefly filed as [silverstripeltd#7](https://github.com/silverstripeltd/silverstripe-restfulapi/issues/7), closed same day)
 
 `silverstripeltd/silverstripe-restfulapi`'s `feature/v5` targets `silverstripe/framework: ^5.2`,
 but `TokenAuthenticator::login()`/`logout()` call `$member->login()`/`$member->logout()`, and
@@ -84,15 +86,14 @@ branch, on the same repo) already carries the correct fix for all four
 same fix applied to the test suite (`Member::currentUserID()`/`currentUser()`, also removed in
 SilverStripe 5, replaced with `Security::getCurrentUser()`).
 
-`silverstripeltd`'s own PR against their upstream (proposing `feature/cms-6-compatibility` into
-`main`) sat with zero response for roughly 11 months as of when this was found — not treated as
-a live channel to route a fix through.
+`silverstripeltd`'s own `feature/cms-6-compatibility` → `main` PR (internal to their own repo, not
+against colymba's original one) sat with zero response for roughly 11 months as of when this was
+found — not treated as a live channel to route a fix through.
 
 **Carried as [dynamic/silverstripe-restfulapi](https://github.com/dynamic/silverstripe-restfulapi)**,
 branch `5` (Actions disabled), tagged `5.0.0` — a maintained fork this module depends on directly
 (`colymba/silverstripe-restfulapi: ^5.0`), not a composer patch layered on top of silverstripeltd's
-branch. Ports the exact fix already proven on `feature/cms-6-compatibility`. Not filed as an issue
-or PR against any third-party repo.
+branch. Ports the exact fix already proven on `feature/cms-6-compatibility`.
 
 ## Design note — our auth adapter does not call colymba's `authenticate()`
 
