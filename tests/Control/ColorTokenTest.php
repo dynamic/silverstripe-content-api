@@ -13,6 +13,8 @@ class ColorTokenTest extends ContentApiTestCase
 {
     private const PROVIDER = 'Dynamic\\Essentials\\Service\\ColorConfigurationProvider';
 
+    private const RESOLVER = 'Dynamic\\Essentials\\Service\\ColorTokenResolver';
+
     private string $adminToken;
 
     protected function setUp(): void
@@ -100,5 +102,47 @@ class ColorTokenTest extends ContentApiTestCase
         $element = ApiTestElement::get()->filter('FixtureIdentifier', 'color-e3')->first();
         $decoded = json_decode((string) $element->ButtonColor, true);
         $this->assertIsArray($decoded, 'ButtonColor stores the resolved JSON combo blob');
+    }
+
+    /**
+     * The staggered-upgrade scenario: ColorConfigurationProvider exists (so
+     * essentials.yml's Only: classexists gate registers this transformer and
+     * SchemaService advertises the token) but ColorTokenResolver predates it
+     * (older essentials-tools). Confirmed against mathedleadership, which
+     * runs essentials-tools 2.2.0 — has the former, not the latter.
+     *
+     * Before this fix: supports() returned false for this combination, so
+     * WriteApplicator::transformValue() fell through every transformer and
+     * `return $value` persisted the literal "$palette(0)" string with a 200
+     * response — silent corruption, not a rejected write. This test only
+     * runs where that exact combination exists; on this testbed (both
+     * classes installed) it's skipped, and runs for real against
+     * mathedleadership's stack.
+     */
+    public function testMissingResolverFailsTheWriteInsteadOfPersistingTheLiteral(): void
+    {
+        if (class_exists(ColorTokenTest::RESOLVER)) {
+            $this->markTestSkipped(
+                'ColorTokenResolver is installed here — this test targets the staggered-upgrade '
+                    . 'case where it is absent'
+            );
+        }
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'color-e4',
+                    'fields' => ['Title' => 'Stale resolver', 'BackgroundColor' => '$palette(0)'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('TOKEN_RESOLUTION_FAILED', $body['data']['results'][0]['error']['code']);
+        $this->assertNull(
+            ApiTestElement::get()->filter('FixtureIdentifier', 'color-e4')->first(),
+            'no literal "$palette(0)" string persisted'
+        );
     }
 }
