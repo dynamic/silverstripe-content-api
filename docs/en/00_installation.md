@@ -53,8 +53,10 @@ dev-feature/v5`, a `repositories` entry pointing at `silverstripeltd/silverstrip
 composer.json to the form above — change the colymba constraint to `^5.0`, repoint the
 `repositories` entry at `dynamic/silverstripe-restfulapi`, and remove the `cweagans/composer-patches`
 requirement and `allow-plugins` entry (the fork's fix no longer needs a patch layered on top of
-it). Then `composer update colymba/silverstripe-restfulapi cweagans/composer-patches`, and delete
-`patches.lock.json` if it was committed.
+it). Then `composer remove cweagans/composer-patches && composer update
+colymba/silverstripe-restfulapi` (a plain `composer update` on a package no longer in `require`
+just warns and leaves it in the lock), and delete `patches.lock.json` if it was committed.
+*(Remove this whole note once no consumer of this module is still on the old setup.)*
 
 ## Upgrading from 1.0.x
 

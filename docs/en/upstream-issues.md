@@ -1,18 +1,21 @@
 # Upstream support workstream — colymba/silverstripe-restfulapi
 
-This module deliberately builds on the silverstripeltd-maintained line of
-`colymba/silverstripe-restfulapi`. Items 1–6 below were filed against
-`silverstripeltd/silverstripe-restfulapi` on 2026-07-10 and closed by the maintainer on 2026-07-12
-— that history is kept for reference, since the write-ups still describe real gaps this module
-works around, but treat the linked issues as closed, not as open channels. **Dynamic's current
-policy is not to file issues or PRs against third-party repos** — item 7 below was briefly filed
-under the old approach and closed the same day once that policy was clarified; nothing has been
-filed there since.
+This module builds on `colymba/silverstripe-restfulapi` via
+[dynamic/silverstripe-restfulapi](https://github.com/dynamic/silverstripe-restfulapi), Dynamic's
+maintained SS5-compatible fork of silverstripeltd's `feature/v5` branch (see item 7 and
+[Installation](00_installation.md)). Items 1–5 below were filed against
+`silverstripeltd/silverstripe-restfulapi` on 2026-07-10 and self-closed by Dynamic on 2026-07-12 —
+that history is kept for reference, since the write-ups still describe real gaps this module works
+around, but treat the linked issues as closed, not as open channels. Item 6 was never filed as an
+issue, only proposed here. **Dynamic's current policy is not to file issues or PRs against
+third-party repos** — item 7 below was briefly filed under the old approach and self-closed the
+same day once that policy was clarified; nothing has been filed there since.
 
 Response time on the silverstripeltd fork specifically has been slow to nonexistent —
-`silverstripeltd#1` (their own PR proposing `feature/cms-6-compatibility` into their own `main`,
-not into colymba's original repo) sat roughly 11 months with zero comments as of when item 7 below
-was found. This module carries its own workarounds (`WriteGuardExtension`, the
+[silverstripeltd#1](https://github.com/silverstripeltd/silverstripe-restfulapi/pull/1) (their own
+PR proposing `feature/cms-6-compatibility` into their own `main`, not into colymba's original
+repo, opened 2025-09-05) had sat roughly 11 months with zero comments as of when item 7 below was
+found (2026-08-04). This module carries its own workarounds (`WriteGuardExtension`, the
 `dynamic/silverstripe-restfulapi` fork) as the practical default, not a stopgap pending an
 imminent upstream fix.
 
@@ -86,9 +89,8 @@ branch, on the same repo) already carries the correct fix for all four
 same fix applied to the test suite (`Member::currentUserID()`/`currentUser()`, also removed in
 SilverStripe 5, replaced with `Security::getCurrentUser()`).
 
-`silverstripeltd`'s own `feature/cms-6-compatibility` → `main` PR (internal to their own repo, not
-against colymba's original one) sat with zero response for roughly 11 months as of when this was
-found — not treated as a live channel to route a fix through.
+See the intro above for `silverstripeltd`'s own response-time track record on this repo — not
+treated as a live channel to route a fix through.
 
 **Carried as [dynamic/silverstripe-restfulapi](https://github.com/dynamic/silverstripe-restfulapi)**,
 branch `5` (Actions disabled), tagged `5.0.0` — a maintained fork this module depends on directly

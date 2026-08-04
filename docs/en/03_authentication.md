@@ -70,7 +70,8 @@ for the full table.
 
 Everything below applies **only** to colymba's own `/api` routes (generic CRUD, `api/auth/*`) —
 none of it applies to `/content-api/v1`, which sidesteps `authenticate()` entirely (see above).
-Tracked and being addressed upstream in [Upstream issues](upstream-issues.md).
+Documented (not actively tracked upstream — see [Upstream issues](upstream-issues.md) for why) as
+caveats this module and its consumers need to work around themselves.
 
 - **Plaintext token storage.** `Member.ApiToken` is stored unhashed — anyone with CMS or DB
   access to Member records can read live tokens.
@@ -84,8 +85,7 @@ Tracked and being addressed upstream in [Upstream issues](upstream-issues.md).
 - ⚠️ **`api/auth/logout?email=…` is unauthenticated upstream** — any caller can expire a known
   service account's token (a DoS on integrations). Restrict `/api/auth/*` at the network edge,
   or provision service tokens via `MintContentApiToken` and avoid `logout` for anything you
-  depend on. Filed as
-  [silverstripeltd#6](https://github.com/silverstripeltd/silverstripe-restfulapi/issues/6).
+  depend on. See [Upstream issues](upstream-issues.md) item 5.
 
-Treat `/api` as a trusted server-to-server surface until these land upstream. `/content-api/v1`
-is unaffected by all five points.
+Treat `/api` as a trusted server-to-server surface — these are documented workarounds, not
+pending upstream fixes. `/content-api/v1` is unaffected by all five points.
