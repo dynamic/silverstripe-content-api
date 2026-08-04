@@ -64,7 +64,7 @@
         ],
         "patches": {
             "colymba/silverstripe-restfulapi": {
-                "Fix Member::login()/logout() and DataObject::stat() calls removed in SilverStripe 4+ (silverstripeltd's own feature/cms-6-compatibility branch already has this fix — see docs/en/upstream-issues.md)": "https://raw.githubusercontent.com/dynamic/silverstripe-content-api/ss5/patches/colymba-restfulapi-ss5-removed-methods.patch"
+                "Fix Member::login()/logout() and DataObject::stat() calls removed in SilverStripe 4+ (silverstripeltd's own feature/cms-6-compatibility branch already has this fix — see docs/en/upstream-issues.md)": "https://raw.githubusercontent.com/dynamic/silverstripe-content-api/b99b52612ccc74fea2d96e632760a1290a5cfa07/patches/colymba-restfulapi-ss5-removed-methods.patch"
             }
         }
     },
