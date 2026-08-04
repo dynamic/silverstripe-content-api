@@ -136,6 +136,18 @@ Populate-fixtures resolver, which logged and left the literal token string in pl
 - Unknown relation → `422 UNKNOWN_RELATION`; not in the allowlist → `422 READONLY_FIELD`;
   malformed `mode`/`items` → `400 PAYLOAD_INVALID`.
 
+`extraFields` round-trips on read too: a GET response serializes a many_many relation that
+carries extra join data as `[{"id", "extraFields"}, ...]` (`RecordSerializer`), not a bare id
+array — the same shape `items` accepts on write. Two relation shapes carry extra data:
+- **Classic `many_many_extraFields`**: a config map of field name → db type on the *owning*
+  class (e.g. `Tags` above).
+- **`many_many through`**: a `many_many` entry declared as `['through' => JoinClass, 'from' =>
+  ..., 'to' => ...]` — the extra fields are real `$db` columns on the join DataObject itself
+  (e.g. a `ProductSizeGTINProduct` join carrying `IsCurrent`/`SortOrder`). Reads and writes use
+  the identical `{"id", "extraFields"}` shape either way; `schema/$ClassRef` advertises the
+  field names for both cases under the relation's `extraFields` key (see
+  [Schema introspection](11_schema-introspection.md)).
+
 ## `externalId`
 
 Sets/matches the [external id](#external-ids) column for this write's target record.

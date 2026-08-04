@@ -10,6 +10,7 @@ use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\ManyManyThroughList;
 use SilverStripe\Versioned\Versioned;
 use Throwable;
 
@@ -20,10 +21,19 @@ use Throwable;
  * {
  *   "id": 42, "classRef": "ElementCard", "className": "...", "externalId": "home-hero",
  *   "fields": { "Title": "Welcome", "Sort": 2 },
- *   "relations": { "Image": 91, "Slides": [3, 4] },
+ *   "relations": { "Image": 91, "Slides": [3, 4],
+ *                   "Tags": [ { "id": 5, "extraFields": { "SortOrder": 1 } } ] },
  *   "stage": { "draft": true, "live": true, "modifiedOnDraft": false }
  * }
  * ```
+ *
+ * A many_many relation declaring `many_many_extraFields` (like `Tags` above)
+ * serializes each item as `{"id", "extraFields"}` instead of a bare id, so
+ * the join-table data round-trips — every other has_many/many_many stays a
+ * bare id array. A many_many **through** relation (backed by an explicit
+ * join DataObject, e.g. `['through' => X, 'from' => Y, 'to' => Z]`) gets the
+ * same `{"id", "extraFields"}` treatment, reading the join object's own
+ * `$db` fields instead of a `many_many_extraFields` map.
  *
  * Field names stay PascalCase (native SilverStripe names) so GET responses
  * round-trip directly into PATCH/composition payloads. A per-class
@@ -217,7 +227,28 @@ class RecordSerializer
                 // still be discoverable, not indistinguishable from a
                 // genuinely empty relation (#22).
                 try {
-                    $relations[$name] = array_map('intval', $record->{$name}()->column('ID'));
+                    $list = $record->{$name}();
+
+                    if ($list instanceof ManyManyThroughList) {
+                        // A through relation's extra data lives as real $db
+                        // fields on the join class, not a
+                        // many_many_extraFields map — getExtraFields() here
+                        // returns that join class's own $db config, so no
+                        // FK/has_one columns leak in.
+                        $extraFieldNames = array_keys((array) $list->getExtraFields());
+
+                        $relations[$name] = $extraFieldNames !== []
+                            ? $this->serializeManyManyWithExtraFields($list, $extraFieldNames, fromJoin: true)
+                            : array_map('intval', $list->column('ID'));
+                    } else {
+                        $extraFields = isset($manyMany[$name])
+                            ? $schema->manyManyExtraFieldsForComponent($className, $name)
+                            : null;
+
+                        $relations[$name] = $extraFields
+                            ? $this->serializeManyManyWithExtraFields($list, array_keys($extraFields))
+                            : array_map('intval', $list->column('ID'));
+                    }
                 } catch (Throwable $exception) {
                     $this->warnOnceForRelation(
                         sprintf('read:%s:%s', $className, $name),
@@ -272,6 +303,47 @@ class RecordSerializer
     private function recordLabel(string $className, DataObject $record): string
     {
         return sprintf('%s#%d', $className, (int) $record->ID);
+    }
+
+    /**
+     * `{"id", "extraFields"}` per item for a many_many relation carrying
+     * extra join data — a bare id array would silently drop it (e.g.
+     * SortOrder) even though `WriteApplicator` can write it, the reverse of
+     * the `{"id", "class"}` shape `WriteApplicator::resolveRelationItem()`
+     * already accepts on write. Emitted only for relations that actually
+     * carry extra data — every other many_many/has_many keeps the existing
+     * bare-id-array shape unchanged.
+     *
+     * Covers two shapes of "extra data on a relation":
+     * - Classic `many_many_extraFields`: the values are columns on the
+     *   *item* itself (SilverStripe aliases them there for this case).
+     * - `many_many through`: the values live on the item's own join
+     *   DataObject, reachable via `getJoin()` — pass `fromJoin: true`.
+     *
+     * @return array<int, array{id: int, extraFields: array<string, mixed>}>
+     */
+    private function serializeManyManyWithExtraFields(
+        iterable $list,
+        array $extraFieldNames,
+        bool $fromJoin = false
+    ): array {
+        $items = [];
+
+        foreach ($list as $item) {
+            $source = $fromJoin ? $item->getJoin() : $item;
+            $extraValues = [];
+
+            foreach ($extraFieldNames as $fieldName) {
+                $extraValues[$fieldName] = $source ? $source->getField($fieldName) : null;
+            }
+
+            $items[] = [
+                'id' => (int) $item->ID,
+                'extraFields' => $extraValues,
+            ];
+        }
+
+        return $items;
     }
 
     /**

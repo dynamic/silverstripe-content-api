@@ -39,6 +39,7 @@ re-POSTing the same payload is safe and idempotent (updates existing records, ne
 | `convertTo` | Short class ref; changes the page's class via `newClassInstance()` if it differs. No-op if already that class |
 | `force` | Required `true` to convert the site home page (`403 HOMEPAGE_CONVERSION_FORBIDDEN` otherwise) |
 | `areaRelation` | Default `"ElementalArea"`. Use `"ElementalHomePage"` for HomePage-style page types |
+| `elementsRelation` | Default `"Elements"`. The area's has_many relation to its child elements — only needed for a custom area class that names it differently |
 | `fields` | Sparse page field updates — no populate-style whole-field-map copy |
 
 The page is created with `CONTENT_API_POPULATE` and the same `canCreate()` context-hydration as

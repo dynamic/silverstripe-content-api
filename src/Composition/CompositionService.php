@@ -110,6 +110,7 @@ class CompositionService
 
         // 2. Area
         [$area, $areaCreated] = $this->resolveArea($page, (string) ($pageSpec['areaRelation'] ?? 'ElementalArea'));
+        $elementsRelation = (string) ($pageSpec['elementsRelation'] ?? 'Elements');
 
         // 3. Assets
         $assetResults = [];
@@ -125,7 +126,7 @@ class CompositionService
         // 5. Prune
         $pruneSpec = (array) ($payload['prune'] ?? []);
         $pruned = !empty($pruneSpec['enabled'])
-            ? $this->prune($area, $elementEntries, (string) ($pruneSpec['scope'] ?? 'managed'))
+            ? $this->prune($area, $elementEntries, (string) ($pruneSpec['scope'] ?? 'managed'), $elementsRelation)
             : [];
 
         // 6. Publish
@@ -653,8 +654,12 @@ class CompositionService
      * `managed` (default): only elements carrying an external id are
      * candidates — hand-authored CMS content is invisible to prune.
      */
-    protected function prune(DataObject $area, array $entries, string $scope): array
-    {
+    protected function prune(
+        DataObject $area,
+        array $entries,
+        string $scope,
+        string $elementsRelation = 'Elements'
+    ): array {
         if (!in_array($scope, ['managed', 'all'], true)) {
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'prune.scope must be "managed" or "all".');
         }
@@ -667,7 +672,7 @@ class CompositionService
         $field = $this->externalIds->fieldName();
         $pruned = [];
 
-        foreach ($area->getComponents('Elements') as $element) {
+        foreach ($area->getComponents($elementsRelation) as $element) {
             $externalId = $element->hasField($field) ? $element->getField($field) : null;
 
             if ($scope === 'managed' && ($externalId === null || $externalId === '')) {

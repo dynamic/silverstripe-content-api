@@ -3,6 +3,42 @@
 All notable changes to this project are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **many_many `through` support**: a many_many relation backed by an explicit join DataObject
+  (`['through' => JoinClass, 'from' => ..., 'to' => ...]`, e.g. a `ProductSizeGTINProduct` join
+  carrying `IsCurrent`/`SortOrder`) now round-trips its extra join data the same way a classic
+  `many_many_extraFields` relation does: `RecordSerializer` emits `{"id", "extraFields"}` per
+  item (reading the join object's own `$db` fields via `getJoin()`), and `schema/$ClassRef`
+  advertises the field names under the relation's new `extraFields` key — for both the through
+  and classic case, which previously went unreported entirely.
+- Schema honesty flags: `api_computed_fields`/`api_import_owned_fields` per-class config marks
+  fields that accept a write but then silently overwrite it — recomputed by the model itself
+  (e.g. an `onBeforeWrite` trap) or owned by an external feed. Surfaced in `schema/$ClassRef` as
+  `computed`/`importOwned` (+ optional `note`) on the field entry. Advisory only — `writable` is
+  unaffected; pair with `api_protected_fields` to reject the write outright.
+
+### Fixed
+- `WriteApplicator` and `SchemaService` resolved a many_many `through` relation's target class
+  by reading the config's `to` value directly as if it were a class name — it's actually the
+  *name* of a has_one on the join class (framework
+  `DataObjectSchema::parseManyManyComponent()`). A through relation with a `to` value that
+  didn't happen to collide with a real class name (the common case) made every write to it
+  throw `ReflectionException: Class "..." does not exist`, and its schema entry reported a
+  bogus `class`. Both now resolve the real target via
+  `DataObject::getSchema()->manyManyComponent()`.
+- **(#61)** `ColorTokenTransformer::supports()` required both `ColorConfigurationProvider` and
+  `ColorTokenResolver` to exist, but `essentials.yml`'s registration gate only checks the former.
+  On a site with the older class but not the newer one (a real staggered-upgrade state — the two
+  packages have no hard dependency on each other), the schema advertised `$palette()`/`$button()`
+  token support, `supports()` silently declined the write, and `WriteApplicator` fell through to
+  persisting the literal token string with a 200 response. `supports()` now claims the write
+  whenever `ColorConfigurationProvider` exists and the value matches the token shape;
+  `transform()` checks for `ColorTokenResolver` first and throws `TOKEN_RESOLUTION_FAILED` with an
+  upgrade message instead of falling through. Writes previously (incorrectly) accepted on an
+  affected site now return 422.
+
 ## [1.4.0] - 2026-07-17
 
 ### Added

@@ -80,6 +80,40 @@ class BatchTest extends ContentApiTestCase
         $this->assertNotNull(ApiTestObject::get()->filter('FixtureIdentifier', 'iso-3')->first());
     }
 
+    /**
+     * Regression: RecordWriter::write() used to persist the record before
+     * applying relations, so a relation that fails to resolve (e.g. a
+     * nonexistent related id) left a half-written draft record behind even
+     * though the op reports "error" — corrupting the retry-failed-indices
+     * contract a non-atomic batch caller relies on. The record write and its
+     * relation writes must land or fail together.
+     */
+    public function testCreateOpLeavesNoRecordWhenARelationFailsToResolve(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'relation-fail',
+                    'fields' => ['Title' => 'Should Not Persist'],
+                    'relations' => [
+                        'Children' => ['mode' => 'set', 'items' => [999999999]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'transport succeeds even with op errors');
+        $this->assertSame('NOT_FOUND', $body['data']['results'][0]['error']['code']);
+        $this->assertNull(
+            ApiTestObject::get()->filter('FixtureIdentifier', 'relation-fail')->first(),
+            'a relation failure must roll back the record write too, not just report an error'
+        );
+    }
+
     public function testAtomicBatchRollsBack(): void
     {
         $response = $this->apiPost('batch', [
@@ -649,6 +683,45 @@ class BatchTest extends ContentApiTestCase
         $this->assertNull($body['error']);
         $this->assertSame(1, $record->Children()->count());
         $this->assertSame(3, (int) $record->Tags()->first()->SortOrder);
+    }
+
+    /**
+     * A many_many `through` relation accepts the same {"id","extraFields"}
+     * write shape as the classic many_many_extraFields case — confirms the
+     * write path needed no code change: WriteApplicator already resolves
+     * the through target class and ManyManyThroughList::add() writes
+     * extraFields onto the join record.
+     */
+    public function testThroughRelationExtraFieldsRoundTripOnWrite(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['ThroughTags']);
+
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $tag = $this->objFromFixture(ApiTestTag::class, 'tagOne');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => [
+                        'ThroughTags' => [
+                            'mode' => 'add',
+                            'items' => [
+                                ['id' => (int) $tag->ID, 'extraFields' => ['SortOrder' => 4, 'IsCurrent' => true]],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+
+        $join = $record->ThroughTags()->first()->getJoin();
+        $this->assertSame(4, (int) $join->SortOrder);
+        $this->assertTrue((bool) $join->IsCurrent);
     }
 
     public function testUnlistedAndUnknownRelations(): void

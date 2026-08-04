@@ -7,10 +7,10 @@ use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
+use Dynamic\ContentApi\Write\DbTransaction;
 use Dynamic\ContentApi\Write\RecordWriter;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
-use SilverStripe\ORM\DB;
 use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
 
@@ -66,9 +66,9 @@ class BatchProcessor
         $outcome = null;
 
         try {
-            DB::get_conn()->withTransaction(function () use ($operations, $defaultPublish, $member, &$outcome) {
+            DbTransaction::run(function () use ($operations, $defaultPublish, $member, &$outcome) {
                 $outcome = $this->run($operations, $defaultPublish, $member, true);
-            }, null, false, true);
+            });
         } catch (BatchAbortException $aborted) {
             $result = $aborted->partialOutcome;
             $result['rolledBack'] = true;

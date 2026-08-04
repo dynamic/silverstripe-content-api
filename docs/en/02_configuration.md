@@ -28,10 +28,34 @@ from colymba's.
 | Key | Default | Purpose |
 |---|---|---|
 | `models` | `[]` | Content-api-only short-ref → FQCN map. Merged **over** colymba's `DefaultQueryHandler.models` (this module's entries win per key on conflict) |
+| `discovery_roots` | `[]` | FQCNs (e.g. `BaseElement::class`, `SiteTree::class`) to auto-map every concrete subclass of, without a hand-written `models:` entry per class. Off by default — entirely opt-in |
+| `discovery_exclude` | `[]` | Additional FQCNs (and their subclasses) to skip during discovery, on top of the mandatory denylist (`Member`, `Group`, `Permission`, etc. — not configurable, can't be relaxed away) |
+| `discovery_write_policy` | `'off'\|'read'` | `'off'` | Verbs granted to a class reached **only** via discovery, carrying no `api_access` of its own. `'read'` grants read-only. There is no write-granting value — a discovered class's writable fields would have to be inferred, the same mistake `api_writable_fields` hoisting already caused once (#27); writes always require an explicit `api_writable_fields` on the class |
 
 `ClassRegistry::VERBS` (not configurable, informational): `read`, `create`, `update`, `delete`,
 `action`. Colymba-style `api_access: 'GET,POST'` values are mapped `GET→read`, `POST→create`,
 `PUT`/`PATCH→update`, `DELETE→delete`; a bare verb name (`action`) is also accepted directly.
+
+### Auto-discovery
+
+A class with its own explicit `api_access`/`content_api_access` always uses that, whether or not
+it's also reachable via `discovery_roots` — discovery only ever fills the gap when neither is set.
+Runtime safety doesn't come from the map itself: every operation still passes through
+`canView()`/`canEdit()` and `WriteApplicator::isFieldWritable()`'s denylist regardless of how a
+class reached the map, which is what makes discovery safe to automate for reads.
+
+Discovery does **not** auto-apply `ExternalIdentifierExtension` — confirmed by a live test that
+adding an extension at request time doesn't reliably affect the schema `dev/build` already
+computed. A discovered class is read-addressable by numeric id only until a project applies the
+extension to it explicitly via normal YAML (a one-line addition, not the full exposure block).
+
+```yaml
+Dynamic\ContentApi\Registry\ClassRegistry:
+  discovery_roots:
+    - DNADesign\Elemental\Models\BaseElement
+    - SilverStripe\CMS\Model\SiteTree
+  discovery_write_policy: 'read'
+```
 
 ## Per-exposed-class config
 
@@ -48,6 +72,8 @@ Set directly on each DataObject class you expose — not on the module. These ar
 | `api_writable_relations` | `string[]` | `[]` | Allowlist of writable has_many/many_many relation names (a separate gate from `api_writable_fields`, which only covers db fields and has_one) |
 | `api_unknown_fields` | `'strict'\|'lenient'` | unset (falls back to `WriteApplicator.unknown_fields`) | Per-class override: `strict` rejects an unrecognized payload key with `UNKNOWN_FIELD`; `lenient` warns and continues |
 | `api_fields` | `string[]` | unset (all fields serialized) | `RecordSerializer` output whitelist. Entries may be db fields, relation names, **or `getFoo()` getter-backed properties** (getters are only honored when `api_fields` is explicitly set) |
+| `api_computed_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields recomputed by the model itself (e.g. an `onBeforeWrite` trap) — a write lands, then the model overwrites it in the same request. Surfaced as `computed: true` (+ optional `note`) in `SchemaService::classSchema()`. **Advisory only** — does not affect `writable`; pair with `api_protected_fields` to also reject the write |
+| `api_import_owned_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields owned by an external import/feed that will overwrite a client's write on its next sync. Surfaced as `importOwned: true` (+ optional `note`). Same advisory-only caveat as `api_computed_fields` |
 
 See [Security model](04_security-model.md) for how these combine into the guarded/allowlist
 decision, and [Write payloads](06_write-payloads.md) for the payload shapes they gate.
