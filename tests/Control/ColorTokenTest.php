@@ -4,6 +4,8 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
+use Dynamic\ContentApi\Write\Transformers\ColorTokenTransformer;
+use SilverStripe\Core\Config\Config;
 
 /**
  * Runs only where dynamic/silverstripe-essentials-tools is installed (e.g.
@@ -12,8 +14,6 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 class ColorTokenTest extends ContentApiTestCase
 {
     private const PROVIDER = 'Dynamic\\Essentials\\Service\\ColorConfigurationProvider';
-
-    private const RESOLVER = 'Dynamic\\Essentials\\Service\\ColorTokenResolver';
 
     private string $adminToken;
 
@@ -108,25 +108,26 @@ class ColorTokenTest extends ContentApiTestCase
      * The staggered-upgrade scenario: ColorConfigurationProvider exists (so
      * essentials.yml's Only: classexists gate registers this transformer and
      * SchemaService advertises the token) but ColorTokenResolver predates it
-     * (older essentials-tools). Confirmed against mathedleadership, which
+     * (older essentials-tools). Confirmed real on mathedleadership, which
      * runs essentials-tools 2.2.0 — has the former, not the latter.
      *
      * Before this fix: supports() returned false for this combination, so
      * WriteApplicator::transformValue() fell through every transformer and
      * `return $value` persisted the literal "$palette(0)" string with a 200
-     * response — silent corruption, not a rejected write. This test only
-     * runs where that exact combination exists; on this testbed (both
-     * classes installed) it's skipped, and runs for real against
-     * mathedleadership's stack.
+     * response — silent corruption, not a rejected write.
+     *
+     * This testbed has both classes installed, so the scenario is simulated
+     * by pointing ColorTokenTransformer.color_token_resolver_class at a
+     * class that doesn't exist — SapphireTest resets Config between tests,
+     * so this doesn't leak into the other tests in this file.
      */
     public function testMissingResolverFailsTheWriteInsteadOfPersistingTheLiteral(): void
     {
-        if (class_exists(ColorTokenTest::RESOLVER)) {
-            $this->markTestSkipped(
-                'ColorTokenResolver is installed here — this test targets the staggered-upgrade '
-                    . 'case where it is absent'
-            );
-        }
+        Config::modify()->set(
+            ColorTokenTransformer::class,
+            'color_token_resolver_class',
+            'Dynamic\\Essentials\\Service\\ColorTokenResolverDoesNotExist'
+        );
 
         $body = $this->decode($this->apiPost('batch', [
             'operations' => [

@@ -28,6 +28,16 @@ All notable changes to this project are documented here. Format loosely follows
   throw `ReflectionException: Class "..." does not exist`, and its schema entry reported a
   bogus `class`. Both now resolve the real target via
   `DataObject::getSchema()->manyManyComponent()`.
+- **(#61)** `ColorTokenTransformer::supports()` required both `ColorConfigurationProvider` and
+  `ColorTokenResolver` to exist, but `essentials.yml`'s registration gate only checks the former.
+  On a site with the older class but not the newer one (a real staggered-upgrade state — the two
+  packages have no hard dependency on each other), the schema advertised `$palette()`/`$button()`
+  token support, `supports()` silently declined the write, and `WriteApplicator` fell through to
+  persisting the literal token string with a 200 response. `supports()` now claims the write
+  whenever `ColorConfigurationProvider` exists and the value matches the token shape;
+  `transform()` checks for `ColorTokenResolver` first and throws `TOKEN_RESOLUTION_FAILED` with an
+  upgrade message instead of falling through. Writes previously (incorrectly) accepted on an
+  affected site now return 422.
 
 ## [1.4.0] - 2026-07-17
 

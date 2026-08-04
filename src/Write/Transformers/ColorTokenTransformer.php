@@ -28,7 +28,14 @@ use SilverStripe\ORM\DataObject;
  * resolver's neutral `ColorTokenResult` onto that throw policy, preserving
  * this class's original three error messages verbatim.
  *
- * Registered only when essentials-tools is installed (essentials.yml).
+ * Registered only when essentials-tools is installed (essentials.yml) — but
+ * essentials.yml's gate checks ColorConfigurationProvider only, not
+ * ColorTokenResolver (the two have no hard dependency on each other, so a
+ * staggered upgrade can have one without the other). supports() below claims
+ * a token-shaped write whenever ColorConfigurationProvider exists;
+ * transform() then checks ColorTokenResolver itself and throws
+ * TOKEN_RESOLUTION_FAILED if it's missing, rather than letting
+ * WriteApplicator fall through to persisting the literal token string (#61).
  */
 class ColorTokenTransformer implements ValueTransformer
 {
@@ -40,14 +47,20 @@ class ColorTokenTransformer implements ValueTransformer
     private const BUTTON_PATTERN = '/^\$button\((\d+),\s*(.+)\)$/';
 
     /**
-     * String constants so there is no hard dependency on essentials-tools —
-     * these classes are only ever referenced once `supports()`'s
-     * `class_exists()` gate (below) has already confirmed the package is
-     * installed.
+     * String constant so there is no hard dependency on essentials-tools —
+     * only ever referenced once `supports()`'s `class_exists()` gate (below)
+     * has already confirmed the package is installed.
      */
     private const COLOR_PROVIDER_CLASS = 'Dynamic\\Essentials\\Service\\ColorConfigurationProvider';
 
-    private const COLOR_TOKEN_RESOLVER_CLASS = 'Dynamic\\Essentials\\Service\\ColorTokenResolver';
+    /**
+     * Configurable (not a const) so a test can override it to a nonexistent
+     * class and exercise the "ColorConfigurationProvider is installed but
+     * ColorTokenResolver isn't" branch in transform() without needing a real
+     * staggered essentials-tools install — see ColorTokenTest's
+     * testMissingResolverFailsTheWriteInsteadOfPersistingTheLiteral (#61).
+     */
+    private static string $color_token_resolver_class = 'Dynamic\\Essentials\\Service\\ColorTokenResolver';
 
     /**
      * Fields eligible for token resolution.
@@ -80,14 +93,17 @@ class ColorTokenTransformer implements ValueTransformer
 
     public function transform(DataObject $record, string $fieldName, mixed $value): mixed
     {
-        if (!class_exists(ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS)) {
+        $resolverClass = static::config()->get('color_token_resolver_class');
+
+        if (!class_exists($resolverClass)) {
             throw new ApiError(
                 ErrorCode::TOKEN_RESOLUTION_FAILED,
                 sprintf(
                     'Cannot resolve %s — this site\'s dynamic/silverstripe-essentials-tools install '
-                        . 'predates Dynamic\\Essentials\\Service\\ColorTokenResolver. Upgrade '
-                        . 'essentials-tools, or write a literal color value instead of a token.',
-                    $value
+                        . 'predates %s. Upgrade essentials-tools, or write a literal color value '
+                        . 'instead of a token.',
+                    $value,
+                    $resolverClass
                 )
             );
         }
@@ -108,7 +124,7 @@ class ColorTokenTransformer implements ValueTransformer
 
     protected function resolvePalette(int $index, string $token): string
     {
-        $resolver = ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS;
+        $resolver = static::config()->get('color_token_resolver_class');
         $result = $resolver::resolvePalette($index);
 
         if ($result->success) {
@@ -120,7 +136,7 @@ class ColorTokenTransformer implements ValueTransformer
 
     protected function resolveButton(int $bgIndex, string $label, string $token): string
     {
-        $resolver = ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS;
+        $resolver = static::config()->get('color_token_resolver_class');
         $result = $resolver::resolveButton($bgIndex, $label);
 
         if ($result->success) {
