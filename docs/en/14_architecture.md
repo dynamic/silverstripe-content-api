@@ -58,7 +58,7 @@ class+message in dev/test, an opaque message in production).
 | `Auth/` | `AuthContext` | Resolved-auth value object for one request |
 | `Errors/` | `ErrorCode`, `ApiError` | Machine-readable codes + the throwable that carries them |
 | `Control/`, `Control/Handlers/` | `ContentApiController` + 8 handlers | Routing, envelope, per-endpoint logic |
-| `Tasks/` | `MintApiTokenTask` | `sake tasks:MintContentApiToken` |
+| `Tasks/` | `MintApiTokenTask` | `sake dev/tasks/MintContentApiToken` |
 
 ## The two write surfaces
 

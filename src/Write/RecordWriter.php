@@ -187,8 +187,17 @@ class RecordWriter
 
         $this->applicator->applyFields($record, $fields, $internalFields);
 
+        // The DB write and any relation writes it enables (has_one FK
+        // repoints, has_many/many_many attaches) must land or fail together —
+        // a relation that resolves to NOT_FOUND after the record itself is
+        // already persisted would otherwise leave a half-written draft record
+        // behind while the operation reports "error", corrupting a batch's
+        // retry-failed-indices contract (a retry could double-create).
         try {
-            $record->write();
+            DbTransaction::run(function () use ($record, $relations) {
+                $record->write();
+                $this->applicator->applyRelations($record, $relations);
+            });
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception);
         }
@@ -207,10 +216,6 @@ class RecordWriter
                 ),
                 'field' => 'URLSegment',
             ];
-        }
-
-        if ($relations !== []) {
-            $this->applicator->applyRelations($record, $relations);
         }
 
         $this->publisher->publish($record, $publishMode);

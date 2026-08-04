@@ -306,7 +306,15 @@ class WriteApplicator
                 $relationClass = $hasMany[$name];
             } elseif (isset($manyMany[$name])) {
                 $classes = $manyMany[$name];
-                $relationClass = is_array($classes) ? ($classes['to'] ?? null) : $classes;
+
+                // A many_many through spec's 'to' is the *name* of a
+                // has_one on the join class, not a class name (framework
+                // DataObjectSchema::parseManyManyComponent()) — resolve the
+                // actual target class via the schema helper rather than
+                // reading ['to'] as if it were one.
+                $relationClass = is_array($classes)
+                    ? (DataObject::getSchema()->manyManyComponent($className, $name)['childClass'] ?? null)
+                    : $classes;
             }
 
             if (!$relationClass) {

@@ -2,18 +2,22 @@
 
 ## Requirements
 
-- SilverStripe `^6`, PHP `^8.3`
-- `colymba/silverstripe-restfulapi` (silverstripeltd `feature/cms-6-compatibility` branch — see below)
+- SilverStripe `^5.2`, PHP `^8.1`
+- `colymba/silverstripe-restfulapi` (silverstripeltd `feature/v5` branch — see below)
 
 Optional integrations are feature-gated at runtime: an endpoint that needs one answers
 `501 FEATURE_UNAVAILABLE` when it's absent, rather than fataling.
 
 | Package | Enables |
 |---|---|
-| `dnadesign/silverstripe-elemental` `^6` | `POST compositions/page` and everything element-related |
-| `silverstripe/linkfield` `^5` | Structured link payloads (`CtaLink: {type, url, ...}`) via `LinkTransformer` |
+| `dnadesign/silverstripe-elemental` `^5.2` | `POST compositions/page` and everything element-related |
+| `silverstripe/linkfield` `^4` | Structured link payloads (`CtaLink: {type, url, ...}`) via `LinkTransformer` |
 | `dynamic/silverstripe-essentials-tools` | `$palette(N)` / `$button(N, Label)` color token resolution via `ColorTokenTransformer` |
 | `dynamic/silverstripe-elemental-templates` | `POST pages/$ID/apply-template` |
+
+> This is the `ss5` branch. Branch `1` targets SilverStripe 6 and requires
+> `colymba/silverstripe-restfulapi`'s `feature/cms-6-compatibility` branch instead — see the
+> README's Branch policy section.
 
 ## Install
 
@@ -30,15 +34,31 @@ stability flag only applies when declared by the root package, so a default
 ```
 
 ```bash
-# root require carries the dev-branch stability flag; the inline alias lets a
-# stable host satisfy other packages' "^…" constraints against it:
-composer require colymba/silverstripe-restfulapi:"dev-feature/cms-6-compatibility as 3.0.0"
+composer require colymba/silverstripe-restfulapi:dev-feature/v5
 composer require dynamic/silverstripe-content-api
 ```
 
-> The pinned branch (`feature/cms-6-compatibility`) is where silverstripeltd maintains SS6
-> support. If it is renamed or deleted after an upstream release, update the constraint to the
-> tagged version. Consumers' `composer.lock` pins the exact commit either way.
+This module requires `cweagans/composer-patches` and declares a patch against
+`colymba/silverstripe-restfulapi` in its own `extra.patches` — the plugin applies
+dependency-declared patches automatically. One thing IS still needed in your **project root**:
+Composer's `config.allow-plugins` is root-package-only (like `repositories` — a dependency's own
+`config` block has no effect), so add the plugin there too, or Composer silently declines to run
+it and the patch never applies:
+
+```json
+"config": {
+    "allow-plugins": {
+        "cweagans/composer-patches": true
+    }
+}
+```
+
+> `feature/v5` is where silverstripeltd is working towards SS5 support, but it's unreleased and
+> calls 4 methods removed in SilverStripe 4+ (`Member::login()`/`logout()`,
+> `DataObject::stat()`) — this module's composer patch fixes those specific calls. See
+> [Upstream issues](upstream-issues.md) for the tracking issue and the drop conditions for the
+> patch. If the branch is renamed, deleted, or the fix lands upstream, update the constraint
+> accordingly. Consumers' `composer.lock` pins the exact commit either way.
 
 Then run `dev/build flush=1` and continue to [Quick start](01_quickstart.md).
 
@@ -49,7 +69,7 @@ Then run `dev/build flush=1` and continue to [Quick start](01_quickstart.md).
 - Member columns change: `ContentApiTokenHash`/`ContentApiTokenExpire` are abandoned (orphan
   columns; drop manually if you care) — colymba's `ApiToken`/`ApiTokenExpire` are created on
   `dev/build`. **Hashed 1.0.x tokens cannot be carried over — re-mint every service account**
-  (`sake tasks:MintContentApiToken email=…`).
+  (`sake dev/tasks/MintContentApiToken email=…`).
 - Removed endpoints → replacements: `POST records/$Class` → `POST api/$Class` or a batch
   `create`/`upsert` op; `PATCH records/$Class/$ID` → `PUT api/$Class/$ID` or a batch `update`
   op; `DELETE records/$Class/$ID` → `DELETE api/$Class/$ID` (hard delete!) or a batch `delete`

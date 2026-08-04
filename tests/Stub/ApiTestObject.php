@@ -33,6 +33,11 @@ class ApiTestObject extends DataObject implements TestOnly
 
     private static array $many_many = [
         'Tags' => ApiTestTag::class,
+        'ThroughTags' => [
+            'through' => ApiTestThroughJoin::class,
+            'from' => 'Owner',
+            'to' => 'Tag',
+        ],
     ];
 
     private static array $many_many_extraFields = [

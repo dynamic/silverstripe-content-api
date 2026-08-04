@@ -1,8 +1,8 @@
 # SilverStripe Content API
 
-Content population layer for SilverStripe 6, **built on
+Content population layer for SilverStripe 5.2+, **built on
 [colymba/silverstripe-restfulapi](https://github.com/colymba/silverstripe-restfulapi)**
-(the silverstripeltd-maintained SS6 line). The dependency provides token authentication
+(the silverstripeltd-maintained `feature/v5` line — see Requirements below). The dependency provides token authentication
 and generic REST CRUD at `/api`; this module adds everything programmatic content
 population needs on top: atomic page compositions, batch operations with per-operation
 results, asset ingestion, stage-aware reads and publish actions, schema introspection,
@@ -22,8 +22,13 @@ see [docs/en/13_migrating-from-fixtures.md](docs/en/13_migrating-from-fixtures.m
 
 ## Requirements
 
-- SilverStripe ^6, PHP ^8.3
-- `colymba/silverstripe-restfulapi` (silverstripeltd `feature/cms-6-compatibility` branch)
+- SilverStripe ^5.2, PHP ^8.1
+- `colymba/silverstripe-restfulapi` (silverstripeltd `feature/v5` branch — unreleased, so this
+  module ships a composer patch fixing 4 calls to methods removed in SilverStripe 4+; see
+  [docs/en/upstream-issues.md](docs/en/upstream-issues.md))
+
+> This is the `ss5` branch. Branch `1` targets SilverStripe 6 and requires
+> `colymba/silverstripe-restfulapi`'s `feature/cms-6-compatibility` branch instead.
 
 Optional integrations (feature-gated at runtime; endpoints answer `501
 FEATURE_UNAVAILABLE` when absent): `dnadesign/silverstripe-elemental` (compositions),
@@ -46,15 +51,32 @@ stability flag only applies when declared by the root package, so a default
 ```
 
 ```bash
-# root require carries the dev-branch stability flag; the inline alias lets a
-# stable host satisfy other packages' "^…" constraints against it:
-composer require colymba/silverstripe-restfulapi:"dev-feature/cms-6-compatibility as 3.0.0"
+composer require colymba/silverstripe-restfulapi:dev-feature/v5
 composer require dynamic/silverstripe-content-api
 ```
 
-> The pinned branch (`feature/cms-6-compatibility`) is where silverstripeltd maintains SS6
-> support. If it is renamed or deleted after an upstream release, update the constraint to
-> the tagged version. Consumers' `composer.lock` pins the exact commit either way.
+This module requires `cweagans/composer-patches` and declares a patch against
+`colymba/silverstripe-restfulapi` in its own `extra.patches` — the plugin applies
+dependency-declared patches automatically. One thing IS still needed in your **project root**:
+Composer's `config.allow-plugins` is root-package-only (like `repositories` — a dependency's own
+`config` block has no effect), so add the plugin there too, or Composer silently declines to run
+it and the patch never applies:
+
+```json
+"config": {
+    "allow-plugins": {
+        "cweagans/composer-patches": true
+    }
+}
+```
+
+> `feature/v5` is where silverstripeltd is working towards SS5 support, but it's unreleased
+> and calls 4 methods removed in SilverStripe 4+ (`Member::login()`/`logout()`,
+> `DataObject::stat()`) — this module's composer patch fixes those specific calls. See
+> [docs/en/upstream-issues.md](docs/en/upstream-issues.md) for the tracking issue and the drop
+> conditions for the patch. If the branch is renamed, deleted, or the fix lands upstream,
+> update the constraint accordingly. Consumers' `composer.lock` pins the exact commit either
+> way.
 
 Upgrading from an earlier version? See
 [docs/en/00_installation.md](docs/en/00_installation.md#upgrading-from-10x) for the 1.0.x
@@ -99,7 +121,7 @@ SilverStripe\Assets\File:
 3. **Grant permissions and mint a token**:
 
 ```bash
-sake tasks:MintContentApiToken email=agent@example.com
+sake dev/tasks/MintContentApiToken email=agent@example.com
 ```
 
 4. **Call it**:
@@ -118,6 +140,24 @@ Full walkthrough with permission codes and next steps: [docs/en/01_quickstart.md
 > with no writability check at all. See [docs/en/04_security-model.md](docs/en/04_security-model.md)
 > for the full class/record/field ACL model, write policies, and why the two write
 > surfaces fail differently (revert-and-200 vs. reject-the-payload).
+
+## Branch policy
+
+This repo carries two parallel lines: `1` (default, SilverStripe 6) and `ss5` (this branch,
+SilverStripe 5.2). `ss5` receives changes only via `git merge origin/1` — never the reverse,
+and never a cherry-pick (which would leave no merge base and re-present the same commits as
+conflicts on the next sync). The two branches are allowed to differ only in:
+
+- composer constraints (framework/cms/PHP versions, the colymba branch + patch)
+- task entry-point signatures (`ss5`'s `src/Tasks/*.php` use SS5's legacy
+  `BuildTask::run($request)`; `1` uses SS6's `execute(InputInterface, PolyOutput): int` — each
+  file carries a docblock noting the other branch's copy must be hand-ported)
+- requirement statements in this README and `docs/en/00_installation.md`
+
+Everything else — application logic, tests, docs content beyond the requirements
+blocks — should read identically on both branches after a sync. A CI check
+(`.local-ci.json`'s `doc-drift` entry) greps this branch for SS6-only requirement text and the
+SS6 `tasks:` invocation namespace to catch regressions.
 
 ## Documentation
 
