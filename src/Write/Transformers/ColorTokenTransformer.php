@@ -28,7 +28,14 @@ use SilverStripe\ORM\DataObject;
  * resolver's neutral `ColorTokenResult` onto that throw policy, preserving
  * this class's original three error messages verbatim.
  *
- * Registered only when essentials-tools is installed (essentials.yml).
+ * Registered only when essentials-tools is installed (essentials.yml) — but
+ * essentials.yml's gate checks ColorConfigurationProvider only, not
+ * ColorTokenResolver (the two have no hard dependency on each other, so a
+ * staggered upgrade can have one without the other). supports() below claims
+ * a token-shaped write whenever ColorConfigurationProvider exists;
+ * transform() then checks ColorTokenResolver itself and throws
+ * TOKEN_RESOLUTION_FAILED if it's missing, rather than letting
+ * WriteApplicator fall through to persisting the literal token string (#61).
  */
 class ColorTokenTransformer implements ValueTransformer
 {
@@ -40,14 +47,20 @@ class ColorTokenTransformer implements ValueTransformer
     private const BUTTON_PATTERN = '/^\$button\((\d+),\s*(.+)\)$/';
 
     /**
-     * String constants so there is no hard dependency on essentials-tools —
-     * these classes are only ever referenced once `supports()`'s
-     * `class_exists()` gate (below) has already confirmed the package is
-     * installed.
+     * String constant so there is no hard dependency on essentials-tools —
+     * only ever referenced once `supports()`'s `class_exists()` gate (below)
+     * has already confirmed the package is installed.
      */
     private const COLOR_PROVIDER_CLASS = 'Dynamic\\Essentials\\Service\\ColorConfigurationProvider';
 
-    private const COLOR_TOKEN_RESOLVER_CLASS = 'Dynamic\\Essentials\\Service\\ColorTokenResolver';
+    /**
+     * Configurable (not a const) so a test can override it to a nonexistent
+     * class and exercise the "ColorConfigurationProvider is installed but
+     * ColorTokenResolver isn't" branch in transform() without needing a real
+     * staggered essentials-tools install — see ColorTokenTest's
+     * testMissingResolverFailsTheWriteInsteadOfPersistingTheLiteral (#61).
+     */
+    private static string $color_token_resolver_class = 'Dynamic\\Essentials\\Service\\ColorTokenResolver';
 
     /**
      * Fields eligible for token resolution.
@@ -59,21 +72,42 @@ class ColorTokenTransformer implements ValueTransformer
 
     public function supports(DataObject $record, string $fieldName, mixed $value): bool
     {
+        // Deliberately does NOT also require ColorTokenResolver to exist.
+        // This class is only registered at all when ColorConfigurationProvider
+        // is present (see essentials.yml's Only: classexists gate) — an
+        // essentials-tools install that has ColorConfigurationProvider but
+        // predates ColorTokenResolver (staggered upgrades — the two classes
+        // have no hard dependency on each other) must still CLAIM a
+        // `$palette(...)`/`$button(...)` write here, so transform() can fail
+        // it loudly below. If supports() degraded to false in that case (as
+        // it used to), WriteApplicator::transformValue() falls through to
+        // `return $value` — silently persisting the literal token string
+        // with a 200 response, since nothing else in the transformer chain
+        // recognizes this shape either. See the module's incident notes for
+        // where that was found.
         return is_string($value)
             && in_array($fieldName, (array) static::config()->get('token_fields'), true)
             && (bool) preg_match('/^\$(palette|button)\(/', $value)
-            // Both classes are gated: an essentials-tools install that has
-            // ColorConfigurationProvider but predates ColorTokenResolver
-            // (staggered upgrades — the two packages have no hard dependency
-            // on each other) must degrade to "resolution unsupported" here,
-            // not reach resolvePalette()/resolveButton() and hard-fail on a
-            // missing class.
-            && class_exists(ColorTokenTransformer::COLOR_PROVIDER_CLASS)
-            && class_exists(ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS);
+            && class_exists(ColorTokenTransformer::COLOR_PROVIDER_CLASS);
     }
 
     public function transform(DataObject $record, string $fieldName, mixed $value): mixed
     {
+        $resolverClass = static::config()->get('color_token_resolver_class');
+
+        if (!class_exists($resolverClass)) {
+            throw new ApiError(
+                ErrorCode::TOKEN_RESOLUTION_FAILED,
+                sprintf(
+                    'Cannot resolve %s — this site\'s dynamic/silverstripe-essentials-tools install '
+                        . 'predates %s. Upgrade essentials-tools, or write a literal color value '
+                        . 'instead of a token.',
+                    $value,
+                    $resolverClass
+                )
+            );
+        }
+
         if (preg_match(ColorTokenTransformer::PALETTE_PATTERN, $value, $matches)) {
             return $this->resolvePalette((int) $matches[1], $value);
         }
@@ -90,7 +124,7 @@ class ColorTokenTransformer implements ValueTransformer
 
     protected function resolvePalette(int $index, string $token): string
     {
-        $resolver = ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS;
+        $resolver = static::config()->get('color_token_resolver_class');
         $result = $resolver::resolvePalette($index);
 
         if ($result->success) {
@@ -102,7 +136,7 @@ class ColorTokenTransformer implements ValueTransformer
 
     protected function resolveButton(int $bgIndex, string $label, string $token): string
     {
-        $resolver = ColorTokenTransformer::COLOR_TOKEN_RESOLVER_CLASS;
+        $resolver = static::config()->get('color_token_resolver_class');
         $result = $resolver::resolveButton($bgIndex, $label);
 
         if ($result->success) {
