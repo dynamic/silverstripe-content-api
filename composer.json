@@ -79,7 +79,8 @@
             "composer/installers": true,
             "silverstripe/vendor-plugin": true,
             "phpstan/extension-installer": true,
-            "silverstripe/recipe-plugin": true
+            "silverstripe/recipe-plugin": true,
+            "cweagans/composer-patches": true
         }
     },
     "repositories": [

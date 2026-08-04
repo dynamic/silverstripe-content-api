@@ -40,8 +40,18 @@ composer require dynamic/silverstripe-content-api
 
 This module requires `cweagans/composer-patches` and declares a patch against
 `colymba/silverstripe-restfulapi` in its own `extra.patches` — the plugin applies
-dependency-declared patches automatically, so no action is needed in your project's
-composer.json beyond the two requires above.
+dependency-declared patches automatically. One thing IS still needed in your **project root**:
+Composer's `config.allow-plugins` is root-package-only (like `repositories` — a dependency's own
+`config` block has no effect), so add the plugin there too, or Composer silently declines to run
+it and the patch never applies:
+
+```json
+"config": {
+    "allow-plugins": {
+        "cweagans/composer-patches": true
+    }
+}
+```
 
 > `feature/v5` is where silverstripeltd is working towards SS5 support, but it's unreleased and
 > calls 4 methods removed in SilverStripe 4+ (`Member::login()`/`logout()`,
