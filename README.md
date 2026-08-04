@@ -2,7 +2,8 @@
 
 Content population layer for SilverStripe 5.2+, **built on
 [colymba/silverstripe-restfulapi](https://github.com/colymba/silverstripe-restfulapi)**
-(the silverstripeltd-maintained `feature/v5` line — see Requirements below). The dependency provides token authentication
+(via [dynamic/silverstripe-restfulapi](https://github.com/dynamic/silverstripe-restfulapi), a
+maintained SS5-compatible fork — see Requirements below). The dependency provides token authentication
 and generic REST CRUD at `/api`; this module adds everything programmatic content
 population needs on top: atomic page compositions, batch operations with per-operation
 results, asset ingestion, stage-aware reads and publish actions, schema introspection,
@@ -23,9 +24,10 @@ see [docs/en/13_migrating-from-fixtures.md](docs/en/13_migrating-from-fixtures.m
 ## Requirements
 
 - SilverStripe ^5.2, PHP ^8.1
-- `colymba/silverstripe-restfulapi` (silverstripeltd `feature/v5` branch — unreleased, so this
-  module ships a composer patch fixing 4 calls to methods removed in SilverStripe 4+; see
-  [docs/en/upstream-issues.md](docs/en/upstream-issues.md))
+- `colymba/silverstripe-restfulapi` `^5.0` — resolves to
+  [dynamic/silverstripe-restfulapi](https://github.com/dynamic/silverstripe-restfulapi) (see
+  Installation below), a fork of silverstripeltd's `feature/v5` branch fixing 4 calls to methods
+  removed in SilverStripe 4+; see [docs/en/upstream-issues.md](docs/en/upstream-issues.md)
 
 > This is the `ss5` branch. Branch `1` targets SilverStripe 6 and requires
 > `colymba/silverstripe-restfulapi`'s `feature/cms-6-compatibility` branch instead.
@@ -38,45 +40,27 @@ FEATURE_UNAVAILABLE` when absent): `dnadesign/silverstripe-elemental` (compositi
 
 ## Installation
 
-The colymba dependency is consumed from a **dev branch** with no Packagist release, so
-your **project root** composer.json must both add the VCS entry (composer ignores a
-dependency's own `repositories`) **and** require the branch at root — a `dev-` constraint's
-stability flag only applies when declared by the root package, so a default
-`minimum-stability: stable` host cannot resolve it transitively:
+The colymba dependency is consumed from `dynamic/silverstripe-restfulapi`'s tagged `5.0.0` release
+(a package name unchanged from upstream, so it satisfies the same `colymba/silverstripe-restfulapi`
+constraint everywhere), so your **project root** composer.json must add the VCS entry (composer
+ignores a dependency's own `repositories`):
 
 ```json
 "repositories": [
-    { "type": "vcs", "url": "https://github.com/silverstripeltd/silverstripe-restfulapi" }
+    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-restfulapi" }
 ]
 ```
 
 ```bash
-composer require colymba/silverstripe-restfulapi:dev-feature/v5
+composer require colymba/silverstripe-restfulapi:^5.0
 composer require dynamic/silverstripe-content-api
 ```
 
-This module requires `cweagans/composer-patches` and declares a patch against
-`colymba/silverstripe-restfulapi` in its own `extra.patches` — the plugin applies
-dependency-declared patches automatically. One thing IS still needed in your **project root**:
-Composer's `config.allow-plugins` is root-package-only (like `repositories` — a dependency's own
-`config` block has no effect), so add the plugin there too, or Composer silently declines to run
-it and the patch never applies:
-
-```json
-"config": {
-    "allow-plugins": {
-        "cweagans/composer-patches": true
-    }
-}
-```
-
-> `feature/v5` is where silverstripeltd is working towards SS5 support, but it's unreleased
-> and calls 4 methods removed in SilverStripe 4+ (`Member::login()`/`logout()`,
-> `DataObject::stat()`) — this module's composer patch fixes those specific calls. See
-> [docs/en/upstream-issues.md](docs/en/upstream-issues.md) for the tracking issue and the drop
-> conditions for the patch. If the branch is renamed, deleted, or the fix lands upstream,
-> update the constraint accordingly. Consumers' `composer.lock` pins the exact commit either
-> way.
+> `dynamic/silverstripe-restfulapi` is Dynamic's maintained fork of silverstripeltd's `feature/v5`
+> branch, fixing 4 calls to methods removed in SilverStripe 4+ (`Member::login()`/`logout()`,
+> `DataObject::stat()`). See [docs/en/upstream-issues.md](docs/en/upstream-issues.md) for
+> background. `^5.0` resolves to a real tag, not a dev branch, so no `minimum-stability`
+> workaround is needed for this dependency specifically.
 
 Upgrading from an earlier version? See
 [docs/en/00_installation.md](docs/en/00_installation.md#upgrading-from-10x) for the 1.0.x
