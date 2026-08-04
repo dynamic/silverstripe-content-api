@@ -49,10 +49,9 @@ the two branches.
 ### Changed
 - Tasks invoke via SS5's legacy `sake dev/tasks/<Segment> key=value` syntax, not branch `1`'s SS6
   `sake tasks:<Segment> --flag` syntax.
-- `colymba/silverstripe-restfulapi` comes from silverstripeltd's `feature/v5` branch (unreleased),
-  with a composer patch (`patches/colymba-restfulapi-ss5-removed-methods.patch`, applied via
-  `cweagans/composer-patches`) fixing 4 calls to methods removed in SilverStripe 4+
-  (`Member::login()`/`logout()`, `DataObject::stat()`). See
+- `colymba/silverstripe-restfulapi` comes from `dynamic/silverstripe-restfulapi` `^5.0`, a
+  maintained fork of silverstripeltd's `feature/v5` branch fixing 4 calls to methods removed in
+  SilverStripe 4+ (`Member::login()`/`logout()`, `DataObject::stat()`). See
   [docs/en/upstream-issues.md](docs/en/upstream-issues.md).
 
 ## [1.4.0] - 2026-07-17

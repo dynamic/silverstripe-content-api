@@ -25,8 +25,7 @@
         "silverstripe/cms": "^5.2",
         "silverstripe/versioned": "^2.2",
         "silverstripe/asset-admin": "^2.2",
-        "colymba/silverstripe-restfulapi": "dev-feature/v5",
-        "cweagans/composer-patches": "^2.0"
+        "colymba/silverstripe-restfulapi": "^5.0"
     },
     "require-dev": {
         "silverstripe/recipe-testing": "^3",
@@ -61,12 +60,7 @@
         "project-files-installed": [
             "behat.yml",
             "phpunit.xml.dist"
-        ],
-        "patches": {
-            "colymba/silverstripe-restfulapi": {
-                "Fix Member::login()/logout() and DataObject::stat() calls removed in SilverStripe 4+ (silverstripeltd's own feature/cms-6-compatibility branch already has this fix — see docs/en/upstream-issues.md)": "https://raw.githubusercontent.com/dynamic/silverstripe-content-api/b99b52612ccc74fea2d96e632760a1290a5cfa07/patches/colymba-restfulapi-ss5-removed-methods.patch"
-            }
-        }
+        ]
     },
     "scripts": {
         "lint": "vendor/bin/phpcs src/ tests/",
@@ -79,14 +73,13 @@
             "composer/installers": true,
             "silverstripe/vendor-plugin": true,
             "phpstan/extension-installer": true,
-            "silverstripe/recipe-plugin": true,
-            "cweagans/composer-patches": true
+            "silverstripe/recipe-plugin": true
         }
     },
     "repositories": [
         {
             "type": "vcs",
-            "url": "https://github.com/silverstripeltd/silverstripe-restfulapi"
+            "url": "https://github.com/dynamic/silverstripe-restfulapi"
         }
     ]
 }
