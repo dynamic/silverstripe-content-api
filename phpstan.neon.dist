@@ -8,8 +8,17 @@ parameters:
   ignoreErrors:
     # Versioned decorates DataObject with magic methods; call sites are guarded
     # by hasExtension(Versioned::class) checks PHPStan cannot narrow on.
-    - message: '#Call to an undefined method SilverStripe\\ORM\\DataObject::(isPublished|stagesDiffer|publishSingle|publishRecursive|doUnpublish|doArchive)\(\)#'
+    - message: '#Call to an undefined method SilverStripe\\ORM\\DataObject::(isPublished|stagesDiffer|publishSingle|publishRecursive|doUnpublish|doArchive|AllChildren)\(\)#'
       identifier: method.notFound
+
+    # PublishOrchestrator::findDescendantIDs() types a freshly-fetched
+    # DataObject as DataObject&Hierarchy after a hasExtension() guard (same
+    # pattern as the AllChildren() case above). On this branch's PHPStan/
+    # silverstan versions the intersection @var tag itself is flagged as
+    # unresolvable — not present on branch `1`'s toolchain, so this entry is
+    # a deliberate branch-specific divergence in this otherwise-shared file.
+    - message: '#PHPDoc tag @var for variable \$staged contains unresolvable type\.#'
+      identifier: varTag.unresolvableType
 
     # $dependencies is read by the SilverStripe Injector via config, not PHP.
     - message: '#Static property .*::\$dependencies is never read, only written\.#'
