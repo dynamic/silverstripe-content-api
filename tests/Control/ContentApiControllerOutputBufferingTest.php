@@ -72,6 +72,28 @@ class ContentApiControllerOutputBufferingTest extends SapphireTest
         $this->assertTrue($this->logHandler->hasWarningThatContains('stray output'));
     }
 
+    public function testEndpointClosingItsOwnBufferIsReportedAsAnImbalanceNotSilentlyIgnored(): void
+    {
+        $response = $this->invokeWithEnvelope(function () {
+            // Simulates application code with its own unbalanced
+            // ob_end_clean()/ob_end_flush() call that closes the buffer
+            // withEnvelope() opened — whatever it contained is already
+            // gone by the time withEnvelope() regains control.
+            ob_end_clean();
+
+            return ['data' => ['ok' => true]];
+        });
+
+        $body = json_decode($response->getBody(), true);
+
+        $this->assertIsArray($body, 'the response itself must still be a clean envelope');
+        $this->assertSame(['ok' => true], $body['data']);
+        $this->assertTrue(
+            $this->logHandler->hasWarningThatContains('imbalanced'),
+            'losing the buffer itself must be reported distinctly, not read as "nothing to report"'
+        );
+    }
+
     public function testNoStrayOutputMeansNoWarningLogged(): void
     {
         $this->invokeWithEnvelope(function () {

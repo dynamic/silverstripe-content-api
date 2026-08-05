@@ -65,13 +65,19 @@ All notable changes to this project are documented here. Format loosely follows
   with) the endpoint's own well-formed JSON body, corrupting the response into something
   neither valid JSON nor an accurate reflection of the real outcome — confirmed against a real
   HTTP request, where the underlying write had actually succeeded. `withEnvelope()` now
-  buffers all output from the endpoint callable; any stray output is logged (not silently
-  discarded) rather than allowed to reach the response. Separately, `BatchProcessor` no longer
-  trusts that an atomic batch's caught-exception rollback path means the SQL `ROLLBACK`
-  actually took effect — every operation reported `created` is now re-checked by id against
-  the database before the response claims `rolledBack: true`; if any is still there, the
-  response reports the new `500 ROLLBACK_UNVERIFIED` instead, naming the records to check by
-  hand. See `docs/en/12_error-codes.md`.
+  buffers all output from the endpoint callable (drained down to the level it opened, so an
+  unbalanced buffer left open by application code doesn't slip past it); any stray output is
+  logged (not silently discarded) rather than allowed to reach the response. Known gap this
+  can't close: SilverStripe's own `Deprecation::notice()` defers its output to request
+  shutdown, after the response is already sent, so it can't be buffered here — and a true PHP
+  fatal (not a `Throwable`) never returns control to drain the buffer at all. Separately,
+  `BatchProcessor` no longer trusts that an atomic batch's caught-exception rollback path means
+  the SQL `ROLLBACK` actually took effect — every operation reported `created` is now
+  re-checked by id against the database (using an uncached, non-deprecated lookup) before the
+  response claims `rolledBack: true`; if any is still there, or the check itself fails for an
+  unrelated reason, the response reports the new `500 ROLLBACK_UNVERIFIED` instead, carrying
+  the same full results array so every `created` entry can be checked by hand. `updated`/
+  `deleted` results aren't independently verified yet (#75). See `docs/en/12_error-codes.md`.
 
 ## [1.4.0] - 2026-07-17
 

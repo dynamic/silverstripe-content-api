@@ -79,6 +79,47 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $this->assertTrue($this->verifyRollback($operations, $results));
     }
 
+    /**
+     * The class resolved fine when the op originally ran (that's how it
+     * got marked 'created' in the first place) — if it fails to resolve
+     * now, fail toward "can't verify" rather than risk a false "confirmed
+     * rolled back".
+     */
+    public function testUnresolvableClassFailsClosed(): void
+    {
+        $operations = [
+            ['op' => 'create', 'class' => 'NoSuchRegisteredClassRef'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'created', 'id' => 1],
+        ];
+
+        $this->assertFalse($this->verifyRollback($operations, $results));
+    }
+
+    /**
+     * The loop must not short-circuit correctly only by accident (e.g. an
+     * off-by-one always inspecting just the first entry) — a second,
+     * still-present record after a genuinely-gone first one must still be
+     * caught.
+     */
+    public function testASecondSurvivingRecordIsCaughtEvenAfterAGenuinelyGoneFirstOne(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Second one still here']);
+        $record->write();
+
+        $operations = [
+            ['op' => 'create', 'class' => 'ApiTest'],
+            ['op' => 'create', 'class' => 'ApiTest'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'created', 'id' => 999999999],
+            ['index' => 1, 'status' => 'created', 'id' => (int) $record->ID],
+        ];
+
+        $this->assertFalse($this->verifyRollback($operations, $results));
+    }
+
     private function verifyRollback(array $operations, array $results): bool
     {
         $processor = BatchProcessor::create();
