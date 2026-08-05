@@ -4,7 +4,9 @@ namespace Dynamic\ContentApi\Publish;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\Hierarchy\Hierarchy;
 use SilverStripe\Versioned\Versioned;
@@ -135,18 +137,22 @@ class PublishOrchestrator
         $this->assertVersioned($record, 'unpublish');
 
         if (!$force) {
-            $this->assertNoLiveDescendants($record, 'Unpublishing');
+            $this->assertNoDescendants($record, [Versioned::LIVE], 'Unpublishing');
+        } else {
+            $this->logForcedBypass($record, [Versioned::LIVE], 'Unpublishing');
         }
 
         $record->doUnpublish();
     }
 
     /**
+     * @param string[] $stages checked as a union — descendants present in
+     *   any of these stages are enough to refuse
      * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS
      */
-    protected function assertNoLiveDescendants(DataObject $record, string $verbGerund): void
+    protected function assertNoDescendants(DataObject $record, array $stages, string $verbGerund): void
     {
-        $descendantIDs = $this->findDescendantIDs($record, Versioned::LIVE);
+        $descendantIDs = $this->findDescendantIDsInAnyStage($record, $stages);
 
         if ($descendantIDs === []) {
             return;
@@ -155,24 +161,99 @@ class PublishOrchestrator
         throw new ApiError(
             ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS,
             sprintf(
-                '%s %s #%d would also remove %d live descendant(s) still nested under it (ids: '
-                    . '%s) — `enforce_strict_hierarchy` cascades a delete to every current child, '
-                    . 'live or not. Publish them to their intended new parent first if this record '
-                    . 'is being retired as part of a restructure, then retry — or pass force to '
-                    . 'proceed anyway and accept the loss.',
+                '%s %s #%d would also remove %d descendant(s) currently nested under it (ids: %s) '
+                    . '— `enforce_strict_hierarchy` cascades a delete to every child a record '
+                    . 'currently has in the stage(s) being deleted from, whether or not that child '
+                    . 'has also been reparented in draft. Publish/move them to their intended new '
+                    . 'home first if this record is being retired as part of a restructure, then '
+                    . 'retry — or pass force to proceed anyway and accept the loss.',
                 $verbGerund,
                 get_class($record),
                 (int) $record->ID,
                 count($descendantIDs),
-                implode(', ', $descendantIDs)
+                $this->formatIDsForMessage($descendantIDs)
             )
         );
+    }
+
+    /**
+     * The bypass itself is the caller's explicit, requested choice — not a
+     * failure — but it's still the single riskiest operation this class
+     * performs, and previously left no trace anywhere that it happened.
+     * Logged at warning (not error) precisely because it's expected,
+     * intentional behavior, not a fault.
+     *
+     * @param string[] $stages
+     */
+    protected function logForcedBypass(DataObject $record, array $stages, string $verbGerund): void
+    {
+        $descendantIDs = $this->findDescendantIDsInAnyStage($record, $stages);
+
+        if ($descendantIDs === []) {
+            return;
+        }
+
+        Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+            '%s %s #%d with force=true, stranding %d descendant(s) (ids: %s).',
+            $verbGerund,
+            get_class($record),
+            (int) $record->ID,
+            count($descendantIDs),
+            $this->formatIDsForMessage($descendantIDs)
+        ));
+    }
+
+    /**
+     * @param string[] $stages
+     * @return int[]
+     */
+    protected function findDescendantIDsInAnyStage(DataObject $record, array $stages): array
+    {
+        $ids = [];
+
+        foreach ($stages as $stage) {
+            $ids = array_merge($ids, $this->findDescendantIDs($record, $stage));
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * Caps how many ids get interpolated into a message — a real restructure
+     * can strand hundreds of descendants at once, and neither the decision
+     * nor the message's actionability needs every single one spelled out;
+     * `count()` already carries the true magnitude.
+     *
+     * @param int[] $ids
+     */
+    protected function formatIDsForMessage(array $ids, int $limit = 20): string
+    {
+        if (count($ids) <= $limit) {
+            return implode(', ', $ids);
+        }
+
+        return implode(', ', array_slice($ids, 0, $limit)) . sprintf(', and %d more', count($ids) - $limit);
     }
 
     /**
      * IDs of every `Hierarchy` descendant of $record in the given stage.
      * Empty for a non-hierarchical class, one with no extension at all, or
      * a record that doesn't exist in that stage.
+     *
+     * Deliberately queries by $record's own concrete class
+     * (`get_class($record)`), not `Hierarchy::getHierarchyBaseClass()` —
+     * this is load-bearing, not an oversight. `Versioned::doUnpublish()`
+     * itself resolves the live-stage row via `$owner::get()->byID($id)`
+     * (late static binding on the *same* concrete class), and
+     * `deleteFromStage()` clones `$owner` directly rather than re-querying
+     * by class at all. So whenever a class-name mismatch between stages
+     * (e.g. a page type conversion made in draft but not yet republished)
+     * would cause this method to miss a stage's row, the corresponding
+     * `doUnpublish()`/`deleteFromStage()` call misses that exact same row
+     * for the exact same reason — there is no live/draft delete for this
+     * method to have failed to guard against. Querying a broader base
+     * class here would desync the two and could refuse (or worse, permit)
+     * based on descendants the actual delete call can't reach anyway.
      *
      * @return int[]
      */
@@ -216,29 +297,12 @@ class PublishOrchestrator
     {
         $this->assertVersioned($record, 'archive');
 
-        if (!$force) {
-            $liveOrDraftDescendantIDs = array_unique(array_merge(
-                $this->findDescendantIDs($record, Versioned::LIVE),
-                $this->findDescendantIDs($record, Versioned::DRAFT)
-            ));
+        $stages = [Versioned::LIVE, Versioned::DRAFT];
 
-            if ($liveOrDraftDescendantIDs !== []) {
-                throw new ApiError(
-                    ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS,
-                    sprintf(
-                        'Archiving %s #%d would also remove %d descendant(s) still nested under '
-                            . 'it in draft and/or live (ids: %s) — `enforce_strict_hierarchy` '
-                            . 'cascades a delete to every current child in whichever stage is '
-                            . 'being deleted from, and archive deletes from both. Move them out '
-                            . 'from under this record first if that\'s not intended, or pass '
-                            . 'force to proceed anyway and accept the loss.',
-                        get_class($record),
-                        (int) $record->ID,
-                        count($liveOrDraftDescendantIDs),
-                        implode(', ', $liveOrDraftDescendantIDs)
-                    )
-                );
-            }
+        if (!$force) {
+            $this->assertNoDescendants($record, $stages, 'Archiving');
+        } else {
+            $this->logForcedBypass($record, $stages, 'Archiving');
         }
 
         $record->doArchive();

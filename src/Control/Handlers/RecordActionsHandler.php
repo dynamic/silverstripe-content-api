@@ -70,7 +70,7 @@ class RecordActionsHandler
 
             switch ($action) {
                 case 'publish':
-                    $this->publisher->publish($record, !empty($body['recursive']) ? 'recursive' : 'single');
+                    $this->publisher->publish($record, $this->publishModeFromBody($body));
                     break;
                 case 'unpublish':
                     $this->publisher->unpublish($record, !empty($body['force']));
@@ -93,6 +93,22 @@ class RecordActionsHandler
                 'meta' => ['operation' => $action . 'ed'],
             ];
         });
+    }
+
+    /**
+     * `{"mode": "subtree"}` (or any `PublishOrchestrator::MODES` value)
+     * takes precedence when present — the explicit, forward-compatible
+     * form. `{"recursive": true}` remains supported for backward
+     * compatibility with callers that predate `subtree`. Neither present
+     * defaults to `single`, matching this action's pre-existing behavior.
+     */
+    protected function publishModeFromBody(array $body): string
+    {
+        if (isset($body['mode'])) {
+            return (string) $body['mode'];
+        }
+
+        return !empty($body['recursive']) ? 'recursive' : 'single';
     }
 
     /**

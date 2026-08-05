@@ -193,4 +193,32 @@ class RecordActionsTest extends ContentApiTestCase
         );
         $this->assertTrue($forced['data']['archived']);
     }
+
+    /**
+     * The publish action's own docs point a caller who hits
+     * UNPUBLISH_STRANDS_DESCENDANTS at "publish the subtree to its new
+     * parent first" — confirms mode=subtree is actually reachable from
+     * this endpoint, not just via batch/content_page_convert.
+     */
+    public function testPublishActionAcceptsAnExplicitSubtreeMode(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $root = ApiTestPage::create(['Title' => 'Publish Action Subtree Root']);
+        $root->write();
+
+        $child = ApiTestPage::create(['Title' => 'Publish Action Subtree Child', 'ParentID' => $root->ID]);
+        $child->write();
+
+        $response = $this->decode(
+            $this->apiPost("records/ApiTestPage/{$root->ID}/publish", ['mode' => 'subtree'], $token)
+        );
+
+        $this->assertTrue($response['data']['stage']['live']);
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $child->ID)->exists(),
+            'mode=subtree must reach PublishOrchestrator::publish() with the subtree mode, not silently ' .
+                'fall back to single'
+        );
+    }
 }

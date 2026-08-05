@@ -117,7 +117,7 @@
     },
     {
       "name": "content_records_stage",
-      "description": "Publish (optionally recursive), unpublish or archive a record. Response reports resulting draft/live state. unpublish/archive refuse (409 UNPUBLISH_STRANDS_DESCENDANTS) if the record has any Hierarchy tree children (SiteTree.enforce_strict_hierarchy cascades a delete to every current child, live or draft) — move/publish them elsewhere first, or pass force to proceed anyway and accept the loss.",
+      "description": "Publish, unpublish or archive a record. Response reports resulting draft/live state. unpublish refuses (409 UNPUBLISH_STRANDS_DESCENDANTS) if the record has any live Hierarchy descendants; archive refuses if it has any in either stage (SiteTree.enforce_strict_hierarchy cascades a delete to every current child in the stage(s) being deleted from) — move/publish them elsewhere first, or pass force to proceed anyway and accept the loss.",
       "method": "POST",
       "path": "records/{classRef}/{id}/{action}",
       "inputSchema": {
@@ -137,9 +137,19 @@
               "archive"
             ]
           },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "recursive",
+              "subtree"
+            ],
+            "description": "publish only: takes precedence over the legacy recursive boolean below. subtree publishes the record then every draft Hierarchy child depth-first — the way to publish a moved subtree before unpublishing its old wrapper, see the descendant-cascade guard above."
+          },
           "recursive": {
             "type": "boolean",
-            "default": false
+            "default": false,
+            "description": "publish only: legacy shorthand for mode=recursive, kept for backward compatibility. Ignored when mode is present."
           },
           "force": {
             "type": "boolean",

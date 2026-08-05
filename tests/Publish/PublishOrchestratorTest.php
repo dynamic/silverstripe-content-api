@@ -7,6 +7,10 @@ use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
+use Psr\Log\LoggerInterface;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -33,11 +37,16 @@ class PublishOrchestratorTest extends ContentApiTestCase
 {
     private PublishOrchestrator $orchestrator;
 
+    private TestHandler $logHandler;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->orchestrator = PublishOrchestrator::create();
+
+        $this->logHandler = new TestHandler();
+        Injector::inst()->registerService(new Logger('test', [$this->logHandler]), LoggerInterface::class);
     }
 
     public function testUnpublishRefusesWhenTargetHasAnyLiveChildAtAll(): void
@@ -77,6 +86,30 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $this->orchestrator->unpublish($wrapper);
     }
 
+    /**
+     * getDescendantIDList()'s recursion is the entire premise of the fix —
+     * the original bug was specifically about a 3-category, ~28-leaf-page
+     * subtree, not a single direct child. A guard that only walked one
+     * level deep would miss exactly the shape that motivated #71.
+     */
+    public function testUnpublishRefusesWhenOnlyALiveGrandchildExists(): void
+    {
+        $wrapper = $this->publishedPage('Grandchild Wrapper');
+        $middle = $this->publishedPage('Grandchild Middle', $wrapper->ID);
+        $grandchild = $this->publishedPage('Grandchild Leaf', $middle->ID);
+
+        try {
+            $this->orchestrator->unpublish($wrapper);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertStringContainsString((string) $grandchild->ID, $error->getMessage());
+        }
+
+        $this->assertTrue($this->isLive($wrapper->ID));
+        $this->assertTrue($this->isLive($middle->ID));
+        $this->assertTrue($this->isLive($grandchild->ID), 'a live grandchild, not just a live child, must refuse');
+    }
+
     public function testUnpublishSucceedsWhenTargetHasNoLiveChildren(): void
     {
         $leaf = $this->publishedPage('Leaf Page');
@@ -110,6 +143,22 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $this->assertFalse(
             $this->isLive($child->ID),
             'force must genuinely bypass the guard and let the real framework cascade happen'
+        );
+        $this->assertTrue(
+            $this->logHandler->hasWarningThatContains((string) $child->ID),
+            'a forced bypass of a real cascade risk must leave an audit trail, not disappear silently'
+        );
+    }
+
+    public function testForceOnARecordWithNoDescendantsLogsNothing(): void
+    {
+        $leaf = $this->publishedPage('Leaf Force No-op');
+
+        $this->orchestrator->unpublish($leaf, force: true);
+
+        $this->assertFalse(
+            $this->logHandler->hasWarningRecords(),
+            'force is a no-op decision when there was nothing to bypass — nothing to log'
         );
     }
 
@@ -160,8 +209,38 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $draftOnlyChild = ApiTestPage::create(['Title' => 'Archive Draft-Only Child', 'ParentID' => $wrapper->ID]);
         $draftOnlyChild->write();
 
-        $this->expectException(ApiError::class);
-        $this->orchestrator->archive($wrapper);
+        try {
+            $this->orchestrator->archive($wrapper);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('UNPUBLISH_STRANDS_DESCENDANTS', $error->toArray()['code']);
+        }
+
+        $this->assertTrue($this->isLive($wrapper->ID), 'the guard must refuse before doArchive() runs');
+        $this->assertNotNull(ApiTestPage::get()->byID($draftOnlyChild->ID), 'the draft-only child must survive too');
+    }
+
+    /**
+     * Same recursion concern as the unpublish grandchild test — a
+     * draft-only grandchild (not just a draft-only direct child) must
+     * still be caught by archive's draft-stage check.
+     */
+    public function testArchiveRefusesWhenOnlyADraftOnlyGrandchildExists(): void
+    {
+        $wrapper = $this->publishedPage('Archive Grandchild Wrapper');
+        $middle = $this->publishedPage('Archive Grandchild Middle', $wrapper->ID);
+        $grandchild = ApiTestPage::create(['Title' => 'Archive Grandchild Leaf', 'ParentID' => $middle->ID]);
+        $grandchild->write();
+
+        try {
+            $this->orchestrator->archive($wrapper);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertStringContainsString((string) $grandchild->ID, $error->getMessage());
+        }
+
+        $this->assertTrue($this->isLive($wrapper->ID));
+        $this->assertNotNull(ApiTestPage::get()->byID($grandchild->ID));
     }
 
     public function testArchiveSucceedsWhenNoDescendantsInEitherStage(): void
@@ -176,11 +255,12 @@ class PublishOrchestratorTest extends ContentApiTestCase
     public function testArchiveForceBypassesTheGuard(): void
     {
         $wrapper = $this->publishedPage('Archive Wrapper Force');
-        $this->publishedPage('Archive Child Force', $wrapper->ID);
+        $child = $this->publishedPage('Archive Child Force', $wrapper->ID);
 
         $this->orchestrator->archive($wrapper, force: true);
 
         $this->assertFalse($this->isLive($wrapper->ID));
+        $this->assertTrue($this->logHandler->hasWarningThatContains((string) $child->ID));
     }
 
     public function testDeleteWithArchiveModeRoutesThroughTheSameGuard(): void

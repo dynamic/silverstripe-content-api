@@ -84,7 +84,7 @@ stranded on draft behind a live page.
 
 | Action | Effect |
 |---|---|
-| `publish` | `publishSingle()`, or `publishRecursive()` with `{"recursive": true}` in the body |
+| `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present |
 | `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below |
 | `archive` | Removes from both stages, recoverable via version history (`doArchive()`) — same guard |
 

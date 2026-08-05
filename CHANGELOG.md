@@ -120,7 +120,13 @@ All notable changes to this project are documented here. Format loosely follows
   calls `doUnpublish()` internally, then also deletes the draft-stage row directly — an
   equally cascading delete). `force: true` (the stage action's request body, or the batch
   delete op's `force` field) bypasses the guard for the case where the cascade is actually
-  intended. See
+  intended — bypassing now logs a warning naming the record and every descendant it stranded,
+  so a forced cascade leaves an audit trail instead of vanishing without a trace. A record's own
+  `PublishOrchestrator::MODES` `publish` field (used by `content_records_stage`'s `publish`
+  action, previously hardcoded to only `single`/`recursive` via a `recursive` boolean) now
+  accepts an explicit `mode` string including `subtree` — the guard's own documented remedy
+  ("publish the subtree to its new parent first") was otherwise unreachable from that endpoint.
+  See
   `docs/en/10_publishing-and-stages.md#unpublishing-or-archiving-a-hierarchy-record-the-descendant-cascade-guard`.
 
 ## [1.4.0] - 2026-07-17
