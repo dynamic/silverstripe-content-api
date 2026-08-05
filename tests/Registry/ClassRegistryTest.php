@@ -278,4 +278,61 @@ class ClassRegistryTest extends SapphireTest
 
         $this->assertSame('DiscoveryAncestor', $registry->refFor(ApiTestDiscoveryGrandchild::class));
     }
+
+    /**
+     * Regression: accessVerbs() is deliberately inherited — a subclass with
+     * no content_api_access of its own still reports its ancestor's verbs.
+     * Pinned here specifically so it reads as a documented, intentional
+     * contrast against ownAccessVerbs() below, not an accidental gap.
+     */
+    public function testAccessVerbsIsInheritedByASubclass(): void
+    {
+        Config::modify()->set(ApiTestDiscoveryRoot::class, 'content_api_access', 'GET,POST,PUT,DELETE,action');
+
+        $registry = ClassRegistry::singleton();
+
+        $this->assertSame(ClassRegistry::VERBS, $registry->accessVerbs(ApiTestDiscoveryChild::class));
+    }
+
+    /**
+     * ownAccessVerbs() is the uninherited counterpart ContentApiGrantExtension
+     * relies on: a class declaring content_api_access itself reports its own
+     * verbs; a subclass that inherits the same value from an ancestor (see
+     * the accessVerbs() test above) must report nothing at all here — that's
+     * the whole point of the distinction.
+     */
+    public function testOwnAccessVerbsIgnoresInheritedContentApiAccess(): void
+    {
+        Config::modify()->set(ApiTestDiscoveryRoot::class, 'content_api_access', 'GET,POST,PUT,DELETE,action');
+
+        $registry = ClassRegistry::singleton();
+
+        $this->assertSame(ClassRegistry::VERBS, $registry->ownAccessVerbs(ApiTestDiscoveryRoot::class));
+        $this->assertSame([], $registry->ownAccessVerbs(ApiTestDiscoveryChild::class));
+    }
+
+    public function testOwnAccessVerbsFallsBackToApiAccessWhenSetOnTheSameClass(): void
+    {
+        Config::modify()->set(ApiTestDiscoveryRoot::class, 'api_access', 'GET,PUT');
+
+        $registry = ClassRegistry::singleton();
+
+        $this->assertSame(['read', 'update'], $registry->ownAccessVerbs(ApiTestDiscoveryRoot::class));
+    }
+
+    public function testOwnAccessVerbsTreatsAnExplicitFalsyValueAsDeclaredButEmpty(): void
+    {
+        Config::modify()->set(ApiTestDiscoveryRoot::class, 'content_api_access', false);
+
+        $registry = ClassRegistry::singleton();
+
+        $this->assertSame([], $registry->ownAccessVerbs(ApiTestDiscoveryRoot::class));
+    }
+
+    public function testOwnAccessVerbsIsEmptyWhenNothingIsSetAtAll(): void
+    {
+        $registry = ClassRegistry::singleton();
+
+        $this->assertSame([], $registry->ownAccessVerbs(ApiTestDiscoveryRoot::class));
+    }
 }
