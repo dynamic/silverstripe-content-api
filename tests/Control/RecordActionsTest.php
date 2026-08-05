@@ -4,7 +4,9 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\Versioned\Versioned;
 
 class RecordActionsTest extends ContentApiTestCase
 {
@@ -135,5 +137,88 @@ class RecordActionsTest extends ContentApiTestCase
         // DELETE — moved to colymba DELETE or batch delete op / archive action.
         $delete = $this->apiDelete("records/ApiTest/{$record->ID}", $token);
         $this->assertSame(404, $delete->getStatusCode());
+    }
+
+    /**
+     * End-to-end coverage for #71's stranded-descendants guard, confirming
+     * the HTTP action reads the "force" body flag through to
+     * PublishOrchestrator::unpublish() — the unit-level guard logic itself
+     * is covered directly in Publish/PublishOrchestratorTest.
+     */
+    public function testUnpublishActionRefusesThenSucceedsWithForce(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $wrapper = ApiTestPage::create(['Title' => 'Action Wrapper']);
+        $wrapper->write();
+        $wrapper->publishRecursive();
+
+        $child = ApiTestPage::create(['Title' => 'Action Child', 'ParentID' => $wrapper->ID]);
+        $child->write();
+        $child->publishRecursive();
+
+        $refused = $this->apiPost("records/ApiTestPage/{$wrapper->ID}/unpublish", [], $token);
+        $this->assertErrorCode($refused, 'UNPUBLISH_STRANDS_DESCENDANTS', 409);
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $wrapper->ID)->exists()
+        );
+
+        $forced = $this->decode(
+            $this->apiPost("records/ApiTestPage/{$wrapper->ID}/unpublish", ['force' => true], $token)
+        );
+        $this->assertFalse($forced['data']['stage']['live']);
+    }
+
+    /**
+     * archive() shares unpublish()'s guard — confirming the HTTP action
+     * reads "force" through to PublishOrchestrator::archive() too.
+     */
+    public function testArchiveActionRefusesThenSucceedsWithForce(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $wrapper = ApiTestPage::create(['Title' => 'Archive Action Wrapper']);
+        $wrapper->write();
+        $wrapper->publishRecursive();
+
+        $child = ApiTestPage::create(['Title' => 'Archive Action Child', 'ParentID' => $wrapper->ID]);
+        $child->write();
+        $child->publishRecursive();
+
+        $refused = $this->apiPost("records/ApiTestPage/{$wrapper->ID}/archive", [], $token);
+        $this->assertErrorCode($refused, 'UNPUBLISH_STRANDS_DESCENDANTS', 409);
+
+        $forced = $this->decode(
+            $this->apiPost("records/ApiTestPage/{$wrapper->ID}/archive", ['force' => true], $token)
+        );
+        $this->assertTrue($forced['data']['archived']);
+    }
+
+    /**
+     * The publish action's own docs point a caller who hits
+     * UNPUBLISH_STRANDS_DESCENDANTS at "publish the subtree to its new
+     * parent first" — confirms mode=subtree is actually reachable from
+     * this endpoint, not just via batch/content_page_convert.
+     */
+    public function testPublishActionAcceptsAnExplicitSubtreeMode(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $root = ApiTestPage::create(['Title' => 'Publish Action Subtree Root']);
+        $root->write();
+
+        $child = ApiTestPage::create(['Title' => 'Publish Action Subtree Child', 'ParentID' => $root->ID]);
+        $child->write();
+
+        $response = $this->decode(
+            $this->apiPost("records/ApiTestPage/{$root->ID}/publish", ['mode' => 'subtree'], $token)
+        );
+
+        $this->assertTrue($response['data']['stage']['live']);
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $child->ID)->exists(),
+            'mode=subtree must reach PublishOrchestrator::publish() with the subtree mode, not silently ' .
+                'fall back to single'
+        );
     }
 }

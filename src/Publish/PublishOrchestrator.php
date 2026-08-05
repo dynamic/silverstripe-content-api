@@ -4,8 +4,11 @@ namespace Dynamic\ContentApi\Publish;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\Hierarchy\Hierarchy;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -16,13 +19,18 @@ use SilverStripe\Versioned\Versioned;
  * Publish modes: `none` (leave on draft), `single` (publishSingle),
  * `recursive` (publishRecursive — note SS6 does NOT cascade a page's
  * publishRecursive into owned elemental blocks; composition-level cascades
- * publish each written element explicitly in M4).
+ * publish each written element explicitly in M4), `subtree` (publishes the
+ * record, then every draft tree child, depth-first — publishRecursive()
+ * does NOT cascade to `Hierarchy` tree children either, only owned
+ * relations; a caller restructuring a 30-page subtree needs `subtree`
+ * instead of 30 individual `single` calls). See #71 and
+ * `docs/en/10_publishing-and-stages.md`.
  */
 class PublishOrchestrator
 {
     use Injectable;
 
-    public const MODES = ['none', 'single', 'recursive'];
+    public const MODES = ['none', 'single', 'recursive', 'subtree'];
 
     /**
      * Publish modes valid at the whole-composition level. `single` is
@@ -60,6 +68,12 @@ class PublishOrchestrator
             return;
         }
 
+        if ($mode === 'subtree') {
+            $this->publishSubtree($record);
+
+            return;
+        }
+
         if ($mode === 'recursive') {
             $record->publishRecursive();
 
@@ -70,20 +84,227 @@ class PublishOrchestrator
     }
 
     /**
-     * Remove the record from the live stage, keeping the draft.
+     * Publish the record itself, then every draft `Hierarchy` tree child,
+     * depth-first. A no-op walk for a class that isn't hierarchical (the
+     * publish itself still happens). Deliberately re-reads children in
+     * DRAFT stage on every call rather than trusting an ambient stage the
+     * caller may or may not have already set — self-contained regardless
+     * of calling context.
      */
-    public function unpublish(DataObject $record): void
+    protected function publishSubtree(DataObject $record): void
+    {
+        $record->publishSingle();
+
+        if (!$record->hasExtension(Hierarchy::class)) {
+            return;
+        }
+
+        $children = Versioned::withVersionedMode(function () use ($record) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            return iterator_to_array($record->AllChildren());
+        });
+
+        foreach ($children as $child) {
+            $this->publishSubtree($child);
+        }
+    }
+
+    /**
+     * Remove the record from the live stage, keeping the draft.
+     *
+     * Guards against a real, confirmed-live SilverStripe framework
+     * behavior (#71, found during a real IA restructure — see
+     * `docs/en/10_publishing-and-stages.md`): `SiteTree::onBeforeDelete()`
+     * cascades to `AllChildren()` and deletes them too, whenever
+     * `SiteTree.enforce_strict_hierarchy` is enabled (the framework
+     * default). `doUnpublish()` deletes the record from the LIVE stage
+     * internally, so on a `Hierarchy` record with ANY live children —
+     * whether or not those children have moved in draft — unpublishing
+     * silently cascades the whole live subtree away with it, recursively.
+     * (An earlier version of this guard only checked for children whose
+     * draft parent had diverged from live, matching the original bug
+     * report's framing; that undercounted the real risk — a live child
+     * that hasn't moved at all is cascade-deleted exactly the same way,
+     * confirmed by a test written to prove the narrower guard sufficient,
+     * which failed.) `$force` bypasses the guard for the case where the
+     * cascade is actually intended.
+     *
+     * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS unless $force
+     */
+    public function unpublish(DataObject $record, bool $force = false): void
     {
         $this->assertVersioned($record, 'unpublish');
+
+        if (!$force) {
+            $this->assertNoDescendants($record, [Versioned::LIVE], 'Unpublishing');
+        } else {
+            $this->logForcedBypass($record, [Versioned::LIVE], 'Unpublishing');
+        }
+
         $record->doUnpublish();
     }
 
     /**
-     * Remove the record from both stages (recoverable from version history).
+     * @param string[] $stages checked as a union — descendants present in
+     *   any of these stages are enough to refuse
+     * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS
      */
-    public function archive(DataObject $record): void
+    protected function assertNoDescendants(DataObject $record, array $stages, string $verbGerund): void
+    {
+        $descendantIDs = $this->findDescendantIDsInAnyStage($record, $stages);
+
+        if ($descendantIDs === []) {
+            return;
+        }
+
+        throw new ApiError(
+            ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS,
+            sprintf(
+                '%s %s #%d would also remove %d descendant(s) currently nested under it (ids: %s) '
+                    . '— `enforce_strict_hierarchy` cascades a delete to every child a record '
+                    . 'currently has in the stage(s) being deleted from, whether or not that child '
+                    . 'has also been reparented in draft. Publish/move them to their intended new '
+                    . 'home first if this record is being retired as part of a restructure, then '
+                    . 'retry — or pass force to proceed anyway and accept the loss.',
+                $verbGerund,
+                get_class($record),
+                (int) $record->ID,
+                count($descendantIDs),
+                $this->formatIDsForMessage($descendantIDs)
+            )
+        );
+    }
+
+    /**
+     * The bypass itself is the caller's explicit, requested choice — not a
+     * failure — but it's still the single riskiest operation this class
+     * performs, and previously left no trace anywhere that it happened.
+     * Logged at warning (not error) precisely because it's expected,
+     * intentional behavior, not a fault.
+     *
+     * @param string[] $stages
+     */
+    protected function logForcedBypass(DataObject $record, array $stages, string $verbGerund): void
+    {
+        $descendantIDs = $this->findDescendantIDsInAnyStage($record, $stages);
+
+        if ($descendantIDs === []) {
+            return;
+        }
+
+        Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+            '%s %s #%d with force=true, stranding %d descendant(s) (ids: %s).',
+            $verbGerund,
+            get_class($record),
+            (int) $record->ID,
+            count($descendantIDs),
+            $this->formatIDsForMessage($descendantIDs)
+        ));
+    }
+
+    /**
+     * @param string[] $stages
+     * @return int[]
+     */
+    protected function findDescendantIDsInAnyStage(DataObject $record, array $stages): array
+    {
+        $ids = [];
+
+        foreach ($stages as $stage) {
+            $ids = array_merge($ids, $this->findDescendantIDs($record, $stage));
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * Caps how many ids get interpolated into a message — a real restructure
+     * can strand hundreds of descendants at once, and neither the decision
+     * nor the message's actionability needs every single one spelled out;
+     * `count()` already carries the true magnitude.
+     *
+     * @param int[] $ids
+     */
+    protected function formatIDsForMessage(array $ids, int $limit = 20): string
+    {
+        if (count($ids) <= $limit) {
+            return implode(', ', $ids);
+        }
+
+        return implode(', ', array_slice($ids, 0, $limit)) . sprintf(', and %d more', count($ids) - $limit);
+    }
+
+    /**
+     * IDs of every `Hierarchy` descendant of $record in the given stage.
+     * Empty for a non-hierarchical class, one with no extension at all, or
+     * a record that doesn't exist in that stage.
+     *
+     * Deliberately queries by $record's own concrete class
+     * (`get_class($record)`), not `Hierarchy::getHierarchyBaseClass()` —
+     * this is load-bearing, not an oversight. `Versioned::doUnpublish()`
+     * itself resolves the live-stage row via `$owner::get()->byID($id)`
+     * (late static binding on the *same* concrete class), and
+     * `deleteFromStage()` clones `$owner` directly rather than re-querying
+     * by class at all. So whenever a class-name mismatch between stages
+     * (e.g. a page type conversion made in draft but not yet republished)
+     * would cause this method to miss a stage's row, the corresponding
+     * `doUnpublish()`/`deleteFromStage()` call misses that exact same row
+     * for the exact same reason — there is no live/draft delete for this
+     * method to have failed to guard against. Querying a broader base
+     * class here would desync the two and could refuse (or worse, permit)
+     * based on descendants the actual delete call can't reach anyway.
+     *
+     * @return int[]
+     */
+    protected function findDescendantIDs(DataObject $record, string $stage): array
+    {
+        if (!$record->hasExtension(Hierarchy::class)) {
+            return [];
+        }
+
+        $baseClass = get_class($record);
+        $id = (int) $record->ID;
+
+        return Versioned::withVersionedMode(function () use ($baseClass, $id, $stage) {
+            Versioned::set_stage($stage);
+            $staged = DataObject::get($baseClass)->byID($id);
+
+            if (!$staged) {
+                return [];
+            }
+
+            // getDescendantIDList() is a Hierarchy mixin method, confirmed
+            // present by the hasExtension() check above — PHPStan can't see
+            // that guard applies to this freshly-fetched instance too.
+            /** @var DataObject&Hierarchy $staged */
+            return $staged->getDescendantIDList();
+        });
+    }
+
+    /**
+     * Remove the record from both stages (recoverable from version
+     * history). Shares {@see unpublish()}'s guard: `doArchive()` calls
+     * `doUnpublish()` internally (live-stage cascade risk), then also
+     * deletes the draft-stage row directly (`deleteFromStage(DRAFT)`,
+     * itself another `enforce_strict_hierarchy`-cascading delete) — so
+     * archive risks stranding descendants in *either* stage, checked here
+     * as the union of both.
+     *
+     * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS unless $force
+     */
+    public function archive(DataObject $record, bool $force = false): void
     {
         $this->assertVersioned($record, 'archive');
+
+        $stages = [Versioned::LIVE, Versioned::DRAFT];
+
+        if (!$force) {
+            $this->assertNoDescendants($record, $stages, 'Archiving');
+        } else {
+            $this->logForcedBypass($record, $stages, 'Archiving');
+        }
+
         $record->doArchive();
     }
 
@@ -92,11 +313,13 @@ class PublishOrchestrator
      * (default) or `unpublish` only — `hard` is rejected up front, so the
      * "must be one of" error never lists a mode this record can't actually
      * use. Unversioned classes accept all of DELETE_MODES, where every mode
-     * converges on delete().
+     * converges on delete(). `unpublish` mode routes through
+     * {@see unpublish()} — same stranded-descendants guard, same `$force`
+     * override.
      *
-     * @throws ApiError PAYLOAD_INVALID
+     * @throws ApiError PAYLOAD_INVALID | UNPUBLISH_STRANDS_DESCENDANTS
      */
-    public function delete(DataObject $record, string $mode): void
+    public function delete(DataObject $record, string $mode, bool $force = false): void
     {
         $isVersioned = $record->hasExtension(Versioned::class);
         $validModes = $isVersioned ? ['archive', 'unpublish'] : PublishOrchestrator::DELETE_MODES;
@@ -119,8 +342,8 @@ class PublishOrchestrator
         }
 
         match ($mode) {
-            'archive' => $record->doArchive(),
-            'unpublish' => $record->doUnpublish(),
+            'archive' => $this->archive($record, $force),
+            'unpublish' => $this->unpublish($record, $force),
             // Unreachable — $validModes above already rejected anything else.
             default => throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
