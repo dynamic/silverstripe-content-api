@@ -88,20 +88,31 @@ class ContentApiGrantExtensionTest extends SapphireTest
     }
 
     /**
-     * Versioned::canDelete() independently vetoes (returns false, which
-     * participates in the same extendedCan() minimum as this extension's own
-     * answer) once a record is published, unless canUnpublish() succeeds —
-     * and canUnpublish() falls through to canPublish() falls through to
-     * canEdit(). A class declaring only the delete verb (no update/action)
-     * therefore cannot archive an already-published record even though this
-     * extension answers canDelete() true on its own — the canEdit() grant is
-     * load-bearing for archive too, not just for publish/unpublish. A
-     * draft-only record has no such veto (Versioned::canDelete() only
-     * vetoes published records), which is why
-     * testVerbScopingWithholdsDeleteWhenNotDeclared below (unpublished)
-     * doesn't exercise this interaction.
+     * BRANCH DIVERGENCE from branch `1`'s equivalent test
+     * (testCanDeleteOnAPublishedRecordAlsoNeedsTheEditGrant): on branch `1`,
+     * silverstripe/versioned's Versioned::canDelete() independently vetoes
+     * (returns false, participating in the same extendedCan() minimum)
+     * archiving an already-published record unless canUnpublish() succeeds —
+     * so a class declaring only the delete verb (no update/action) cannot
+     * archive a published record there.
+     *
+     * That veto does not exist on this branch's `silverstripe/versioned`
+     * (`2.4.x-dev`, confirmed against a real SS5.2 install): `Versioned.php`
+     * has NO canDelete() override at all — only a deprecated canArchive()
+     * whose own docblock says "Use canDelete() instead", i.e. canDelete()
+     * only starts carrying archive semantics on the version branch `1`
+     * depends on. `RecordActionsHandler` gates archive on canDelete()
+     * regardless of branch (that file is identical between `1` and `ss5`),
+     * so on THIS branch canDelete() answers this extension's own true
+     * unchallenged — a class declaring only DELETE genuinely CAN archive an
+     * already-published record here. Confirmed live: removing the canEdit
+     * grant does not block archive on a real SS5.2 site running this
+     * branch's dependency versions.
+     *
+     * Do not "fix" this by porting the branch-`1` assertion here — it would
+     * fail against this branch's real, correct behaviour, not a bug.
      */
-    public function testCanDeleteOnAPublishedRecordAlsoNeedsTheEditGrant(): void
+    public function testCanDeleteOnAPublishedRecordDoesNotNeedTheEditGrantHere(): void
     {
         Config::modify()->set(ApiTestPage::class, 'content_api_access', 'GET,DELETE');
 
@@ -111,11 +122,10 @@ class ContentApiGrantExtensionTest extends SapphireTest
 
         $member = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
 
-        $this->assertFalse(
+        $this->assertTrue(
             (bool) $page->canDelete($member),
-            'declaring only DELETE is not enough to archive an already-published record — '
-                . 'Versioned::canDelete() vetoes unless canUnpublish() (which chains to '
-                . 'canEdit()) also succeeds'
+            'on this branch, unlike branch 1, silverstripe/versioned does not override '
+                . 'canDelete() to veto based on canUnpublish() — see this test\'s docblock'
         );
     }
 

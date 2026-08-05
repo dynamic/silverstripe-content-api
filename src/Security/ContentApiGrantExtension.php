@@ -93,13 +93,21 @@ use SilverStripe\Security\Security;
  * `SiteTree::canPublish()` and `canAddChildren()` both fall through to
  * `canEdit()` when nothing answers them directly, which is what makes
  * publish/unpublish and reparenting work for a service account holding the
- * `update`/`action` verb. It's also load-bearing for archive on an
- * already-*published* record: `Versioned::canDelete()` independently vetoes
- * (returns `false`, in the same `extendedCan()` minimum as this extension's
- * own `canDelete()` answer) unless `canUnpublish()` succeeds, and
- * `canUnpublish()` falls through to `canPublish()` falls through to
- * `canEdit()`. A class declaring only the `delete` verb (no `update`/`action`)
- * can archive a draft-only record but not a published one.
+ * `update`/`action` verb.
+ *
+ * BRANCH NOTE: on branch `1`, `canEdit()`'s grant is *also* load-bearing for
+ * archiving an already-*published* record — `Versioned::canDelete()` there
+ * independently vetoes (returns `false`, in the same `extendedCan()` minimum
+ * as this extension's own `canDelete()` answer) unless `canUnpublish()`
+ * succeeds, which falls through to `canPublish()` falls through to
+ * `canEdit()`. **That veto does not exist on this branch's
+ * `silverstripe/versioned` (confirmed against a real SS5.2 install,
+ * `2.4.x-dev`) — `Versioned` has no `canDelete()` override at all here, only
+ * a deprecated `canArchive()` whose own docblock says to use `canDelete()`
+ * instead on the version branch `1` depends on.** A class declaring only the
+ * `delete` verb (no `update`/`action`) can archive both a draft-only record
+ * AND an already-published one on this branch — see
+ * `ContentApiGrantExtensionTest::testCanDeleteOnAPublishedRecordDoesNotNeedTheEditGrantHere()`.
  *
  * `canView()` alone does NOT make a draft-only record readable:
  * `Versioned::canViewVersioned()` answers `false` once draft and live

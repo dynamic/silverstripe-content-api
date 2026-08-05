@@ -113,11 +113,15 @@ is what satisfies it, and `SetupContentApiServiceAccount` already grants it alon
 `CONTENT_API_ACCESS`. Don't widen this extension to work around that 403; check the account
 holds `VIEW_DRAFT_CONTENT` instead.
 
-Similarly, **`canEdit()`'s grant is what clears `Versioned::canDelete()`'s veto on an
-already-published record**, not `canDelete()`'s own answer: `Versioned::canDelete()` vetoes
-unless `canUnpublish()` succeeds, and `canUnpublish()` falls through to `canPublish()` falls
-through to `canEdit()`. A class declaring only the `delete` verb (no `update`/`action`) can
-archive a draft-only record but not a published one.
+**Branch note:** on branch `1`, `canEdit()`'s grant is also what clears `Versioned::canDelete()`'s
+veto on an already-published record — `Versioned::canDelete()` there vetoes unless
+`canUnpublish()` succeeds, which falls through to `canPublish()` falls through to `canEdit()`, so
+a class declaring only the `delete` verb (no `update`/`action`) can archive a draft-only record
+but not a published one. **That veto does not exist on this branch's `silverstripe/versioned`**
+(confirmed against a real SS5.2 install running `2.4.x-dev`: `Versioned` has no `canDelete()`
+override at all — only a deprecated `canArchive()` whose own docblock says to use `canDelete()`
+instead on the version branch `1` depends on). A class declaring only `delete` on this branch can
+archive both a draft-only record and an already-published one.
 
 ## Class-level gate
 
