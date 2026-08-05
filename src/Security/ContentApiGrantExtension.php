@@ -160,7 +160,7 @@ class ContentApiGrantExtension extends Extension
      * @return true|null true to grant, null to abstain — never false, see
      *   the class docblock. Typed `?bool` rather than `true|null` on this
      *   branch: standalone `true` as a type is PHP 8.2+, and this branch's
-     *   floor is PHP `^8.1` — branch `1` (PHP `^8.3`) enforces the invariant
+     *   floor is PHP `^8.1` — branch `1` (a PHP 8.3 floor) enforces the invariant
      *   at the type level; here it's convention plus the regression test.
      */
     protected function grant(string|array $verbs, $member = null): ?bool

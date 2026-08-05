@@ -20,7 +20,7 @@ use SilverStripe\Security\Permission;
  * content_api_access, must get NOTHING on a subclass that only inherits it,
  * and every other Member's permissions must be unaffected. No fixture file —
  * members/groups are built imperatively (matches
- * ServiceAccountProvisionerTest's convention); real DB writes, so
+ * SetupServiceAccountTaskTest's convention); real DB writes, so
  * $usesDatabase = true (see #72: a missing one polluted the real dev DB).
  */
 class ContentApiGrantExtensionTest extends SapphireTest
@@ -280,7 +280,7 @@ class ContentApiGrantExtensionTest extends SapphireTest
      * participates in the same extendedCan() minimum, overriding this
      * extension's true. VIEW_DRAFT_CONTENT is what satisfies Versioned's own
      * check — the real service account already holds it alongside
-     * CONTENT_API_ACCESS (ServiceAccountProvisioner grants both), so this
+     * CONTENT_API_ACCESS (SetupServiceAccountTask grants both), so this
      * pairing matches production, not a workaround for the test.
      */
     public function testDraftOnlyReadStillNeedsViewDraftContent(): void

@@ -51,6 +51,15 @@ All notable changes to this project are documented here. Format loosely follows
   upgrade message instead of falling through. Writes previously (incorrectly) accepted on an
   affected site now return 422.
 
+### Docs
+- **(#76)** `docs/en/04_security-model.md`'s "Class-level gate" section claimed the gate was
+  "deny-by-default...checked against the record's concrete class, so a subclass may narrow
+  inherited access." Both halves were wrong: `api_access`/`content_api_access` are ordinary
+  inherited config, so an undeclared subclass inherits its ancestor's verbs rather than being
+  denied by default; and the concrete class the gate is checked against is whatever
+  `RecordsHandler::fetchRecord()`'s `get_by_id()` returns, which can be a subclass reached under
+  any mapped *ancestor* ref, not something the gate narrows to.
+
 ## [Unreleased] — ss5
 
 This branch tracks branch `1` (synced via `git merge origin/1`, never cherry-picked) and carries
@@ -62,7 +71,10 @@ the two branches.
 - **(#76)** `Dynamic\ContentApi\Security\ContentApiGrantExtension`, ported from branch `1` — see
   the shared `[Unreleased]` entry above. No `Tasks/Support/ServiceAccountProvisioner` exists on
   this branch yet (pre-#65 extraction), so the equivalent wording change lives inline in
-  `SetupServiceAccountTask.php` instead.
+  `SetupServiceAccountTask.php` instead. **Deviation from branch policy**: ported via cherry-pick
+  rather than `git merge origin/1`, since branch `1`'s source PR (#77) was still open at the time.
+  Re-sync via a real merge once #77 merges — the merge should land cleanly since the content is
+  identical, but expect it to show as already-applied rather than a no-op.
 
 ### Changed
 - Tasks invoke via SS5's legacy `sake dev/tasks/<Segment> key=value` syntax, not branch `1`'s SS6
@@ -73,13 +85,14 @@ the two branches.
   [docs/en/upstream-issues.md](docs/en/upstream-issues.md).
 
 ### Docs
-- **(#76)** `docs/en/04_security-model.md`'s "Class-level gate" section claimed the gate was
-  "deny-by-default...checked against the record's concrete class, so a subclass may narrow
-  inherited access." Both halves were wrong: `api_access`/`content_api_access` are ordinary
-  inherited config, so an undeclared subclass inherits its ancestor's verbs rather than being
-  denied by default; and the concrete class the gate is checked against is whatever
-  `RecordsHandler::fetchRecord()`'s `get_by_id()` returns, which can be a subclass reached under
-  any mapped *ancestor* ref, not something the gate narrows to.
+- **(#76)** Ported the `04_security-model.md` class-level-gate correction above, plus one
+  genuine branch-specific divergence found while verifying live against a real SS5.2 site
+  (`silverstripe/versioned` `2.4.x-dev`): unlike branch `1`, `Versioned` has no `canDelete()`
+  override on this branch's dependency version at all — only a deprecated `canArchive()` whose
+  own docblock says to use `canDelete()` instead on the version branch `1` depends on. A class
+  declaring only the `delete` verb can therefore archive an already-published record on this
+  branch, where it cannot on branch `1`. See `ContentApiGrantExtension`'s "BRANCH NOTE" docblock
+  and `ContentApiGrantExtensionTest::testCanDeleteOnAPublishedRecordDoesNotNeedTheEditGrantHere()`.
 
 ## [1.4.0] - 2026-07-17
 
