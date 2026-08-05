@@ -58,6 +58,8 @@ vendor/bin/phpstan analyse       # phpstan.neon.dist
 | `Control/WriteGuardPolymorphicTest.php` | Polymorphic `{"class","id"}` payload + `{Name}Class` translation on the colymba surface |
 | `Control/WriteGuardEncodeFailureTest.php` | `json_encode` failure path in the guard's re-encode step |
 | `Errors/ApiErrorTest.php` | `fromValidation()` maps structured messages, never a raw exception string |
+| `Registry/ClassRegistryTest.php` | `accessVerbs()`/`ownAccessVerbs()` inherited-vs-uninherited resolution, discovery (`discovery_roots`/`discovery_write_policy`/`discovery_exclude`), mandatory denylist, manual-model precedence |
+| `Security/ContentApiGrantExtensionTest.php` | `ContentApiGrantExtension`: escalation regression (a declared class's verbs must not leak to an undeclared subclass), per-verb scoping, the never-`false` guard, `VIEW_DRAFT_CONTENT`/`Versioned::canDelete()` interactions, `BaseElement::canCreate()` non-delegation |
 | `Security/PermissionPolicyTest.php` | `buildCreateContext()` has_one hydration, incl. trusted-field-only relations |
 | `Write/WriteApplicatorTest.php` | Trusted channel setting a polymorphic Class column directly |
 | `ContentApiTestCase.php` + `Stub/*.php` | Shared fixture/registry/token plumbing and test DataObjects |

@@ -412,6 +412,46 @@ class ClassRegistry
     }
 
     /**
+     * The verbs a class declares *itself*, ignoring anything inherited from
+     * an ancestor. Same key precedence as accessVerbs() (`content_api_access`
+     * wins over `api_access`), but read with `Config::UNINHERITED |
+     * Config::EXCLUDE_EXTRA_SOURCES` and with no discovery fallback —
+     * `EXCLUDE_EXTRA_SOURCES` matters here specifically (accessVerbs() has no
+     * reason to use it): without it, a value contributed by another
+     * *extension* applied to the class would count as that class's "own"
+     * declaration too, same as `Extensible::getExtensionInstances()` uses
+     * both flags together when resolving a class's own `extensions` config.
+     *
+     * accessVerbs() is deliberately inherited: a project declaring
+     * `content_api_access` on `Page` exposes the whole page tree at the class
+     * gate, which is usually what it wants. That makes the class gate useless
+     * as a narrowing mechanism for a *record-level* permission grant, though
+     * — an undeclared subclass still inherits the declared one's verbs there.
+     * This is the uninherited counterpart a record-level grant extension
+     * needs so it can never reach a class the project never named itself —
+     * see `Security\ContentApiGrantExtension` and
+     * `docs/en/04_security-model.md`.
+     *
+     * @return string[] subset of ClassRegistry::VERBS, empty = declares
+     *   nothing of its own (whether or not it inherits something)
+     */
+    public function ownAccessVerbs(string $className): array
+    {
+        $config = Config::inst();
+        $flags = Config::UNINHERITED | Config::EXCLUDE_EXTRA_SOURCES;
+
+        $own = $config->get($className, 'content_api_access', $flags);
+
+        if ($own !== null) {
+            return $this->parseAccess($own);
+        }
+
+        $own = $config->get($className, 'api_access', $flags);
+
+        return $own === null ? [] : $this->parseAccess($own);
+    }
+
+    /**
      * Parses an `api_access`/`content_api_access` value already confirmed
      * present into verbs: `true` = all, a CSV of colymba-style HTTP verbs
      * (or bare verb names) maps via `METHOD_VERB_MAP`, anything else
