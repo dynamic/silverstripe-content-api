@@ -39,6 +39,7 @@ absent otherwise.
 | `ASSET_READ_FAILED` | 502 | Uploaded binary is empty/unreadable |
 | `FEATURE_UNAVAILABLE` | 501 | Endpoint needs an optional integration that isn't installed (elemental, linkfield, essentials-tools, elemental-templates) |
 | `SERVER_ERROR` | 500 | Uncaught exception. Dev/test environments get `ClassName: message`; production gets an opaque `"Internal server error."` |
+| `ROLLBACK_UNVERIFIED` | 500 | An atomic batch (`docs/en/07_batch-operations.md`) failed and the transaction rollback path ran, but re-checking the affected records by id afterward found at least one still present. Reported instead of a false `rolledBack: true` — check the records named in `error.details` directly before retrying, since some operations reported before the failure may have actually committed (#70) |
 
 ## `URLSEGMENT_COLLISION`: a warning code, not a thrown error
 

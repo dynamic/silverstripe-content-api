@@ -34,6 +34,7 @@ enum ErrorCode: string
     case FEATURE_UNAVAILABLE = 'FEATURE_UNAVAILABLE';
     case METHOD_NOT_ALLOWED = 'METHOD_NOT_ALLOWED';
     case SERVER_ERROR = 'SERVER_ERROR';
+    case ROLLBACK_UNVERIFIED = 'ROLLBACK_UNVERIFIED';
 
     public function httpStatus(): int
     {
@@ -51,7 +52,7 @@ enum ErrorCode: string
             ErrorCode::PAYLOAD_INVALID => 400,
             ErrorCode::ASSET_READ_FAILED => 502,
             ErrorCode::FEATURE_UNAVAILABLE => 501,
-            ErrorCode::SERVER_ERROR => 500,
+            ErrorCode::SERVER_ERROR, ErrorCode::ROLLBACK_UNVERIFIED => 500,
         };
     }
 }

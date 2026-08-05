@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
@@ -130,6 +131,76 @@ class BatchTest extends ContentApiTestCase
         $this->assertNull(
             ApiTestObject::get()->filter('FixtureIdentifier', 'atomic-1')->first(),
             'successful op before the failure must be rolled back'
+        );
+    }
+
+    /**
+     * Regression for #70: a PHP diagnostic that isn't a Throwable — a
+     * deprecation notice from application code this module doesn't control,
+     * e.g. dynamic/foxystripe's real ProductPage::onBeforeWrite() calling
+     * trim() on a nullable field with no null-guard — never reaches
+     * BatchProcessor's own error handling (it doesn't throw), but
+     * SilverStripe's default dev-mode error handler echoes an HTML debug
+     * block directly to output for it. Confirmed live against a real HTTP
+     * request (curl, not this test) that left unbuffered, that HTML gets
+     * sent ahead of this controller's own JSON body, corrupting the raw
+     * response into something a client can't parse — even though the
+     * underlying write succeeded exactly as intended. This test's own
+     * assertion that decode() produces a real array is itself the
+     * regression check: a corrupted response fails that assertion loudly,
+     * showing the raw body.
+     */
+    public function testDeprecationNoticeDuringWriteDoesNotCorruptTheResponse(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestDeprecating',
+                    'externalId' => 'deprecating-1',
+                    'fields' => ['Title' => 'Triggers a deprecation on write'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['created'], array_column($body['data']['results'], 'status'));
+        $this->assertNotNull(ApiTestDeprecatingObject::get()->filter('FixtureIdentifier', 'deprecating-1')->first());
+    }
+
+    /**
+     * Same root cause as the test above, but through the atomic path with a
+     * genuine op failure alongside the deprecation — the shape #70 actually
+     * reported: a batch that both deprecates AND legitimately fails must
+     * still produce an accurate, parseable rollback report, with the
+     * deprecating op's own row confirmed truly gone afterward (not just
+     * claimed gone).
+     */
+    public function testDeprecationNoticeInsideAnAtomicBatchThatGenuinelyFailsStillReportsAccurately(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestDeprecating',
+                    'externalId' => 'deprecating-atomic-1',
+                    'fields' => ['Title' => 'Triggers a deprecation on write'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'deprecating-atomic-2',
+                    'fields' => ['Bogus' => 1],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('VALIDATION_FAILED', $body['error']['code']);
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertNull(
+            ApiTestDeprecatingObject::get()->filter('FixtureIdentifier', 'deprecating-atomic-1')->first(),
+            'the deprecating op must be genuinely rolled back, not just reported as rolled back'
         );
     }
 

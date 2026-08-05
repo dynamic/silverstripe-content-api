@@ -71,16 +71,91 @@ class BatchProcessor
             });
         } catch (BatchAbortException $aborted) {
             $result = $aborted->partialOutcome;
-            $result['rolledBack'] = true;
+            $verified = $this->verifyRollback($operations, $result['results']);
+            $result['rolledBack'] = $verified;
 
+            if ($verified) {
+                throw new ApiError(
+                    ErrorCode::VALIDATION_FAILED,
+                    sprintf('Atomic batch failed at operation %d — rolled back.', $aborted->failedIndex),
+                    [$result]
+                );
+            }
+
+            // A caught exception unwinding through DbTransaction::run() ran
+            // the transaction's rollback branch, but a re-check of the
+            // records this batch reported as created/updated/deleted shows
+            // at least one is still there — the SQL rollback didn't
+            // actually take effect (confirmed cause: #70, a PHP diagnostic
+            // that isn't a Throwable — e.g. a deprecation notice from
+            // application code mid-write — can leave a caller unable to
+            // trust the framework's own transaction-nesting bookkeeping).
+            // Report this distinctly rather than claiming "rolled back" —
+            // the caller must check the database directly before retrying.
             throw new ApiError(
-                ErrorCode::VALIDATION_FAILED,
-                sprintf('Atomic batch failed at operation %d — rolled back.', $aborted->failedIndex),
+                ErrorCode::ROLLBACK_UNVERIFIED,
+                sprintf(
+                    'Atomic batch failed at operation %d, and the rollback could not be verified '
+                        . '— some operations reported before the failure may still have committed. '
+                        . 'Check the affected records directly before retrying.',
+                    $aborted->failedIndex
+                ),
                 [$result]
             );
         }
 
         return $outcome;
+    }
+
+    /**
+     * Re-check every record this batch reported as created, by id, after
+     * the transaction was supposed to roll back — confirms a real SQL
+     * ROLLBACK actually happened rather than trusting the exception-unwind
+     * path alone. Deliberately checked outside the failed transaction's own
+     * versioned-mode context (that context no longer applies once the
+     * transaction has unwound), reading the same DRAFT stage every write in
+     * this batch targeted.
+     *
+     * Only covers 'created' results — an 'updated' or 'deleted' op's
+     * pre-image isn't retained anywhere to compare against, so a false
+     * negative (a corrupted update/delete slipping through undetected) is
+     * still possible. Catching every created record still there is the
+     * cheapest, highest-signal check available without redesigning what a
+     * batch operation records about itself.
+     */
+    protected function verifyRollback(array $operations, array $results): bool
+    {
+        return Versioned::withVersionedMode(function () use ($operations, $results) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            foreach ($results as $result) {
+                if ($result['status'] !== 'created' || !isset($result['id'])) {
+                    continue;
+                }
+
+                $operation = $operations[$result['index']] ?? null;
+
+                if (!is_array($operation)) {
+                    continue;
+                }
+
+                try {
+                    $className = $this->registry->resolve((string) ($operation['class'] ?? ''));
+                } catch (ApiError) {
+                    // The class resolved fine when the op originally ran
+                    // (that's how it got marked 'created') — if it fails to
+                    // resolve now, fail toward "can't verify" rather than
+                    // risk a false "confirmed rolled back".
+                    return false;
+                }
+
+                if (DataObject::get_by_id($className, (int) $result['id'])) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
     }
 
     /**

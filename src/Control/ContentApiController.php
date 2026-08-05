@@ -281,19 +281,36 @@ class ContentApiController extends Controller
     /**
      * Run an endpoint callable and wrap its result in the JSON envelope.
      * The callable returns ['data' => ..., 'meta' => [...], 'status' => int].
+     *
+     * Buffers all output the callable produces: a PHP diagnostic that isn't
+     * a `Throwable` — most notably a deprecation notice from application
+     * code this module doesn't control (e.g. a third-party DataObject's
+     * `onBeforeWrite()`) — never reaches `withEnvelope()`'s own try/catch,
+     * because it doesn't throw. In dev/test environments SilverStripe's
+     * default error handler `echo`s an HTML debug block directly to output
+     * for exactly this case, bypassing this controller's `HTTPResponse`
+     * entirely. Left unbuffered, that HTML gets sent ahead of (and
+     * concatenated with) this method's own well-formed JSON body — the
+     * client receives a response that's neither valid JSON nor an accurate
+     * reflection of the real outcome, even though the underlying operation
+     * may have completed exactly as intended (confirmed empirically: #70).
+     * Any captured stray output is logged, not silently discarded, so the
+     * underlying diagnostic is still visible to whoever reads the logs.
      */
     protected function withEnvelope(callable $endpoint): HTTPResponse
     {
+        ob_start();
+
         try {
             $result = $endpoint();
 
-            return $this->jsonResponse(
+            $response = $this->jsonResponse(
                 $result['data'] ?? null,
                 $result['meta'] ?? [],
                 $result['status'] ?? 200
             );
         } catch (ApiError $error) {
-            return $this->errorResponse($error);
+            $response = $this->errorResponse($error);
         } catch (Throwable $exception) {
             Injector::inst()->get(LoggerInterface::class)->error(
                 'Content API server error: ' . $exception->getMessage(),
@@ -306,8 +323,22 @@ class ContentApiController extends Controller
                 ? sprintf('%s: %s', get_class($exception), $exception->getMessage())
                 : 'Internal server error.';
 
-            return $this->errorResponse(new ApiError(ErrorCode::SERVER_ERROR, $message));
+            $response = $this->errorResponse(new ApiError(ErrorCode::SERVER_ERROR, $message));
         }
+
+        $strayOutput = ob_get_clean();
+
+        if ($strayOutput !== false && trim($strayOutput) !== '') {
+            Injector::inst()->get(LoggerInterface::class)->warning(
+                'Content API endpoint produced stray output outside the JSON envelope '
+                    . '(suppressed from the response; likely a PHP notice/deprecation from '
+                    . 'application code) — the response itself is still accurate, but check '
+                    . 'the source below for a bug worth fixing.',
+                ['strayOutput' => $strayOutput]
+            );
+        }
+
+        return $response;
     }
 
     protected function jsonResponse(mixed $data, array $meta = [], int $status = 200): HTTPResponse
