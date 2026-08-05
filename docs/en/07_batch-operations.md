@@ -43,7 +43,17 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
   for that index and the rest continue independently.
 - **`"atomic": true`**: the whole batch runs inside one DB transaction. The first failing
   operation rolls everything back; the response reports `422 VALIDATION_FAILED` with the
-  partial results (`rolledBack: true`) attached as `error.details`.
+  partial results (`rolledBack: true`) attached as `error.details`. Before `rolledBack: true`
+  is reported, every operation the partial results claim as `created` is re-checked by id
+  against the database — **`updated`/`deleted` results are not independently verified** (no
+  pre-image is retained to compare an update against; a delete's verifiability depends on its
+  mode and isn't checked yet — see `dynamic/silverstripe-content-api#75`). If any checked
+  `created` record is still there — confirmed possible when a non-`Throwable` PHP diagnostic
+  (e.g. a deprecation notice from application code this module doesn't control) fires
+  mid-write — the response reports `500 ROLLBACK_UNVERIFIED` instead. That response does
+  **not** narrow down which record(s) are still present; it carries the same full
+  `error.details` block as a normal rollback failure, so re-check every `created` result in it
+  by hand before retrying. See `docs/en/12_error-codes.md`.
 
 ## Response shape
 

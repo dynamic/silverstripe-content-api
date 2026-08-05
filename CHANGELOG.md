@@ -56,6 +56,28 @@ All notable changes to this project are documented here. Format loosely follows
   it never got an isolated temp DB or per-test transaction rollback — every local run wrote
   real `Group`/`Permission` rows into the host project's live dev DB, colliding with the next
   run's data. The new `Tasks/Support` tests inherit the fix.
+- **(#70)** A non-`Throwable` PHP diagnostic mid-request — most notably a deprecation notice
+  from application code this module doesn't control (e.g. a third-party DataObject's
+  `onBeforeWrite()`) — never reached `ContentApiController`'s own exception handling, because
+  it doesn't throw. In dev/test environments SilverStripe's default error handler `echo`s an
+  HTML debug block directly to output for exactly this case, bypassing the controller's
+  `HTTPResponse` entirely; left unbuffered, that HTML got sent ahead of (and concatenated
+  with) the endpoint's own well-formed JSON body, corrupting the response into something
+  neither valid JSON nor an accurate reflection of the real outcome — confirmed against a real
+  HTTP request, where the underlying write had actually succeeded. `withEnvelope()` now
+  buffers all output from the endpoint callable (drained down to the level it opened, so an
+  unbalanced buffer left open by application code doesn't slip past it); any stray output is
+  logged (not silently discarded) rather than allowed to reach the response. Known gap this
+  can't close: SilverStripe's own `Deprecation::notice()` defers its output to request
+  shutdown, after the response is already sent, so it can't be buffered here — and a true PHP
+  fatal (not a `Throwable`) never returns control to drain the buffer at all. Separately,
+  `BatchProcessor` no longer trusts that an atomic batch's caught-exception rollback path means
+  the SQL `ROLLBACK` actually took effect — every operation reported `created` is now
+  re-checked by id against the database (using an uncached, non-deprecated lookup) before the
+  response claims `rolledBack: true`; if any is still there, or the check itself fails for an
+  unrelated reason, the response reports the new `500 ROLLBACK_UNVERIFIED` instead, carrying
+  the same full results array so every `created` entry can be checked by hand. `updated`/
+  `deleted` results aren't independently verified yet (#75). See `docs/en/12_error-codes.md`.
 
 ## [1.4.0] - 2026-07-17
 

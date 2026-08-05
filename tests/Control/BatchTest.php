@@ -2,15 +2,19 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Batch\BatchProcessor;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Core\Injector\Injector;
 
 class BatchTest extends ContentApiTestCase
 {
@@ -131,6 +135,107 @@ class BatchTest extends ContentApiTestCase
             ApiTestObject::get()->filter('FixtureIdentifier', 'atomic-1')->first(),
             'successful op before the failure must be rolled back'
         );
+    }
+
+    /**
+     * Companion coverage for #70, NOT a regression test for the output-
+     * buffering fix itself — SilverStripe's FunctionalTest invokes the
+     * controller in-process and inspects the returned HTTPResponse object
+     * directly, bypassing the real PHP output stream a live web request
+     * concatenates stray echo output onto, so this harness can't observe
+     * that specific corruption (see ContentApiControllerOutputBufferingTest
+     * for the test that actually exercises the buffering, and does fail
+     * without the fix). What this test does confirm: a deprecation notice
+     * from application code (dynamic/foxystripe's real
+     * ProductPage::onBeforeWrite() calling trim() on a nullable field is
+     * the real-world shape) doesn't otherwise disrupt normal batch write
+     * semantics — the op still reports 'created' and the record is really
+     * there.
+     */
+    public function testDeprecationNoticeDuringWriteDoesNotCorruptTheResponse(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestDeprecating',
+                    'externalId' => 'deprecating-1',
+                    'fields' => ['Title' => 'Triggers a deprecation on write'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['created'], array_column($body['data']['results'], 'status'));
+        $this->assertNotNull(ApiTestDeprecatingObject::get()->filter('FixtureIdentifier', 'deprecating-1')->first());
+    }
+
+    /**
+     * Same scope note as the test above (companion coverage, not a
+     * buffering regression test — see ContentApiControllerOutputBufferingTest
+     * for that). Through the atomic path with a genuine op failure
+     * alongside the deprecation: confirms a deprecating op doesn't prevent
+     * verifyRollback() from doing its job — the deprecating op's own row
+     * is confirmed truly gone afterward (not just claimed gone), matching
+     * the real committed-atomic-batch-still-rolls-back case.
+     */
+    public function testDeprecationNoticeInsideAnAtomicBatchThatGenuinelyFailsStillReportsAccurately(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestDeprecating',
+                    'externalId' => 'deprecating-atomic-1',
+                    'fields' => ['Title' => 'Triggers a deprecation on write'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'deprecating-atomic-2',
+                    'fields' => ['Bogus' => 1],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('VALIDATION_FAILED', $body['error']['code']);
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertNull(
+            ApiTestDeprecatingObject::get()->filter('FixtureIdentifier', 'deprecating-atomic-1')->first(),
+            'the deprecating op must be genuinely rolled back, not just reported as rolled back'
+        );
+    }
+
+    /**
+     * End-to-end coverage of the ROLLBACK_UNVERIFIED response path itself
+     * (BatchProcessorRollbackVerificationTest covers verifyRollback() in
+     * isolation, but nothing else exercises process()'s catch block taking
+     * the $verified === false branch). The framework's real rollback
+     * mechanism works correctly under normal conditions — confirmed by
+     * testAtomicBatchRollsBack above — so nothing in a real request can
+     * force a genuine failed-verification outcome; ForceUnverifiedRollback
+     * BatchProcessor swaps in to force it instead.
+     */
+    public function testUnverifiedRollbackReportsDistinctlyFromAVerifiedOne(): void
+    {
+        Injector::inst()->registerService(
+            ForceUnverifiedRollbackBatchProcessor::create(),
+            BatchProcessor::class
+        );
+
+        $body = $this->decode($this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'unverified-1', 'fields' => ['Title' => 'First']],
+                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'unverified-2', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('ROLLBACK_UNVERIFIED', $body['error']['code']);
+        $this->assertSame(500, $body['error']['status']);
+        $this->assertFalse($body['error']['details'][0]['rolledBack']);
+        $this->assertStringContainsString('could not be verified', $body['error']['message']);
     }
 
     public function testDefaultPublishApplies(): void
