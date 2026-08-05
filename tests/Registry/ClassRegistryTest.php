@@ -10,6 +10,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestDiscoveryMiddle;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDiscoveryNonDataObjectAbstract;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDiscoveryNonDataObjectConcrete;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDiscoveryRoot;
+use Dynamic\ContentApi\Tests\Stub\ApiTestExtraSourceAccessExtension;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Security\Member;
@@ -331,6 +332,29 @@ class ClassRegistryTest extends SapphireTest
 
     public function testOwnAccessVerbsIsEmptyWhenNothingIsSetAtAll(): void
     {
+        $registry = ClassRegistry::singleton();
+
+        $this->assertSame([], $registry->ownAccessVerbs(ApiTestDiscoveryRoot::class));
+    }
+
+    /**
+     * ContentApiGrantExtension's whole safety model depends on
+     * ownAccessVerbs() answering only for a class's own LITERAL
+     * declaration — not one contributed by an extension applied to it.
+     * Without Config::EXCLUDE_EXTRA_SOURCES, any extension carrying its own
+     * `content_api_access` static (e.g. one applied for an unrelated
+     * reason) would silently opt a class into the grant, regardless of
+     * whether the class's own class body ever mentioned content_api_access
+     * at all.
+     */
+    public function testOwnAccessVerbsExcludesValueContributedByAnExtension(): void
+    {
+        Config::modify()->set(
+            ApiTestDiscoveryRoot::class,
+            'extensions',
+            [ApiTestExtraSourceAccessExtension::class]
+        );
+
         $registry = ClassRegistry::singleton();
 
         $this->assertSame([], $registry->ownAccessVerbs(ApiTestDiscoveryRoot::class));
