@@ -27,7 +27,7 @@ Two cooperating surfaces share one token and one models map:
 | 01 | [Quick start](01_quickstart.md) | Expose a class, mint a token, first calls on both surfaces |
 | 02 | [Configuration reference](02_configuration.md) | Every config option across every class, with defaults |
 | 03 | [Authentication](03_authentication.md) | Token model, minting, the hardened `/content-api/v1` auth check, colymba `/api` caveats |
-| 04 | [Security model](04_security-model.md) | Permission codes, class/record ACL, write policies, the trusted internal-fields channel |
+| 04 | [Security model](04_security-model.md) | Permission codes, the service-account grant extension, class/record ACL, write policies, the trusted internal-fields channel |
 | 05 | [Endpoint reference](05_endpoint-reference.md) | Every `/content-api/v1` route, method, params |
 | 06 | [Write payloads](06_write-payloads.md) | `fields`/`relations`/`externalId`/`publish` shape, has_one kinds, polymorphic relations |
 | 07 | [Batch operations](07_batch-operations.md) | Ordered ops, atomic rollback, delete modes |

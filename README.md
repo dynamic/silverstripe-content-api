@@ -85,13 +85,19 @@ DNADesign\Elemental\Models\ElementContent:
     - Dynamic\ContentApi\Write\WriteGuardExtension
 ```
 
-2. **Apply the external-id extension** to classes the API should upsert:
+2. **Apply extensions** — the external-id extension to classes the API should upsert, and
+   `ContentApiGrantExtension` to any class a service account needs to write without holding
+   `ADMIN`:
 
 ```yml
 SilverStripe\CMS\Model\SiteTree:
-  extensions: ['Dynamic\ContentApi\Identity\ExternalIdentifierExtension']
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+    - Dynamic\ContentApi\Security\ContentApiGrantExtension
 DNADesign\Elemental\Models\BaseElement:
-  extensions: ['Dynamic\ContentApi\Identity\ExternalIdentifierExtension']
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+    - Dynamic\ContentApi\Security\ContentApiGrantExtension
 SilverStripe\Assets\File:
   extensions: ['Dynamic\ContentApi\Identity\ExternalIdentifierExtension']
 ```
