@@ -38,24 +38,51 @@ use SilverStripe\Security\Security;
  * element, even one nested under an opted-in page.
  *
  * SECURITY — the grant is scoped to classes that declare their OWN
- * `content_api_access`, and to the verbs that declaration lists. Both halves
- * are load-bearing:
+ * `content_api_access` (or `api_access` — same precedence as
+ * `ClassRegistry::accessVerbs()`), and to the verbs that declaration lists.
+ * Both halves are load-bearing:
  *
  * - Class scoping: `ClassRegistry::accessVerbs()` resolves
- *   `content_api_access` through an *inherited* Config lookup, so a project
- *   declaring it on `Page` also exposes every undeclared subclass at the
- *   class gate. A blanket record-level grant would therefore let a service
- *   account write and archive classes nobody intended to expose — confirmed
- *   live against commerce pages, UserForms, ErrorPage and RedirectorPage in a
- *   real project. This extension uses `ClassRegistry::ownAccessVerbs()`
- *   (`Config::UNINHERITED`) instead, so only a class that names itself gets
- *   a grant answer at all; every other subclass gets `null` and falls
- *   through to its normal permission checks, same as if this extension
- *   didn't exist.
+ *   `content_api_access`/`api_access` through an *inherited* Config lookup,
+ *   so a project declaring it on `Page` also exposes every undeclared
+ *   subclass at the class gate. A blanket record-level grant would therefore
+ *   let a service account write and archive classes nobody intended to
+ *   expose — confirmed live against commerce pages, UserForms, ErrorPage and
+ *   RedirectorPage in a real project. This extension uses
+ *   `ClassRegistry::ownAccessVerbs()` (`Config::UNINHERITED |
+ *   Config::EXCLUDE_EXTRA_SOURCES`) instead, so only a class whose own
+ *   literal declaration (not an ancestor's, and not one contributed by
+ *   another extension applied to it) names a verb gets a grant answer for
+ *   that verb at all; every other subclass gets `null` and falls through to
+ *   its normal permission checks, same as if this extension didn't exist.
+ *   Residual scope this does NOT close: a class's own declaration is honoured
+ *   even if that class was never registered in `ClassRegistry`'s exposure map
+ *   (`models`/`discovery_roots`) — i.e. even if the content API itself could
+ *   never route to it. `content_api_access` is module-specific, so only a
+ *   project sets it deliberately; `api_access` is a legacy/colymba-era key
+ *   third-party code can self-declare for unrelated reasons, so a vendor
+ *   class that happens to declare it under a grant-applied ancestor gets a
+ *   grant too. This mirrors `accessVerbs()`'s own existing trust model for
+ *   HTTP exposure (this extension is strictly narrower — uninherited vs
+ *   inherited — not broader), and is deliberate: the module's design
+ *   principle throughout is that a class's own `can*()` methods are the real
+ *   safety boundary, not map membership (see `ClassRegistry`'s own docblock).
  * - Verb scoping: `archive` is gated on the `delete` verb / canDelete(), not
  *   `action`/canEdit() (see #45) — this extension only grants canDelete()
  *   when the class's own declaration lists the delete verb, so a class that
  *   lists publish verbs but not DELETE never gets archive.
+ *
+ * Also note: this extension's grant is per concrete class, not inherited by
+ * further subclasses via the record-level check. `File`/`Image` is a real
+ * example — a project following the documented "`Image` inherits `File`'s
+ * `api_access`" convention gets `canCreate()` granted (checked against
+ * `File` itself), but a later `canEdit()`/`canDelete()` on the created
+ * `Image` record checks `Image`'s own uninherited declaration, which is
+ * empty, and falls through to `FILE_EDIT_ALL` — a permission a
+ * `CONTENT_API_ACCESS`-only account doesn't hold. Declare
+ * `content_api_access`/`api_access` on every concrete class a service
+ * account needs to write, not just the ancestor it inherits HTTP exposure
+ * from.
  *
  * Every method returns `true` or `null`, never `false`:
  * `DataObject::extendedCan()` takes the minimum of every extension's answer
@@ -98,22 +125,22 @@ class ContentApiGrantExtension extends Extension
 
     public ?ClassRegistry $registry = null;
 
-    protected function canView($member = null)
+    protected function canView($member = null): true|null
     {
         return $this->grant('read', $member);
     }
 
-    protected function canEdit($member = null)
+    protected function canEdit($member = null): true|null
     {
         return $this->grant(['update', 'action'], $member);
     }
 
-    protected function canCreate($member = null, $context = [])
+    protected function canCreate($member = null, $context = []): true|null
     {
         return $this->grant('create', $member);
     }
 
-    protected function canDelete($member = null)
+    protected function canDelete($member = null): true|null
     {
         return $this->grant('delete', $member);
     }
@@ -122,10 +149,12 @@ class ContentApiGrantExtension extends Extension
      * @param string|string[] $verbs any one of these present in the owner's
      *   own declared verbs is enough to grant
      * @param mixed $member
-     * @return true|null true to grant, null to abstain — never false, see
-     *   the class docblock
+     * @return true|null true to grant, null to abstain — enforced by the
+     *   return type, not just convention, since a stray `false` here would
+     *   deny the permission for every other member and extension too (see
+     *   the class docblock)
      */
-    protected function grant(string|array $verbs, $member = null): ?bool
+    protected function grant(string|array $verbs, $member = null): true|null
     {
         $member = $member ?: Security::getCurrentUser();
 
@@ -139,8 +168,7 @@ class ContentApiGrantExtension extends Extension
             return null;
         }
 
-        $registry = $this->registry ?: ClassRegistry::singleton();
-        $declared = $registry->ownAccessVerbs(get_class($owner));
+        $declared = $this->registry->ownAccessVerbs(get_class($owner));
 
         foreach ((array) $verbs as $verb) {
             if (in_array($verb, $declared, true)) {

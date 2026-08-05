@@ -153,6 +153,83 @@ class ContentApiGrantExtensionTest extends SapphireTest
         $this->assertFalse((bool) $page->canDelete($member));
     }
 
+    public function testVerbScopingWithholdsCreateWhenNotDeclared(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'content_api_access', 'GET,PUT,DELETE,action');
+
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
+
+        $this->assertFalse((bool) ApiTestPage::singleton()->canCreate($member));
+    }
+
+    /**
+     * A published SiteTree record is publicly viewable by default
+     * (CanViewType 'Inherit'/'Anyone'), which would mask this extension
+     * correctly abstaining on canView() — so CanViewType is locked down to
+     * an unrelated group here specifically to isolate the verb-scoping
+     * behaviour from SiteTree's own open-by-default view logic.
+     */
+    public function testVerbScopingWithholdsViewWhenNotDeclared(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'content_api_access', 'POST,PUT,DELETE,action');
+
+        $restrictedGroup = Group::create();
+        $restrictedGroup->Title = 'Restricted Viewers ' . uniqid();
+        $restrictedGroup->write();
+
+        $page = ApiTestPage::create(['Title' => 'No Read Verb', 'CanViewType' => 'OnlyTheseUsers']);
+        $page->write();
+        $page->ViewerGroups()->add($restrictedGroup);
+        $page->publishRecursive();
+
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
+
+        $this->assertTrue((bool) $page->canEdit($member));
+        $this->assertFalse((bool) $page->canView($member));
+    }
+
+    /**
+     * The exact deployment gotcha ContentApiGrantExtension's own docblock
+     * warns about: applying it to SiteTree lets the page opt in, but each
+     * concrete element class still needs its own content_api_access/
+     * api_access declaration — being nested under an opted-in page is not
+     * enough. setUp() only grants ApiTestPage its own access; ApiTestElement
+     * never gets one in this test, unlike testGrantsCanCreateOnABaseElementSubclass.
+     */
+    public function testElementWithoutItsOwnDeclarationIsNeverGranted(): void
+    {
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
+
+        $this->assertFalse((bool) ApiTestElement::singleton()->canCreate($member));
+    }
+
+    /**
+     * The grant's uninherited scoping check does not consult
+     * ClassRegistry's own exposure map (`models`/`discovery_roots`) at all
+     * — a class's own content_api_access/api_access declaration is honoured
+     * even if the content API itself could never route to that class. This
+     * is a deliberate, documented trade-off (see the class docblock and
+     * docs/en/04_security-model.md), not an oversight, so this test pins it
+     * as intended behaviour rather than leaving it to be "discovered" as a
+     * regression later.
+     */
+    public function testGrantWorksRegardlessOfClassRegistryModelsMapMembership(): void
+    {
+        $registry = ClassRegistry::singleton();
+        $this->assertNull(
+            $registry->refFor(ApiTestPage::class),
+            'sanity check: ApiTestPage is not registered in ClassRegistry.models in this test'
+        );
+
+        $page = ApiTestPage::create(['Title' => 'Unmapped But Declared']);
+        $page->write();
+        $page->publishRecursive();
+
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
+
+        $this->assertTrue((bool) $page->canEdit($member));
+    }
+
     public function testMemberWithoutContentApiAccessIsNotGranted(): void
     {
         $page = ApiTestPage::create(['Title' => 'No Access Member']);

@@ -83,7 +83,7 @@ class ServiceAccountProvisioner
         $lines[] = 'This task provisions permission codes only. A service account also needs a '
             . 'canView()/canEdit()/canCreate()/canDelete() grant on the classes it writes — apply '
             . 'Dynamic\ContentApi\Security\ContentApiGrantExtension to those classes via YAML '
-            . '(only classes declaring their own content_api_access are grantable; see '
+            . '(only classes declaring their own content_api_access or api_access are grantable; see '
             . 'docs/en/04_security-model.md). Assign a Member to this group, then mint a token.';
 
         return new TaskResult(TaskStatus::Success, $lines);
