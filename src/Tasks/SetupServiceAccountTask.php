@@ -3,6 +3,7 @@
 namespace Dynamic\ContentApi\Tasks;
 
 use Dynamic\ContentApi\Tasks\Support\ServiceAccountProvisioner;
+use Dynamic\ContentApi\Tasks\Support\TaskResultRenderer;
 use Dynamic\ContentApi\Tasks\Support\TaskStatus;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\PolyExecution\PolyOutput;
@@ -12,9 +13,10 @@ use Symfony\Component\Console\Input\InputOption;
 /**
  * SS6 (branch `1`) entry point. All business logic lives in
  * {@see ServiceAccountProvisioner} — see #65; this adapter only translates
- * Symfony Console input/output. The `ss5` branch's copy of this file has
- * the identical structure around the legacy BuildTask::run($request) entry
- * point instead.
+ * Symfony Console input/output. `ss5`'s copy of this file is intended to
+ * adopt the same structure around its legacy `BuildTask::run($request)`
+ * entry point; until that port lands, `ss5` still carries the inline logic
+ * (see the docblock on its own copy of this file).
  *
  * Usage: `sake tasks:SetupContentApiServiceAccount --group="Content API Service Accounts"`
  * (add `--populate` too if the account needs batch/compositions/asset writes/page actions).
@@ -55,12 +57,12 @@ class SetupServiceAccountTask extends BuildTask
             (bool) $input->getOption('populate'),
         );
 
-        $isError = $result->status !== TaskStatus::Success;
+        $exitCode = TaskResultRenderer::render($output, $result);
 
-        foreach ($result->lines as $line) {
-            $output->writeln($isError && $line !== '' ? "<error>{$line}</error>" : $line);
+        if ($result->status === TaskStatus::Success) {
+            $output->writeln('Mint a token: sake tasks:MintContentApiToken --email=<member-email>');
         }
 
-        return $result->status->toCommandExitCode();
+        return $exitCode;
     }
 }

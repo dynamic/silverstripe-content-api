@@ -10,10 +10,11 @@ use SilverStripe\Security\Permission;
 /**
  * Provision (or update) the permission Group a content API service account
  * needs. Idempotent — re-running only adds missing grants, never duplicates
- * or removes existing ones. Branch-neutral: both `SetupServiceAccountTask`
- * adapters (branch `1`'s SS6 `execute(InputInterface, PolyOutput): int` and
- * `ss5`'s legacy `run($request): void`) call this directly rather than
- * duplicating the business logic — see #65.
+ * or removes existing ones. Branch-neutral: branch `1`'s SS6
+ * `SetupServiceAccountTask` adapter (`execute(InputInterface, PolyOutput): int`)
+ * calls this directly rather than duplicating the business logic — see #65.
+ * `ss5`'s `SetupServiceAccountTask` still carries the inline logic pending a
+ * follow-up port to its own `run($request): void` adapter over this class.
  *
  * Grants CONTENT_API_ACCESS + VIEW_DRAFT_CONTENT unconditionally — the pair
  * a service account needs so a draft-only write (batch/composition default
@@ -76,7 +77,7 @@ class ServiceAccountProvisioner
         $lines[] = 'This task provisions permission codes only. A service account also needs an '
             . 'app-level canView()/canEdit() grant extension on the classes it writes — that\'s '
             . 'application code this task can\'t inject. Assign a Member to this group, then mint '
-            . 'a token via the MintContentApiToken task.';
+            . 'a token.';
 
         return new TaskResult(TaskStatus::Success, $lines);
     }

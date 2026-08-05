@@ -13,7 +13,8 @@ use SilverStripe\Security\Permission;
 /**
  * Business-logic coverage for the branch-neutral provisioner (#65) — asserts
  * on {@see TaskStatus}, a real enum, rather than parsing rendered output.
- * This is the byte-identical test both branch `1` and `ss5` run; each
+ * Written to be byte-identical when `ss5` adopts the same
+ * `ServiceAccountProvisioner` (a follow-up to this PR); once it does, each
  * branch's own `SetupServiceAccountTaskTest` only needs to cover its thin
  * adapter (input parsing, output rendering, exit-code mapping).
  */
@@ -136,9 +137,11 @@ class ServiceAccountProvisionerTest extends SapphireTest
         $this->deleteGroupsTitled('Test Ambiguous Title');
 
         Group::create(['Title' => 'Test Ambiguous Title'])->write();
-        // Group::write() enforces a unique Title via validate(), with no
-        // skip-validation flag on this framework line — insert the second
-        // row directly to construct the pre-existing-duplicate-data
+        // Group::write() enforces a unique Title via validate(). Branch 1's
+        // write() does have a skipValidation flag (see
+        // SetupServiceAccountTaskTest's equivalent test), but ss5's doesn't —
+        // insert the second row directly so this test stays byte-identical
+        // across both branches, constructing the pre-existing-duplicate-data
         // scenario the provisioner must defend against.
         DB::query(sprintf(
             "INSERT INTO \"Group\" (\"ClassName\", \"Title\") VALUES ('%s', '%s')",
