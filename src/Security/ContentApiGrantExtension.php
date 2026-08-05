@@ -125,22 +125,22 @@ class ContentApiGrantExtension extends Extension
 
     public ?ClassRegistry $registry = null;
 
-    protected function canView($member = null): true|null
+    protected function canView($member = null): ?bool
     {
         return $this->grant('read', $member);
     }
 
-    protected function canEdit($member = null): true|null
+    protected function canEdit($member = null): ?bool
     {
         return $this->grant(['update', 'action'], $member);
     }
 
-    protected function canCreate($member = null, $context = []): true|null
+    protected function canCreate($member = null, $context = []): ?bool
     {
         return $this->grant('create', $member);
     }
 
-    protected function canDelete($member = null): true|null
+    protected function canDelete($member = null): ?bool
     {
         return $this->grant('delete', $member);
     }
@@ -149,12 +149,13 @@ class ContentApiGrantExtension extends Extension
      * @param string|string[] $verbs any one of these present in the owner's
      *   own declared verbs is enough to grant
      * @param mixed $member
-     * @return true|null true to grant, null to abstain — enforced by the
-     *   return type, not just convention, since a stray `false` here would
-     *   deny the permission for every other member and extension too (see
-     *   the class docblock)
+     * @return true|null true to grant, null to abstain — never false, see
+     *   the class docblock. Typed `?bool` rather than `true|null` on this
+     *   branch: standalone `true` as a type is PHP 8.2+, and this branch's
+     *   floor is PHP `^8.1` — branch `1` (PHP `^8.3`) enforces the invariant
+     *   at the type level; here it's convention plus the regression test.
      */
-    protected function grant(string|array $verbs, $member = null): true|null
+    protected function grant(string|array $verbs, $member = null): ?bool
     {
         $member = $member ?: Security::getCurrentUser();
 
