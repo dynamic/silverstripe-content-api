@@ -34,6 +34,7 @@ enum ErrorCode: string
     case FEATURE_UNAVAILABLE = 'FEATURE_UNAVAILABLE';
     case METHOD_NOT_ALLOWED = 'METHOD_NOT_ALLOWED';
     case SERVER_ERROR = 'SERVER_ERROR';
+    case UNPUBLISH_STRANDS_DESCENDANTS = 'UNPUBLISH_STRANDS_DESCENDANTS';
 
     public function httpStatus(): int
     {
@@ -44,7 +45,7 @@ enum ErrorCode: string
             ErrorCode::UNKNOWN_CLASS, ErrorCode::NOT_FOUND => 404,
             ErrorCode::METHOD_NOT_ALLOWED => 405,
             ErrorCode::MULTIPLE_MATCHES, ErrorCode::ALREADY_EXISTS, ErrorCode::ASSET_CONFLICT,
-            ErrorCode::URLSEGMENT_COLLISION => 409,
+            ErrorCode::URLSEGMENT_COLLISION, ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS => 409,
             ErrorCode::VALIDATION_FAILED, ErrorCode::UNKNOWN_FIELD, ErrorCode::READONLY_FIELD,
             ErrorCode::UNKNOWN_RELATION, ErrorCode::UNRESOLVED_REF, ErrorCode::CIRCULAR_REF,
             ErrorCode::EXTERNAL_ID_UNSUPPORTED, ErrorCode::TOKEN_RESOLUTION_FAILED => 422,

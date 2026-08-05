@@ -18,6 +18,12 @@ All notable changes to this project are documented here. Format loosely follows
   gets a grant, closing a real privilege-escalation vector confirmed against a downstream
   project's first-cut implementation (undeclared `Page` subclasses inheriting `DELETE`/`action`
   at the class gate). See [docs/en/04_security-model.md#grant-extension](docs/en/04_security-model.md#grant-extension).
+- **(#71)** `subtree` publish mode: publishes a record, then every draft `Hierarchy` tree child
+  depth-first. `publishRecursive()` (existing `recursive` mode) does not cascade to `SiteTree`
+  children — only owned Elemental relations — so a multi-page subtree previously needed one
+  explicit `single` publish call per page; `subtree` does it in one. Equivalent to `single` for
+  a non-hierarchical class. Available on `PublishOrchestrator::MODES`, batch op `publish`/
+  `defaultPublish`, and `content_page_convert`'s `publish` field. Spec bumped to `v1.5`.
 - **many_many `through` support**: a many_many relation backed by an explicit join DataObject
   (`['through' => JoinClass, 'from' => ..., 'to' => ...]`, e.g. a `ProductSizeGTINProduct` join
   carrying `IsCurrent`/`SortOrder`) now round-trips its extra join data the same way a classic
@@ -60,6 +66,31 @@ All notable changes to this project are documented here. Format loosely follows
   `RecordsHandler::fetchRecord()`'s `get_by_id()` returns, which can be a subclass reached under
   any mapped *ancestor* ref, not something the gate narrows to.
 
+### Fixed
+- **(#71)** Unpublishing (or archiving) a `Hierarchy` record with any live tree children used
+  to silently cascade-delete every one of them too, recursively — not just the target record —
+  confirmed live during a real IA restructure. Root cause: `SiteTree::onBeforeDelete()`
+  cascades to `AllChildren()` under `SiteTree.enforce_strict_hierarchy` (the framework
+  default), and `doUnpublish()` deletes the record from LIVE internally, firing that cascade
+  against every current live child unconditionally — independent of whether those children had
+  also been reparented in draft (an earlier version of this fix only guarded that narrower
+  case, matching how the bug was first diagnosed; a live child that had never moved at all
+  turned out to be cascade-deleted exactly the same way). `unpublish()`/
+  `delete(mode: "unpublish")` now refuse with `409 UNPUBLISH_STRANDS_DESCENDANTS` whenever the
+  record has any live descendants, naming the affected ids. `archive()`/
+  `delete(mode: "archive")` share the same guard, checked against both stages (`doArchive()`
+  calls `doUnpublish()` internally, then also deletes the draft-stage row directly — an
+  equally cascading delete). `force: true` (the stage action's request body, or the batch
+  delete op's `force` field) bypasses the guard for the case where the cascade is actually
+  intended — bypassing now logs a warning naming the record and every descendant it stranded,
+  so a forced cascade leaves an audit trail instead of vanishing without a trace. A record's own
+  `PublishOrchestrator::MODES` `publish` field (used by `content_records_stage`'s `publish`
+  action, previously hardcoded to only `single`/`recursive` via a `recursive` boolean) now
+  accepts an explicit `mode` string including `subtree` — the guard's own documented remedy
+  ("publish the subtree to its new parent first") was otherwise unreachable from that endpoint.
+  See
+  `docs/en/10_publishing-and-stages.md#unpublishing-or-archiving-a-hierarchy-record-the-descendant-cascade-guard`.
+
 ## [Unreleased] — ss5
 
 This branch tracks branch `1` (synced via `git merge origin/1`, never cherry-picked) and carries
@@ -73,8 +104,43 @@ the two branches.
   this branch yet (pre-#65 extraction), so the equivalent wording change lives inline in
   `SetupServiceAccountTask.php` instead. **Deviation from branch policy**: ported via cherry-pick
   rather than `git merge origin/1`, since branch `1`'s source PR (#77) was still open at the time.
-  Re-sync via a real merge once #77 merges — the merge should land cleanly since the content is
-  identical, but expect it to show as already-applied rather than a no-op.
+  ~~Re-sync via a real merge once #77 merges~~ — superseded by the #81 entry below: #77 has since
+  merged, but the pending sync now also covers #65 and #70, neither of which is on this branch
+  yet. A real `git merge origin/1` at this point would additionally drag in #65's ~180-line
+  task-signature rewrite (the exact files the README's Branch policy section already flags as a
+  deliberate, hand-ported SS5/SS6 divergence point) and all of #70 — both unrelated to whatever
+  prompted the next port. Treat a real merge as its own separate, scoped piece of work, not a
+  side effect of porting one more branch-`1` fix.
+- **(#81)** `subtree` publish mode and the descendant-cascade guard (**#71**, PR #79 on branch
+  `1`), ported here. `PublishOrchestrator.php`, `RecordActionsHandler.php`,
+  `schema/endpoints.json`, and `docs/en/10_publishing-and-stages.md` were byte-identical to
+  branch `1`'s pre-#79 state, so those landed verbatim. Branch-specific adjustments:
+  - `ErrorCode.php`: `UNPUBLISH_STRANDS_DESCENDANTS` added independently of `ROLLBACK_UNVERIFIED`
+    (#70), which isn't on this branch.
+  - `RecordWriter.php`: only the `force` param/threading ported — the file's existing
+    `SilverStripe\ORM\ValidationException` import (SS5 namespace) is untouched.
+  - `BatchProcessor.php`: applied as a content-based edit (the file differs from branch `1` by
+    ~99 lines, entirely due to #70's absence); #79's own change here is a self-contained 3-line
+    `force`-threading addition.
+  - `schema/endpoints.json`: bumped to `v1.5` with **one deliberate omission** — #79's
+    `content_batch` description also added a sentence describing #70's `ROLLBACK_UNVERIFIED`
+    verification, which doesn't exist on this branch. Porting it verbatim would have made this
+    branch's published MCP spec advertise behavior it doesn't have. Every endpoint/field/enum is
+    otherwise identical to branch `1`'s `v1.5`; only that one prose sentence differs.
+  - `tests/Control/BatchTest.php`: only the new
+    `testBatchDeleteWithUnpublishModeRoutesThroughTheDescendantGuard()` test + its two imports
+    landed; #79's other changes to this file were entirely `ApiTestDeprecating`/
+    `ForceUnverifiedRollbackBatchProcessor` tests belonging to #70, which doesn't exist here.
+  - **Framework-behavior verification**: unlike #76's port (which found a real `canDelete()`
+    divergence), this guard's three load-bearing mechanisms
+    (`Hierarchy::getDescendantIDList()`/`AllChildren()`, `Versioned::doUnpublish()`/`doArchive()`,
+    `SiteTree::onBeforeDelete()`'s `enforce_strict_hierarchy` cascade) were confirmed
+    byte-identical or semantically identical across `silverstripe/versioned` 3.2.1 (branch `1`),
+    2.2.2 (this branch's constraint floor), and 2.4.x-dev (a real SS5 site) — no divergence found,
+    confirmed live.
+  - **Deviation from branch policy, again**: cherry-picked rather than `git merge origin/1`, for
+    the reasons in the #76 note above (a real merge would drag in #65 and #70, unrelated to this
+    fix). See the follow-up merge-sync issue this entry links to on GitHub.
 
 ### Changed
 - Tasks invoke via SS5's legacy `sake dev/tasks/<Segment> key=value` syntax, not branch `1`'s SS6
@@ -93,6 +159,10 @@ the two branches.
   declaring only the `delete` verb can therefore archive an already-published record on this
   branch, where it cannot on branch `1`. See `ContentApiGrantExtension`'s "BRANCH NOTE" docblock
   and `ContentApiGrantExtensionTest::testCanDeleteOnAPublishedRecordDoesNotNeedTheEditGrantHere()`.
+- **(#81)** See the shared `[Unreleased]` → `### Fixed` entry above for #71's descendant-cascade
+  guard — identical on this branch, no divergence found (see the `### Added` entry above for the
+  verification detail). `#72` (test DB isolation) and `#70` (output buffering, rollback
+  verification) are separate, still-unported branch-`1` fixes not included in this port.
 
 ## [1.4.0] - 2026-07-17
 
