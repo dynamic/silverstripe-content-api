@@ -1,6 +1,6 @@
 {
   "$comment": "MCP-style tool definitions for every content API endpoint. dynamic/silverstripe-content-api-mcp maps one tool per entry onto the REST endpoint, injecting the X-Silverstripe-Apitoken header. Class payload contracts are discovered at runtime via the schema_class tool.",
-  "version": "v1.4",
+  "version": "v1.5",
   "baseRoute": "content-api/v1",
   "tools": [
     {
@@ -117,7 +117,7 @@
     },
     {
       "name": "content_records_stage",
-      "description": "Publish (optionally recursive), unpublish or archive a record. Response reports resulting draft/live state.",
+      "description": "Publish (optionally recursive), unpublish or archive a record. Response reports resulting draft/live state. unpublish refuses (409 UNPUBLISH_STRANDS_DESCENDANTS) if the record has Hierarchy tree descendants still live under it whose draft parent has already moved elsewhere — publish them to their new parent first, or pass force to unpublish anyway and accept the loss.",
       "method": "POST",
       "path": "records/{classRef}/{id}/{action}",
       "inputSchema": {
@@ -140,6 +140,11 @@
           "recursive": {
             "type": "boolean",
             "default": false
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "description": "unpublish only: bypass the stranded-live-descendants guard"
           }
         },
         "required": [
@@ -152,7 +157,7 @@
     },
     {
       "name": "content_batch",
-      "description": "Run ordered write operations with per-op results and a summary (agent self-correction contract). atomic=true wraps a transaction and rolls everything back on first failure.",
+      "description": "Run ordered write operations with per-op results and a summary (agent self-correction contract). atomic=true wraps a transaction and rolls everything back on first failure. On atomic failure, a rolledBack: true result is independently verified (every 'created' op re-checked by id) before it's reported — an unverified rollback reports 500 ROLLBACK_UNVERIFIED instead, carrying the same results array so every 'created' entry can be checked by hand.",
       "method": "POST",
       "path": "batch",
       "inputSchema": {
@@ -167,7 +172,8 @@
             "enum": [
               "none",
               "single",
-              "recursive"
+              "recursive",
+              "subtree"
             ],
             "default": "none"
           },
@@ -207,12 +213,18 @@
                   "enum": [
                     "none",
                     "single",
-                    "recursive"
+                    "recursive",
+                    "subtree"
                   ]
                 },
                 "mode": {
                   "type": "string",
                   "description": "delete mode: archive|unpublish|hard"
+                },
+                "force": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "delete op with mode=unpublish only: bypass the stranded-live-descendants guard"
                 }
               },
               "required": [
@@ -461,7 +473,8 @@
             "enum": [
               "none",
               "single",
-              "recursive"
+              "recursive",
+              "subtree"
             ],
             "default": "none"
           },

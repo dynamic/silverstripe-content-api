@@ -18,6 +18,12 @@ All notable changes to this project are documented here. Format loosely follows
   gets a grant, closing a real privilege-escalation vector confirmed against a downstream
   project's first-cut implementation (undeclared `Page` subclasses inheriting `DELETE`/`action`
   at the class gate). See [docs/en/04_security-model.md#grant-extension](docs/en/04_security-model.md#grant-extension).
+- **(#71)** `subtree` publish mode: publishes a record, then every draft `Hierarchy` tree child
+  depth-first. `publishRecursive()` (existing `recursive` mode) does not cascade to `SiteTree`
+  children — only owned Elemental relations — so a multi-page subtree previously needed one
+  explicit `single` publish call per page; `subtree` does it in one. Equivalent to `single` for
+  a non-hierarchical class. Available on `PublishOrchestrator::MODES`, batch op `publish`/
+  `defaultPublish`, and `content_page_convert`'s `publish` field. Spec bumped to `v1.5`.
 - **many_many `through` support**: a many_many relation backed by an explicit join DataObject
   (`['through' => JoinClass, 'from' => ..., 'to' => ...]`, e.g. a `ProductSizeGTINProduct` join
   carrying `IsCurrent`/`SortOrder`) now round-trips its extra join data the same way a classic
@@ -99,6 +105,17 @@ All notable changes to this project are documented here. Format loosely follows
   unrelated reason, the response reports the new `500 ROLLBACK_UNVERIFIED` instead, carrying
   the same full results array so every `created` entry can be checked by hand. `updated`/
   `deleted` results aren't independently verified yet (#75). See `docs/en/12_error-codes.md`.
+- **(#71)** Unpublishing a `Hierarchy` record (or deleting one with `mode: "unpublish"`) whose
+  live children had already been reparented elsewhere in draft used to cascade the whole live
+  subtree away, not just the target record — confirmed live during a real IA restructure:
+  those children were still nested under the target on **live**, even though their draft
+  `ParentID` had already moved, so unpublishing the target dropped them (and their own
+  descendants) off live too, an unrelated loss far beyond the one record targeted.
+  `unpublish()`/`delete(mode: "unpublish")` now refuse with `409
+  UNPUBLISH_STRANDS_DESCENDANTS` when this would happen, naming the affected record ids;
+  `force: true` (the stage action's request body, or the batch delete op's `force` field)
+  bypasses the guard for the rare case where the loss is actually intended. See
+  `docs/en/10_publishing-and-stages.md#unpublishing-a-hierarchy-record-the-stranded-descendants-guard`.
 
 ## [1.4.0] - 2026-07-17
 

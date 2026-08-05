@@ -31,8 +31,9 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
 | `externalId` | `create`, `upsert`, `update` | Sets/matches the external-id column |
 | `fields` | `create`, `upsert`, `update` | See [Write payloads](06_write-payloads.md#fields) |
 | `relations` | `create`, `upsert`, `update` | See [Write payloads](06_write-payloads.md#relations-has_many--many_many) |
-| `publish` | `create`, `upsert`, `update` | `none`/`single`/`recursive`; falls back to `defaultPublish` when omitted |
+| `publish` | `create`, `upsert`, `update` | `none`/`single`/`recursive`/`subtree`; falls back to `defaultPublish` when omitted — see [Publishing & stages](10_publishing-and-stages.md#publish-modes) |
 | `mode` | `delete` | `archive` (default), `unpublish`, or `hard` — see [below](#delete-modes) |
+| `force` | `delete` with `mode: "unpublish"` | Bypasses the stranded-live-descendants guard — see [below](#delete-modes) |
 
 `update`/`delete` require either `id` or `externalId` to locate the target
 (`400 PAYLOAD_INVALID` if neither is present).
@@ -81,7 +82,7 @@ exclusively by `publish`/`defaultPublish`.
 | Mode | Effect on a **versioned** record | Applies to |
 |---|---|---|
 | `archive` (default) | Removed from both stages, recoverable via version history (`doArchive()`) | Versioned + unversioned |
-| `unpublish` | Removed from live only, draft kept (`doUnpublish()`) | Versioned + unversioned |
+| `unpublish` | Removed from live only, draft kept (`doUnpublish()`) — refuses with `409 UNPUBLISH_STRANDS_DESCENDANTS` if it would strand live `Hierarchy` descendants; pass `force: true` to bypass, see [Publishing & stages](10_publishing-and-stages.md#unpublishing-a-hierarchy-record-the-stranded-descendants-guard) | Versioned + unversioned |
 | `hard` | Rejected — see below | **Unversioned classes only** |
 
 **On an unversioned class, every mode converges on a real `delete()`** — `archive` and

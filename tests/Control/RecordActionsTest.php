@@ -4,7 +4,9 @@ namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\Versioned\Versioned;
 
 class RecordActionsTest extends ContentApiTestCase
 {
@@ -135,5 +137,42 @@ class RecordActionsTest extends ContentApiTestCase
         // DELETE — moved to colymba DELETE or batch delete op / archive action.
         $delete = $this->apiDelete("records/ApiTest/{$record->ID}", $token);
         $this->assertSame(404, $delete->getStatusCode());
+    }
+
+    /**
+     * End-to-end coverage for #71's stranded-descendants guard, confirming
+     * the HTTP action reads the "force" body flag through to
+     * PublishOrchestrator::unpublish() — the unit-level guard logic itself
+     * is covered directly in Publish/PublishOrchestratorTest.
+     */
+    public function testUnpublishActionRefusesThenSucceedsWithForce(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $wrapper = ApiTestPage::create(['Title' => 'Action Wrapper']);
+        $wrapper->write();
+        $wrapper->publishRecursive();
+
+        $child = ApiTestPage::create(['Title' => 'Action Child', 'ParentID' => $wrapper->ID]);
+        $child->write();
+        $child->publishRecursive();
+
+        $newParent = ApiTestPage::create(['Title' => 'Action New Parent']);
+        $newParent->write();
+        $newParent->publishRecursive();
+
+        $child->ParentID = $newParent->ID;
+        $child->write();
+
+        $refused = $this->apiPost("records/ApiTestPage/{$wrapper->ID}/unpublish", [], $token);
+        $this->assertErrorCode($refused, 'UNPUBLISH_STRANDS_DESCENDANTS', 409);
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $wrapper->ID)->exists()
+        );
+
+        $forced = $this->decode(
+            $this->apiPost("records/ApiTestPage/{$wrapper->ID}/unpublish", ['force' => true], $token)
+        );
+        $this->assertFalse($forced['data']['stage']['live']);
     }
 }

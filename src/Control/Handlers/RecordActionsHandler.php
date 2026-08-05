@@ -73,7 +73,7 @@ class RecordActionsHandler
                     $this->publisher->publish($record, !empty($body['recursive']) ? 'recursive' : 'single');
                     break;
                 case 'unpublish':
-                    $this->publisher->unpublish($record);
+                    $this->publisher->unpublish($record, !empty($body['force']));
                     break;
                 case 'archive':
                     $this->publisher->archive($record);

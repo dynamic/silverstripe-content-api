@@ -31,18 +31,43 @@ compositions endpoints when you need explicit, predictable draft-first publish s
 
 ## Publish modes
 
-Three modes, used by batch ops and (with a restriction — see below) compositions:
+Four modes, used by batch ops and (with a restriction — see below) compositions:
 
 | Mode | Effect |
 |---|---|
 | `none` | Leave on draft. This is the default for every write in this module — an invisible-content state is explicit and visible in the response's `stage` block, never accidental |
 | `single` | `publishSingle()` |
 | `recursive` | `publishRecursive()` |
+| `subtree` | `publishSingle()`, then every draft `Hierarchy` tree child, depth-first (see below) |
 
 Applied via `PublishOrchestrator`, the single place every stage transition in the module goes
 through — publish/unpublish/archive/delete all route through it rather than duck-typing
 `hasMethod('publishSingle')` at each call site, so "is this record publishable" can't diverge
-between call sites. No-op for `none` and for unversioned classes.
+between call sites. No-op for `none` and for unversioned classes. `subtree` walks tree children
+only for a class that carries the `Hierarchy` extension (`SiteTree` and its subclasses) — for
+anything else it's equivalent to `single`.
+
+## What actually needs an explicit publish call
+
+None of `publishRecursive()`, `subtree`, or any other mode here cascades to *everything* a page
+might own. Three distinct things a caller needs to reason about separately (confirmed the hard
+way during a real IA restructure — see #71):
+
+1. **`SiteTree` tree children never cascade from a parent's publish, in any mode except
+   `subtree`.** `publishRecursive()` is for owned Elemental relations only (see below) — it does
+   **not** walk `Hierarchy` children. A 30-page subtree needing to go live needed 30 individual
+   `single` publish calls before `subtree` existed to do exactly that walk. `recursive` still
+   does not do this — use `subtree` when the goal is "this page and its whole draft tree."
+2. **Owned Elemental compositions need `CompositionService::publishAll()`, not a bare
+   `publishRecursive()`** — see the next section.
+3. **Arbitrary has_many/has_one relations outside both of the above never cascade, in any
+   mode, ever** — e.g. `Dynamic\FlexSlider\Model\SlideImage` as a page's hero image relation.
+   Confirmed live: a landing page went fully live with a blank hero because its `SlideImage` was
+   created via a plain draft `write()` and nothing later explicitly published it, even after the
+   owning page went live through every mode above. Identify every such relation on a page being
+   published and publish it explicitly — this module has no generic mechanism for it, by design
+   (a generic "publish every relation" pass could not distinguish an intentionally-draft related
+   record from an accidentally-orphaned one).
 
 ## `publishRecursive()` does not cascade to elements
 
@@ -60,13 +85,38 @@ stranded on draft behind a live page.
 | Action | Effect |
 |---|---|
 | `publish` | `publishSingle()`, or `publishRecursive()` with `{"recursive": true}` in the body |
-| `unpublish` | Removes from live, keeps draft (`doUnpublish()`) |
+| `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below |
 | `archive` | Removes from both stages, recoverable via version history (`doArchive()`) |
 
 `unpublish`/`archive` raise `400 PAYLOAD_INVALID` if called on an unversioned class
 (`assertVersioned()`). `publish` does **not** — `PublishOrchestrator::publish()` silently no-ops
 for a non-versioned record (same as `mode: "none"`) and the request still returns `200` with no
 state change, rather than erroring.
+
+## Unpublishing a `Hierarchy` record: the stranded-descendants guard
+
+**Unpublishing a page whose live children haven't been re-published to their new parent used to
+cascade the whole live subtree away, not just the target page** — confirmed live during a real
+IA restructure (#71): a wrapper page's children had already been reparented in draft to a
+different page, but never re-published there, so on **live** they were still nested under the
+wrapper. Unpublishing the wrapper removed not just the wrapper but every one of those children
+and their own descendants from live — an unrelated, unintended loss far beyond the one page
+targeted.
+
+`unpublish()` (and `delete()` with `mode: "unpublish"`, which routes through the same path) now
+refuses this: before removing a record from live, it checks whether any of that record's
+*live* `Hierarchy` descendants are no longer among its *draft* descendants (reparented elsewhere,
+or removed from draft entirely). If any are found, the request fails with `409
+UNPUBLISH_STRANDS_DESCENDANTS`, naming the affected record ids, instead of silently cascading.
+
+**Fix the caller, not the guard**: publish every still-live descendant to its new parent first
+(a `subtree` publish on the new parent covers this in one call), *then* unpublish the old
+wrapper — never the reverse. If the loss is genuinely intended, pass `{"force": true}` (the
+stage action's request body, or the batch delete op's `force` field) to bypass the guard and
+accept it explicitly.
+
+The guard only applies to classes carrying the `Hierarchy` extension — a plain versioned
+`DataObject` with no tree concept is unaffected (nothing to strand).
 
 ## Composition-level publish restriction
 

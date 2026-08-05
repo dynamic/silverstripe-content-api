@@ -146,7 +146,7 @@ class RecordWriter
      * @return array{data: array, operation: string}
      * @throws ApiError
      */
-    public function delete(DataObject $record, string $mode, Member $member): array
+    public function delete(DataObject $record, string $mode, Member $member, bool $force = false): array
     {
         $className = get_class($record);
 
@@ -162,7 +162,7 @@ class RecordWriter
             $summary['externalId'] = $record->getField($this->externalIds->fieldName()) ?: null;
         }
 
-        $this->publisher->delete($record, $mode);
+        $this->publisher->delete($record, $mode, $force);
 
         return [
             'data' => $summary + ['deleted' => true, 'mode' => $mode],

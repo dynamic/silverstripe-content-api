@@ -233,7 +233,8 @@ class BatchProcessor
                     $deleted = $this->writer->delete(
                         $record,
                         (string) ($operation['mode'] ?? 'archive'),
-                        $member
+                        $member,
+                        !empty($operation['force'])
                     );
 
                     return [
