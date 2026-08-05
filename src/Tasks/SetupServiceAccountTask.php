@@ -22,9 +22,11 @@ use SilverStripe\Security\Permission;
  * CONTENT_API_POPULATE is added only with populate=1 — a separate, narrower
  * grant most service accounts don't need.
  *
- * This task provisions permission *codes* only. A service account also
- * needs an app-level canView()/canEdit() grant extension on the classes it
- * writes — that's application code this task can't inject.
+ * Permission codes only: the record-level can*() grant a service account
+ * separately needs (Security\ContentApiGrantExtension) is applied by a
+ * project via YAML, per class — this task can't reach into a project's
+ * config to add it, and doing so blindly would grant it to every class a
+ * project happens to have, not just the ones meant to be writable.
  *
  * Usage: `sake dev/tasks/SetupContentApiServiceAccount group="Content API Service Accounts"`
  * (add `populate=1` too if the account needs batch/compositions/asset writes/page actions).
@@ -96,9 +98,11 @@ class SetupServiceAccountTask extends BuildTask
         }
 
         echo "\n";
-        echo "This task provisions permission codes only. A service account also needs an "
-            . "app-level canView()/canEdit() grant extension on the classes it writes — that's "
-            . "application code this task can't inject. Assign a Member to this group, then mint "
-            . "a token: sake dev/tasks/MintContentApiToken email=<member-email>\n";
+        echo "This task provisions permission codes only. A service account also needs a "
+            . "canView()/canEdit()/canCreate()/canDelete() grant on the classes it writes — apply "
+            . "Dynamic\\ContentApi\\Security\\ContentApiGrantExtension to those classes via YAML "
+            . "(only classes declaring their own content_api_access or api_access are grantable; "
+            . "see docs/en/04_security-model.md). Assign a Member to this group, then mint a "
+            . "token: sake dev/tasks/MintContentApiToken email=<member-email>\n";
     }
 }
