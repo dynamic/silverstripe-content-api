@@ -39,6 +39,24 @@ All notable changes to this project are documented here. Format loosely follows
   upgrade message instead of falling through. Writes previously (incorrectly) accepted on an
   affected site now return 422.
 
+### Changed
+- **(#65)** `MintApiTokenTask`/`SetupServiceAccountTask` business logic extracted to
+  branch-neutral services (`Tasks/Support/ApiTokenMinter`, `ServiceAccountProvisioner`) so a
+  future `ss5` port can share it instead of duplicating ~180 lines per branch. Two small
+  wording changes as a result: `MintContentApiToken`'s missing-option message now reads
+  `Missing required option: --email` (matching `SetupContentApiServiceAccount`'s existing
+  `--group cannot be empty.` convention, was `Missing required option: email`);
+  `SetupContentApiServiceAccount`'s success output states the account still needs a token
+  minted without embedding the exact command inline (the command itself — `sake
+  tasks:MintContentApiToken --email=<member-email>` — is now a separate line the task prints
+  after, unchanged from before).
+
+### Fixed
+- **(#72)** `SetupServiceAccountTaskTest` had no fixture file and no `$usesDatabase = true`, so
+  it never got an isolated temp DB or per-test transaction rollback — every local run wrote
+  real `Group`/`Permission` rows into the host project's live dev DB, colliding with the next
+  run's data. The new `Tasks/Support` tests inherit the fix.
+
 ## [1.4.0] - 2026-07-17
 
 ### Added

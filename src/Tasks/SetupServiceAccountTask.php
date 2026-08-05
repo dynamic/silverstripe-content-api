@@ -2,33 +2,21 @@
 
 namespace Dynamic\ContentApi\Tasks;
 
-use Dynamic\ContentApi\Security\ContentApiPermissions;
+use Dynamic\ContentApi\Tasks\Support\ServiceAccountProvisioner;
+use Dynamic\ContentApi\Tasks\Support\TaskResultRenderer;
+use Dynamic\ContentApi\Tasks\Support\TaskStatus;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\PolyExecution\PolyOutput;
-use SilverStripe\Security\Group;
-use SilverStripe\Security\Permission;
-use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 
 /**
- * Provision (or update) the permission Group a content API service account
- * needs. Idempotent — re-running only adds missing grants, never duplicates
- * or removes existing ones.
- *
- * Grants CONTENT_API_ACCESS + VIEW_DRAFT_CONTENT unconditionally — the pair
- * a service account needs so a draft-only write (batch/composition default
- * `publish: "none"`) can be read back by the same account that wrote it.
- * Without VIEW_DRAFT_CONTENT, silverstripe/versioned's own canView() hook
- * denies the read the moment draft and live diverge, regardless of any
- * app-level canView() grant — see
- * docs/en/04_security-model.md#service-account-permissions (#42).
- * CONTENT_API_POPULATE is added only with --populate — a separate, narrower
- * grant most service accounts don't need.
- *
- * This task provisions permission *codes* only. A service account also
- * needs an app-level canView()/canEdit() grant extension on the classes it
- * writes — that's application code this task can't inject.
+ * SS6 (branch `1`) entry point. All business logic lives in
+ * {@see ServiceAccountProvisioner} — see #65; this adapter only translates
+ * Symfony Console input/output. `ss5`'s copy of this file is intended to
+ * adopt the same structure around its legacy `BuildTask::run($request)`
+ * entry point; until that port lands, `ss5` still carries the inline logic
+ * (see the docblock on its own copy of this file).
  *
  * Usage: `sake tasks:SetupContentApiServiceAccount --group="Content API Service Accounts"`
  * (add `--populate` too if the account needs batch/compositions/asset writes/page actions).
@@ -64,58 +52,17 @@ class SetupServiceAccountTask extends BuildTask
 
     protected function execute(InputInterface $input, PolyOutput $output): int
     {
-        $title = trim((string) $input->getOption('group'));
-
-        if ($title === '') {
-            $output->writeln('<error>--group cannot be empty.</error>');
-
-            return Command::INVALID;
-        }
-
-        $matches = Group::get()->filter('Title', $title);
-
-        if ($matches->count() > 1) {
-            $output->writeln(sprintf(
-                '<error>Multiple groups titled "%s" found (IDs: %s) — refusing to guess which one to '
-                    . 'grant content API permissions to. Disambiguate by renaming or deleting the '
-                    . 'unintended group, then re-run.</error>',
-                $title,
-                implode(', ', $matches->column('ID'))
-            ));
-
-            return Command::FAILURE;
-        }
-
-        $group = $matches->first();
-
-        if (!$group) {
-            $group = Group::create();
-            $group->Title = $title;
-            $group->write();
-            $output->writeln("Created group \"{$title}\" (#{$group->ID}).");
-        } else {
-            $output->writeln("Using existing group \"{$title}\" (#{$group->ID}).");
-        }
-
-        $codes = [ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT'];
-
-        if ($input->getOption('populate')) {
-            $codes[] = ContentApiPermissions::POPULATE;
-        }
-
-        foreach ($codes as $code) {
-            Permission::grant((int) $group->ID, $code);
-            $output->writeln("  granted {$code}");
-        }
-
-        $output->writeln('');
-        $output->writeln(
-            'This task provisions permission codes only. A service account also needs an '
-                . 'app-level canView()/canEdit() grant extension on the classes it writes — that\'s '
-                . 'application code this task can\'t inject. Assign a Member to this group, then mint '
-                . 'a token: sake tasks:MintContentApiToken --email=<member-email>'
+        $result = ServiceAccountProvisioner::create()->provision(
+            (string) $input->getOption('group'),
+            (bool) $input->getOption('populate'),
         );
 
-        return Command::SUCCESS;
+        $exitCode = TaskResultRenderer::render($output, $result);
+
+        if ($result->status === TaskStatus::Success) {
+            $output->writeln('Mint a token: sake tasks:MintContentApiToken --email=<member-email>');
+        }
+
+        return $exitCode;
     }
 }
