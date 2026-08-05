@@ -9,12 +9,14 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Versioned\Versioned;
 
 class BatchTest extends ContentApiTestCase
 {
@@ -227,7 +229,12 @@ class BatchTest extends ContentApiTestCase
         $body = $this->decode($this->apiPost('batch', [
             'atomic' => true,
             'operations' => [
-                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'unverified-1', 'fields' => ['Title' => 'First']],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'unverified-1',
+                    'fields' => ['Title' => 'First'],
+                ],
                 ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'unverified-2', 'fields' => ['Bogus' => 1]],
             ],
         ], $this->adminToken));
@@ -956,5 +963,55 @@ class BatchTest extends ContentApiTestCase
 
         $this->assertNull($body['error']);
         $this->assertSame('deleted', $body['data']['results'][0]['status']);
+    }
+
+    /**
+     * #71's stranded-descendants guard, wired end to end through the batch
+     * delete op — every other test exercising it goes through
+     * PublishOrchestrator directly or the record-action HTTP endpoint;
+     * ApiTestVersionedObject (this file's usual delete-mode stub) has no
+     * Hierarchy extension, so the guard is a no-op for it and none of the
+     * existing batch delete tests actually exercise the
+     * BatchProcessor -&gt; RecordWriter -&gt; PublishOrchestrator::delete()
+     * force-threading chain against a class the guard applies to at all.
+     */
+    public function testBatchDeleteWithUnpublishModeRoutesThroughTheDescendantGuard(): void
+    {
+        $wrapper = ApiTestPage::create(['Title' => 'Batch Delete Wrapper']);
+        $wrapper->write();
+        $wrapper->publishRecursive();
+
+        $child = ApiTestPage::create(['Title' => 'Batch Delete Child', 'ParentID' => $wrapper->ID]);
+        $child->write();
+        $child->publishRecursive();
+
+        $refused = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestPage', 'id' => (int) $wrapper->ID, 'mode' => 'unpublish'],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('UNPUBLISH_STRANDS_DESCENDANTS', $refused['data']['results'][0]['error']['code']);
+        $this->assertTrue(
+            (bool) Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $wrapper->ID)->exists(),
+            'the batch op reporting an error result must not have actually unpublished the wrapper'
+        );
+
+        $forced = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'delete',
+                    'class' => 'ApiTestPage',
+                    'id' => (int) $wrapper->ID,
+                    'mode' => 'unpublish',
+                    'force' => true,
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('deleted', $forced['data']['results'][0]['status']);
+        $this->assertFalse(
+            (bool) Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $wrapper->ID)->exists()
+        );
     }
 }

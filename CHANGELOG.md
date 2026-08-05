@@ -18,6 +18,12 @@ All notable changes to this project are documented here. Format loosely follows
   gets a grant, closing a real privilege-escalation vector confirmed against a downstream
   project's first-cut implementation (undeclared `Page` subclasses inheriting `DELETE`/`action`
   at the class gate). See [docs/en/04_security-model.md#grant-extension](docs/en/04_security-model.md#grant-extension).
+- **(#71)** `subtree` publish mode: publishes a record, then every draft `Hierarchy` tree child
+  depth-first. `publishRecursive()` (existing `recursive` mode) does not cascade to `SiteTree`
+  children — only owned Elemental relations — so a multi-page subtree previously needed one
+  explicit `single` publish call per page; `subtree` does it in one. Equivalent to `single` for
+  a non-hierarchical class. Available on `PublishOrchestrator::MODES`, batch op `publish`/
+  `defaultPublish`, and `content_page_convert`'s `publish` field. Spec bumped to `v1.5`.
 - **many_many `through` support**: a many_many relation backed by an explicit join DataObject
   (`['through' => JoinClass, 'from' => ..., 'to' => ...]`, e.g. a `ProductSizeGTINProduct` join
   carrying `IsCurrent`/`SortOrder`) now round-trips its extra join data the same way a classic
@@ -99,6 +105,29 @@ All notable changes to this project are documented here. Format loosely follows
   unrelated reason, the response reports the new `500 ROLLBACK_UNVERIFIED` instead, carrying
   the same full results array so every `created` entry can be checked by hand. `updated`/
   `deleted` results aren't independently verified yet (#75). See `docs/en/12_error-codes.md`.
+- **(#71)** Unpublishing (or archiving) a `Hierarchy` record with any live tree children used
+  to silently cascade-delete every one of them too, recursively — not just the target record —
+  confirmed live during a real IA restructure. Root cause: `SiteTree::onBeforeDelete()`
+  cascades to `AllChildren()` under `SiteTree.enforce_strict_hierarchy` (the framework
+  default), and `doUnpublish()` deletes the record from LIVE internally, firing that cascade
+  against every current live child unconditionally — independent of whether those children had
+  also been reparented in draft (an earlier version of this fix only guarded that narrower
+  case, matching how the bug was first diagnosed; a live child that had never moved at all
+  turned out to be cascade-deleted exactly the same way). `unpublish()`/
+  `delete(mode: "unpublish")` now refuse with `409 UNPUBLISH_STRANDS_DESCENDANTS` whenever the
+  record has any live descendants, naming the affected ids. `archive()`/
+  `delete(mode: "archive")` share the same guard, checked against both stages (`doArchive()`
+  calls `doUnpublish()` internally, then also deletes the draft-stage row directly — an
+  equally cascading delete). `force: true` (the stage action's request body, or the batch
+  delete op's `force` field) bypasses the guard for the case where the cascade is actually
+  intended — bypassing now logs a warning naming the record and every descendant it stranded,
+  so a forced cascade leaves an audit trail instead of vanishing without a trace. A record's own
+  `PublishOrchestrator::MODES` `publish` field (used by `content_records_stage`'s `publish`
+  action, previously hardcoded to only `single`/`recursive` via a `recursive` boolean) now
+  accepts an explicit `mode` string including `subtree` — the guard's own documented remedy
+  ("publish the subtree to its new parent first") was otherwise unreachable from that endpoint.
+  See
+  `docs/en/10_publishing-and-stages.md#unpublishing-or-archiving-a-hierarchy-record-the-descendant-cascade-guard`.
 
 ## [1.4.0] - 2026-07-17
 
