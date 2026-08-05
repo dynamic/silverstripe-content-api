@@ -64,8 +64,8 @@ Set directly on each DataObject class you expose — not on the module. These ar
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `api_access` | `bool\|string` | unset (not exposed) | `true` = all verbs; or a CSV of colymba HTTP verbs (`'GET,POST,PUT'`) mapped to read/create/update/delete/action. Declaring this (or `content_api_access`) is what exposes the class at all — deny-by-default otherwise |
-| `content_api_access` | `bool\|string` | unset | Same shape as `api_access`; **wins** when both are set. Lets a class have different colymba-vs-content-api exposure |
+| `api_access` | `bool\|string` | unset (not exposed) | `true` = all verbs; or a CSV of colymba HTTP verbs (`'GET,POST,PUT'`) mapped to read/create/update/delete/action. Declaring this (or `content_api_access`) is what exposes the class at all — deny-by-default otherwise. **Inherited**, like any SilverStripe config: a subclass with no `api_access`/`content_api_access` of its own still exposes its ancestor's verbs (see [Class-level gate](04_security-model.md#class-level-gate)) |
+| `content_api_access` | `bool\|string` | unset | Same shape as `api_access`; **wins** when both are set. Lets a class have different colymba-vs-content-api exposure. Also inherited — see above |
 | `api_write_policy` | `'guarded'\|'allowlist'` | unset (falls back to `WriteApplicator.policy`) | Per-class override of the global write policy |
 | `api_writable_fields` | `string[]` | `[]` | Allowlist of client-writable db field / has_one relation names. **A non-empty array here puts the class into allowlist mode even under the `guarded` global policy** — declaring the allowlist is itself the opt-in, with no configuration that sets it and has it silently ignored |
 | `api_protected_fields` | `string[]` | `[]` | Per-class denylist, merged with the global `WriteApplicator.protected_fields`. Always wins over the allowlist, and still applies to the trusted internal-fields write channel |
@@ -167,6 +167,24 @@ Registered only when `silverstripe/linkfield`'s `Link` class exists (`_config/li
 Varchar(100) }`, indexed. Deliberately byte-identical to the fixtures recipe's own column spec so
 the two merge to one column on a site using both.
 
+## ContentApiGrantExtension
+
+`Dynamic\ContentApi\Security\ContentApiGrantExtension`. Not configurable — its opt-in is the
+class's own `api_access`/`content_api_access` declaration, not a separate config key. Apply it
+per class, like `ExternalIdentifierExtension` and `WriteGuardExtension`:
+
+```yml
+SilverStripe\CMS\Model\SiteTree:
+  extensions:
+    - Dynamic\ContentApi\Security\ContentApiGrantExtension
+```
+
+Grants record-level `canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any Member holding
+`CONTENT_API_ACCESS`, scoped to classes that declare their own (uninherited) `api_access`/
+`content_api_access`, and only for the specific verbs that declaration lists — see
+[Grant extension](04_security-model.md#grant-extension) for the full detail, including why the
+uninherited scoping is load-bearing and not optional.
+
 ## Permission codes
 
 Not YAML config, but the security surface every gate above ultimately checks — see
@@ -175,6 +193,6 @@ Not YAML config, but the security surface every gate above ultimately checks —
 
 | Constant | Code | Grants |
 |---|---|---|
-| `ContentApiPermissions::ACCESS` | `CONTENT_API_ACCESS` | Every content API endpoint (record-level `can*()` still applies) |
+| `ContentApiPermissions::ACCESS` | `CONTENT_API_ACCESS` | Every content API endpoint. **Record-level `can*()` still applies on top and is not implied** — see [ContentApiGrantExtension](#contentapigrantextension) for the module's own app-level grant |
 | `ContentApiPermissions::POPULATE` | `CONTENT_API_POPULATE` | Batch, compositions, asset uploads, page actions |
 | `ContentApiPermissions::SCHEMA` | `CONTENT_API_SCHEMA` | Schema introspection (implicitly granted to anyone with `ACCESS`) |
