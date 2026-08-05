@@ -2,20 +2,19 @@
 
 namespace Dynamic\ContentApi\Tasks;
 
-use Colymba\RESTfulAPI\Authenticators\TokenAuthenticator;
-use SilverStripe\Core\Injector\Injector;
+use Dynamic\ContentApi\Tasks\Support\ApiTokenMinter;
+use Dynamic\ContentApi\Tasks\Support\TaskStatus;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\PolyExecution\PolyOutput;
-use SilverStripe\Security\Member;
-use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 
 /**
- * Mint (or rotate) a content API token for a member without a password
- * round-trip — the standard way to provision agent/service accounts. Uses
- * colymba/silverstripe-restfulapi's TokenAuthenticator, so the token works on
- * both the /api and /content-api/v1 surfaces.
+ * SS6 (branch `1`) entry point. All business logic lives in
+ * {@see ApiTokenMinter} — see #65; this adapter only translates Symfony
+ * Console input/output. The `ss5` branch's copy of this file has the
+ * identical structure around the legacy BuildTask::run($request) entry
+ * point instead.
  *
  * Usage: `sake tasks:MintContentApiToken --email=agent@example.com`
  */
@@ -43,34 +42,14 @@ class MintApiTokenTask extends BuildTask
 
     protected function execute(InputInterface $input, PolyOutput $output): int
     {
-        $email = (string) $input->getOption('email');
+        $result = ApiTokenMinter::create()->mint((string) $input->getOption('email'));
 
-        if ($email === '') {
-            $output->writeln('<error>Missing required option: --email</error>');
+        $isError = $result->status !== TaskStatus::Success;
 
-            return Command::INVALID;
+        foreach ($result->lines as $line) {
+            $output->writeln($isError && $line !== '' ? "<error>{$line}</error>" : $line);
         }
 
-        $member = Member::get()->filter('Email', $email)->first();
-
-        if (!$member) {
-            $output->writeln("<error>No member found with email {$email}</error>");
-
-            return Command::FAILURE;
-        }
-
-        $auth = Injector::inst()->create(TokenAuthenticator::class);
-        $auth->resetToken((int) $member->ID);
-        $token = $auth->getToken((int) $member->ID);
-        $expires = date('c', (int) Member::get()->byID($member->ID)->ApiTokenExpire);
-
-        $output->writeln("Token minted for {$email} (member #{$member->ID}), expires {$expires}:");
-        $output->writeln('');
-        $output->writeln("  {$token}");
-        $output->writeln('');
-        $output->writeln('Note: colymba/silverstripe-restfulapi stores tokens in plaintext on the');
-        $output->writeln('Member record — anyone with CMS access to Members can read them.');
-
-        return Command::SUCCESS;
+        return $result->status->toCommandExitCode();
     }
 }
