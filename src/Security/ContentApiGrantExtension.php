@@ -23,7 +23,19 @@ use SilverStripe\Security\Security;
  * SilverStripe\CMS\Model\SiteTree:
  *   extensions:
  *     - Dynamic\ContentApi\Security\ContentApiGrantExtension
+ * DNADesign\Elemental\Models\BaseElement:
+ *   extensions:
+ *     - Dynamic\ContentApi\Security\ContentApiGrantExtension
  * ```
+ *
+ * Apply it to `BaseElement` too if the service account needs to write
+ * Elemental content (compositions/batch element writes), not just pages:
+ * `BaseElement::canView()`/`canEdit()`/`canDelete()` delegate to the owning
+ * page's own check, but `canCreate()` does NOT — it falls straight to
+ * `Permission::check('CMS_ACCESS', 'any', $member)`, which a
+ * `CONTENT_API_ACCESS`-only account can never satisfy. A grant on `SiteTree`
+ * alone lets the account edit/publish/archive pages but never create an
+ * element, even one nested under an opted-in page.
  *
  * SECURITY — the grant is scoped to classes that declare their OWN
  * `content_api_access`, and to the verbs that declaration lists. Both halves
@@ -54,7 +66,13 @@ use SilverStripe\Security\Security;
  * `SiteTree::canPublish()` and `canAddChildren()` both fall through to
  * `canEdit()` when nothing answers them directly, which is what makes
  * publish/unpublish and reparenting work for a service account holding the
- * `update`/`action` verb.
+ * `update`/`action` verb. It's also load-bearing for archive on an
+ * already-*published* record: `Versioned::canDelete()` independently vetoes
+ * (returns `false`, in the same `extendedCan()` minimum as this extension's
+ * own `canDelete()` answer) unless `canUnpublish()` succeeds, and
+ * `canUnpublish()` falls through to `canPublish()` falls through to
+ * `canEdit()`. A class declaring only the `delete` verb (no `update`/`action`)
+ * can archive a draft-only record but not a published one.
  *
  * `canView()` alone does NOT make a draft-only record readable:
  * `Versioned::canViewVersioned()` answers `false` once draft and live
