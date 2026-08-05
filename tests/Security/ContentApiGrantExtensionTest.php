@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Security;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\ContentApiGrantExtension;
 use Dynamic\ContentApi\Security\ContentApiPermissions;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use SilverStripe\Core\Config\Config;
@@ -28,6 +29,7 @@ class ContentApiGrantExtensionTest extends SapphireTest
 
     protected static $required_extensions = [
         ApiTestPage::class => [ContentApiGrantExtension::class],
+        ApiTestElement::class => [ContentApiGrantExtension::class],
     ];
 
     protected function setUp(): void
@@ -83,6 +85,59 @@ class ContentApiGrantExtensionTest extends SapphireTest
         $this->assertFalse((bool) $subPage->canEdit($member));
         $this->assertFalse((bool) $subPage->canCreate($member));
         $this->assertFalse((bool) $subPage->canDelete($member));
+    }
+
+    /**
+     * Versioned::canDelete() independently vetoes (returns false, which
+     * participates in the same extendedCan() minimum as this extension's own
+     * answer) once a record is published, unless canUnpublish() succeeds —
+     * and canUnpublish() falls through to canPublish() falls through to
+     * canEdit(). A class declaring only the delete verb (no update/action)
+     * therefore cannot archive an already-published record even though this
+     * extension answers canDelete() true on its own — the canEdit() grant is
+     * load-bearing for archive too, not just for publish/unpublish. A
+     * draft-only record has no such veto (Versioned::canDelete() only
+     * vetoes published records), which is why
+     * testVerbScopingWithholdsDeleteWhenNotDeclared below (unpublished)
+     * doesn't exercise this interaction.
+     */
+    public function testCanDeleteOnAPublishedRecordAlsoNeedsTheEditGrant(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'content_api_access', 'GET,DELETE');
+
+        $page = ApiTestPage::create(['Title' => 'Delete Only Published']);
+        $page->write();
+        $page->publishRecursive();
+
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
+
+        $this->assertFalse(
+            (bool) $page->canDelete($member),
+            'declaring only DELETE is not enough to archive an already-published record — '
+                . 'Versioned::canDelete() vetoes unless canUnpublish() (which chains to '
+                . 'canEdit()) also succeeds'
+        );
+    }
+
+    /**
+     * BaseElement::canView()/canEdit()/canDelete() delegate to getPage() when
+     * one exists, but canCreate() does NOT — it falls straight to
+     * Permission::check('CMS_ACCESS', 'any', $member), which a
+     * CONTENT_API_ACCESS-only account can never satisfy on its own. Applying
+     * this extension to SiteTree alone is therefore not enough for a service
+     * account to create elements via compositions/batch; it must also be
+     * applied to BaseElement (see docs/en/04_security-model.md). This proves
+     * the extension itself works identically there — it's a deployment
+     * concern (which classes a project's YAML applies it to), not something
+     * the extension's own logic needs to special-case.
+     */
+    public function testGrantsCanCreateOnABaseElementSubclass(): void
+    {
+        Config::modify()->set(ApiTestElement::class, 'content_api_access', 'GET,POST,PUT,DELETE,action');
+
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
+
+        $this->assertTrue((bool) ApiTestElement::singleton()->canCreate($member));
     }
 
     public function testVerbScopingWithholdsDeleteWhenNotDeclared(): void
