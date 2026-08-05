@@ -157,13 +157,6 @@ class RecordActionsTest extends ContentApiTestCase
         $child->write();
         $child->publishRecursive();
 
-        $newParent = ApiTestPage::create(['Title' => 'Action New Parent']);
-        $newParent->write();
-        $newParent->publishRecursive();
-
-        $child->ParentID = $newParent->ID;
-        $child->write();
-
         $refused = $this->apiPost("records/ApiTestPage/{$wrapper->ID}/unpublish", [], $token);
         $this->assertErrorCode($refused, 'UNPUBLISH_STRANDS_DESCENDANTS', 409);
         $this->assertTrue(
@@ -174,5 +167,30 @@ class RecordActionsTest extends ContentApiTestCase
             $this->apiPost("records/ApiTestPage/{$wrapper->ID}/unpublish", ['force' => true], $token)
         );
         $this->assertFalse($forced['data']['stage']['live']);
+    }
+
+    /**
+     * archive() shares unpublish()'s guard — confirming the HTTP action
+     * reads "force" through to PublishOrchestrator::archive() too.
+     */
+    public function testArchiveActionRefusesThenSucceedsWithForce(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $wrapper = ApiTestPage::create(['Title' => 'Archive Action Wrapper']);
+        $wrapper->write();
+        $wrapper->publishRecursive();
+
+        $child = ApiTestPage::create(['Title' => 'Archive Action Child', 'ParentID' => $wrapper->ID]);
+        $child->write();
+        $child->publishRecursive();
+
+        $refused = $this->apiPost("records/ApiTestPage/{$wrapper->ID}/archive", [], $token);
+        $this->assertErrorCode($refused, 'UNPUBLISH_STRANDS_DESCENDANTS', 409);
+
+        $forced = $this->decode(
+            $this->apiPost("records/ApiTestPage/{$wrapper->ID}/archive", ['force' => true], $token)
+        );
+        $this->assertTrue($forced['data']['archived']);
     }
 }

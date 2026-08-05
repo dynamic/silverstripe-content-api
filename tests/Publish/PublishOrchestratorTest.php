@@ -10,14 +10,24 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Versioned\Versioned;
 
 /**
- * Coverage for #71's publish-order guard rails. Both bugs were confirmed
- * live during a real IA restructure (see the module's own #71 issue and
- * dynamic/agency-skills#55): unpublishing a wrapper page whose live
- * children had already been reparented elsewhere in draft silently
- * dropped the whole live subtree (not just the wrapper), and
- * `publishRecursive()` doesn't cascade to `Hierarchy` tree children (only
- * owned relations), so a multi-page subtree needed one explicit publish
- * call per page.
+ * Coverage for #71's publish-order guard rails. Confirmed live during a
+ * real IA restructure (see the module's own #71 issue and
+ * dynamic/agency-skills#55): unpublishing (or archiving) a `Hierarchy`
+ * record with any live/draft tree children silently cascade-deleted every
+ * one of them too, recursively — `SiteTree::onBeforeDelete()` cascades to
+ * `AllChildren()` whenever `SiteTree.enforce_strict_hierarchy` is enabled
+ * (the framework default), and both `doUnpublish()` and `doArchive()`
+ * delete the record via a real `delete()` call, unconditionally triggering
+ * that cascade against whatever children currently exist in the stage
+ * being deleted from — independent of whether those children have also
+ * moved. (An earlier version of this test suite/guard only covered a
+ * child that had been reparented in draft, matching how the bug was first
+ * diagnosed; `testUnpublishRefusesWhenTargetHasAnyLiveChildAtAll` below is
+ * what caught that the narrower guard undercounted the real risk — a
+ * completely untouched live child is cascade-deleted exactly the same
+ * way.) Separately, `publishRecursive()` doesn't cascade to `Hierarchy`
+ * tree children either (only owned Elemental relations), so a multi-page
+ * subtree needed one explicit publish call per page before `subtree` mode.
  */
 class PublishOrchestratorTest extends ContentApiTestCase
 {
@@ -30,15 +40,10 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $this->orchestrator = PublishOrchestrator::create();
     }
 
-    public function testUnpublishRefusesWhenALiveChildHasMovedToADifferentParentInDraft(): void
+    public function testUnpublishRefusesWhenTargetHasAnyLiveChildAtAll(): void
     {
         $wrapper = $this->publishedPage('Wrapper');
         $child = $this->publishedPage('Child', $wrapper->ID);
-        $newParent = $this->publishedPage('New Parent');
-
-        // Reparent in draft only — never republished to live.
-        $child->ParentID = $newParent->ID;
-        $child->write();
 
         try {
             $this->orchestrator->unpublish($wrapper);
@@ -52,62 +57,66 @@ class PublishOrchestratorTest extends ContentApiTestCase
             $this->isLive($wrapper->ID),
             'the guard must refuse before doUnpublish() runs — the wrapper must still be live'
         );
-        $this->assertTrue($this->isLive($child->ID), 'the child must still be live under the old parent');
+        $this->assertTrue($this->isLive($child->ID), 'an untouched live child must not be cascade-deleted');
     }
 
-    public function testUnpublishSucceedsWhenNoDescendantsHaveMoved(): void
+    public function testUnpublishRefusesWhenALiveChildHasAlsoMovedToADifferentParentInDraft(): void
     {
-        $wrapper = $this->publishedPage('Wrapper Untouched');
-        $child = $this->publishedPage('Child Untouched', $wrapper->ID);
+        $wrapper = $this->publishedPage('Wrapper Moved');
+        $child = $this->publishedPage('Child Moved', $wrapper->ID);
+        $newParent = $this->publishedPage('New Parent Moved');
 
+        // Reparent in draft only — never republished to live. Not the
+        // condition the guard actually checks (see class docblock), but
+        // this is the exact shape #71 was originally reported with, and
+        // must still refuse.
+        $child->ParentID = $newParent->ID;
+        $child->write();
+
+        $this->expectException(ApiError::class);
         $this->orchestrator->unpublish($wrapper);
-
-        $this->assertFalse($this->isLive($wrapper->ID));
-        $this->assertTrue(
-            $this->isLive($child->ID),
-            'unpublish() only removes the target record — it never cascades to children on its own'
-        );
     }
 
-    public function testUnpublishSucceedsWhenAChildWasNeverPublishedInTheFirstPlace(): void
+    public function testUnpublishSucceedsWhenTargetHasNoLiveChildren(): void
+    {
+        $leaf = $this->publishedPage('Leaf Page');
+
+        $this->orchestrator->unpublish($leaf);
+
+        $this->assertFalse($this->isLive($leaf->ID));
+    }
+
+    public function testUnpublishSucceedsWhenTheOnlyChildIsDraftOnly(): void
     {
         $wrapper = $this->publishedPage('Wrapper Draft Child');
         $draftOnlyChild = ApiTestPage::create(['Title' => 'Draft-Only Child', 'ParentID' => $wrapper->ID]);
         $draftOnlyChild->write();
 
-        // A draft-only child was never live, so it can't be "stranded" —
-        // must not trip the guard.
+        // A draft-only child was never live, so it isn't in the live
+        // descendant set the guard checks — must not trip it.
         $this->orchestrator->unpublish($wrapper);
 
         $this->assertFalse($this->isLive($wrapper->ID));
     }
 
-    public function testForceBypassesTheGuardAndAcceptsTheLoss(): void
+    public function testForceBypassesTheGuardAndCascadesAsSilverStripeNormallyWould(): void
     {
         $wrapper = $this->publishedPage('Wrapper Force');
         $child = $this->publishedPage('Child Force', $wrapper->ID);
-        $newParent = $this->publishedPage('New Parent Force');
-
-        $child->ParentID = $newParent->ID;
-        $child->write();
 
         $this->orchestrator->unpublish($wrapper, force: true);
 
         $this->assertFalse($this->isLive($wrapper->ID));
         $this->assertFalse(
             $this->isLive($child->ID),
-            'force must genuinely bypass the guard — the old (pre-#71) behavior'
+            'force must genuinely bypass the guard and let the real framework cascade happen'
         );
     }
 
     public function testDeleteWithUnpublishModeRoutesThroughTheSameGuard(): void
     {
         $wrapper = $this->publishedPage('Wrapper Delete');
-        $child = $this->publishedPage('Child Delete', $wrapper->ID);
-        $newParent = $this->publishedPage('New Parent Delete');
-
-        $child->ParentID = $newParent->ID;
-        $child->write();
+        $this->publishedPage('Child Delete', $wrapper->ID);
 
         $this->expectException(ApiError::class);
         $this->orchestrator->delete($wrapper, 'unpublish');
@@ -116,13 +125,79 @@ class PublishOrchestratorTest extends ContentApiTestCase
     public function testDeleteWithUnpublishModeAndForceBypassesTheGuard(): void
     {
         $wrapper = $this->publishedPage('Wrapper Delete Force');
-        $child = $this->publishedPage('Child Delete Force', $wrapper->ID);
-        $newParent = $this->publishedPage('New Parent Delete Force');
-
-        $child->ParentID = $newParent->ID;
-        $child->write();
+        $this->publishedPage('Child Delete Force', $wrapper->ID);
 
         $this->orchestrator->delete($wrapper, 'unpublish', true);
+
+        $this->assertFalse($this->isLive($wrapper->ID));
+    }
+
+    public function testArchiveRefusesWhenTargetHasAnyDescendantInEitherStage(): void
+    {
+        $wrapper = $this->publishedPage('Archive Wrapper');
+        $liveChild = $this->publishedPage('Archive Live Child', $wrapper->ID);
+
+        try {
+            $this->orchestrator->archive($wrapper);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('UNPUBLISH_STRANDS_DESCENDANTS', $error->toArray()['code']);
+        }
+
+        $this->assertTrue($this->isLive($wrapper->ID), 'the guard must refuse before doArchive() runs');
+        $this->assertTrue($this->isLive($liveChild->ID));
+    }
+
+    /**
+     * doArchive() deletes the draft-stage row directly too (not just via
+     * doUnpublish()'s live-stage delete) — a draft-only child, invisible
+     * to the unpublish guard, is exactly the case archive's own guard
+     * needs to catch that unpublish's doesn't.
+     */
+    public function testArchiveRefusesWhenTheOnlyDescendantIsDraftOnly(): void
+    {
+        $wrapper = $this->publishedPage('Archive Wrapper Draft Child');
+        $draftOnlyChild = ApiTestPage::create(['Title' => 'Archive Draft-Only Child', 'ParentID' => $wrapper->ID]);
+        $draftOnlyChild->write();
+
+        $this->expectException(ApiError::class);
+        $this->orchestrator->archive($wrapper);
+    }
+
+    public function testArchiveSucceedsWhenNoDescendantsInEitherStage(): void
+    {
+        $leaf = $this->publishedPage('Archive Leaf');
+
+        $this->orchestrator->archive($leaf);
+
+        $this->assertFalse($this->isLive($leaf->ID));
+    }
+
+    public function testArchiveForceBypassesTheGuard(): void
+    {
+        $wrapper = $this->publishedPage('Archive Wrapper Force');
+        $this->publishedPage('Archive Child Force', $wrapper->ID);
+
+        $this->orchestrator->archive($wrapper, force: true);
+
+        $this->assertFalse($this->isLive($wrapper->ID));
+    }
+
+    public function testDeleteWithArchiveModeRoutesThroughTheSameGuard(): void
+    {
+        $wrapper = $this->publishedPage('Archive Delete Wrapper');
+        $this->publishedPage('Archive Delete Child', $wrapper->ID);
+
+        $this->expectException(ApiError::class);
+        $this->orchestrator->delete($wrapper, 'archive');
+    }
+
+    public function testDeleteWithArchiveModeAndForceBypassesTheGuard(): void
+    {
+        $wrapper = $this->publishedPage('Archive Delete Force Wrapper');
+        $this->publishedPage('Archive Delete Force Child', $wrapper->ID);
+
+        $this->orchestrator->delete($wrapper, 'archive', true);
 
         $this->assertFalse($this->isLive($wrapper->ID));
     }

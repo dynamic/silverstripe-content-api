@@ -227,7 +227,12 @@ class BatchTest extends ContentApiTestCase
         $body = $this->decode($this->apiPost('batch', [
             'atomic' => true,
             'operations' => [
-                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'unverified-1', 'fields' => ['Title' => 'First']],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'unverified-1',
+                    'fields' => ['Title' => 'First'],
+                ],
                 ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'unverified-2', 'fields' => ['Bogus' => 1]],
             ],
         ], $this->adminToken));

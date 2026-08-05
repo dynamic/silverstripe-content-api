@@ -105,17 +105,23 @@ All notable changes to this project are documented here. Format loosely follows
   unrelated reason, the response reports the new `500 ROLLBACK_UNVERIFIED` instead, carrying
   the same full results array so every `created` entry can be checked by hand. `updated`/
   `deleted` results aren't independently verified yet (#75). See `docs/en/12_error-codes.md`.
-- **(#71)** Unpublishing a `Hierarchy` record (or deleting one with `mode: "unpublish"`) whose
-  live children had already been reparented elsewhere in draft used to cascade the whole live
-  subtree away, not just the target record — confirmed live during a real IA restructure:
-  those children were still nested under the target on **live**, even though their draft
-  `ParentID` had already moved, so unpublishing the target dropped them (and their own
-  descendants) off live too, an unrelated loss far beyond the one record targeted.
-  `unpublish()`/`delete(mode: "unpublish")` now refuse with `409
-  UNPUBLISH_STRANDS_DESCENDANTS` when this would happen, naming the affected record ids;
-  `force: true` (the stage action's request body, or the batch delete op's `force` field)
-  bypasses the guard for the rare case where the loss is actually intended. See
-  `docs/en/10_publishing-and-stages.md#unpublishing-a-hierarchy-record-the-stranded-descendants-guard`.
+- **(#71)** Unpublishing (or archiving) a `Hierarchy` record with any live tree children used
+  to silently cascade-delete every one of them too, recursively — not just the target record —
+  confirmed live during a real IA restructure. Root cause: `SiteTree::onBeforeDelete()`
+  cascades to `AllChildren()` under `SiteTree.enforce_strict_hierarchy` (the framework
+  default), and `doUnpublish()` deletes the record from LIVE internally, firing that cascade
+  against every current live child unconditionally — independent of whether those children had
+  also been reparented in draft (an earlier version of this fix only guarded that narrower
+  case, matching how the bug was first diagnosed; a live child that had never moved at all
+  turned out to be cascade-deleted exactly the same way). `unpublish()`/
+  `delete(mode: "unpublish")` now refuse with `409 UNPUBLISH_STRANDS_DESCENDANTS` whenever the
+  record has any live descendants, naming the affected ids. `archive()`/
+  `delete(mode: "archive")` share the same guard, checked against both stages (`doArchive()`
+  calls `doUnpublish()` internally, then also deletes the draft-stage row directly — an
+  equally cascading delete). `force: true` (the stage action's request body, or the batch
+  delete op's `force` field) bypasses the guard for the case where the cascade is actually
+  intended. See
+  `docs/en/10_publishing-and-stages.md#unpublishing-or-archiving-a-hierarchy-record-the-descendant-cascade-guard`.
 
 ## [1.4.0] - 2026-07-17
 

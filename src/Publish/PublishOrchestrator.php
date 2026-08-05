@@ -111,14 +111,22 @@ class PublishOrchestrator
     /**
      * Remove the record from the live stage, keeping the draft.
      *
-     * Guards against the exact way this goes catastrophically wrong on a
-     * `Hierarchy` tree (#71, confirmed live during a real IA restructure):
-     * unpublishing a wrapper page whose still-live children were already
-     * reparented elsewhere in draft silently drops the whole live subtree
-     * under the wrapper — not just the wrapper itself — because those
-     * children are still nested under it on LIVE even though draft no
-     * longer agrees. `$force` bypasses the guard for the (rare, deliberate)
-     * case where that's actually intended.
+     * Guards against a real, confirmed-live SilverStripe framework
+     * behavior (#71, found during a real IA restructure — see
+     * `docs/en/10_publishing-and-stages.md`): `SiteTree::onBeforeDelete()`
+     * cascades to `AllChildren()` and deletes them too, whenever
+     * `SiteTree.enforce_strict_hierarchy` is enabled (the framework
+     * default). `doUnpublish()` deletes the record from the LIVE stage
+     * internally, so on a `Hierarchy` record with ANY live children —
+     * whether or not those children have moved in draft — unpublishing
+     * silently cascades the whole live subtree away with it, recursively.
+     * (An earlier version of this guard only checked for children whose
+     * draft parent had diverged from live, matching the original bug
+     * report's framing; that undercounted the real risk — a live child
+     * that hasn't moved at all is cascade-deleted exactly the same way,
+     * confirmed by a test written to prove the narrower guard sufficient,
+     * which failed.) `$force` bypasses the guard for the case where the
+     * cascade is actually intended.
      *
      * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS unless $force
      */
@@ -127,7 +135,7 @@ class PublishOrchestrator
         $this->assertVersioned($record, 'unpublish');
 
         if (!$force) {
-            $this->assertNoLiveDescendantsMovedInDraft($record);
+            $this->assertNoLiveDescendants($record, 'Unpublishing');
         }
 
         $record->doUnpublish();
@@ -136,39 +144,39 @@ class PublishOrchestrator
     /**
      * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS
      */
-    protected function assertNoLiveDescendantsMovedInDraft(DataObject $record): void
+    protected function assertNoLiveDescendants(DataObject $record, string $verbGerund): void
     {
-        $strandedIDs = $this->findLiveDescendantsMovedInDraft($record);
+        $descendantIDs = $this->findDescendantIDs($record, Versioned::LIVE);
 
-        if ($strandedIDs === []) {
+        if ($descendantIDs === []) {
             return;
         }
 
         throw new ApiError(
             ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS,
             sprintf(
-                'Unpublishing %s #%d would also remove %d still-live descendant(s) that have '
-                    . 'already moved to a different parent in draft (ids: %s) — publish them to '
-                    . 'their new parent first, then unpublish this record. Pass force to '
-                    . 'unpublish anyway and accept the loss.',
+                '%s %s #%d would also remove %d live descendant(s) still nested under it (ids: '
+                    . '%s) — `enforce_strict_hierarchy` cascades a delete to every current child, '
+                    . 'live or not. Publish them to their intended new parent first if this record '
+                    . 'is being retired as part of a restructure, then retry — or pass force to '
+                    . 'proceed anyway and accept the loss.',
+                $verbGerund,
                 get_class($record),
                 (int) $record->ID,
-                count($strandedIDs),
-                implode(', ', $strandedIDs)
+                count($descendantIDs),
+                implode(', ', $descendantIDs)
             )
         );
     }
 
     /**
-     * IDs of records that are still live descendants of $record (reachable
-     * from it via Hierarchy on the LIVE stage) but are no longer draft
-     * descendants of it (reparented elsewhere, or removed from draft
-     * entirely) — exactly the set doUnpublish() would silently strand.
-     * Empty for a non-hierarchical class or one with no extension at all.
+     * IDs of every `Hierarchy` descendant of $record in the given stage.
+     * Empty for a non-hierarchical class, one with no extension at all, or
+     * a record that doesn't exist in that stage.
      *
      * @return int[]
      */
-    protected function findLiveDescendantsMovedInDraft(DataObject $record): array
+    protected function findDescendantIDs(DataObject $record, string $stage): array
     {
         if (!$record->hasExtension(Hierarchy::class)) {
             return [];
@@ -177,32 +185,62 @@ class PublishOrchestrator
         $baseClass = get_class($record);
         $id = (int) $record->ID;
 
-        $liveDescendantIDs = Versioned::withVersionedMode(function () use ($baseClass, $id) {
-            Versioned::set_stage(Versioned::LIVE);
-            $live = DataObject::get($baseClass)->byID($id);
+        return Versioned::withVersionedMode(function () use ($baseClass, $id, $stage) {
+            Versioned::set_stage($stage);
+            $staged = DataObject::get($baseClass)->byID($id);
 
-            return $live ? $live->getDescendantIDList() : [];
-        });
+            if (!$staged) {
+                return [];
+            }
 
-        if ($liveDescendantIDs === []) {
-            return [];
-        }
-
-        return Versioned::withVersionedMode(function () use ($baseClass, $id, $liveDescendantIDs) {
-            Versioned::set_stage(Versioned::DRAFT);
-            $draft = DataObject::get($baseClass)->byID($id);
-            $draftDescendantIDs = $draft ? $draft->getDescendantIDList() : [];
-
-            return array_values(array_diff($liveDescendantIDs, $draftDescendantIDs));
+            // getDescendantIDList() is a Hierarchy mixin method, confirmed
+            // present by the hasExtension() check above — PHPStan can't see
+            // that guard applies to this freshly-fetched instance too.
+            /** @var DataObject&Hierarchy $staged */
+            return $staged->getDescendantIDList();
         });
     }
 
     /**
-     * Remove the record from both stages (recoverable from version history).
+     * Remove the record from both stages (recoverable from version
+     * history). Shares {@see unpublish()}'s guard: `doArchive()` calls
+     * `doUnpublish()` internally (live-stage cascade risk), then also
+     * deletes the draft-stage row directly (`deleteFromStage(DRAFT)`,
+     * itself another `enforce_strict_hierarchy`-cascading delete) — so
+     * archive risks stranding descendants in *either* stage, checked here
+     * as the union of both.
+     *
+     * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS unless $force
      */
-    public function archive(DataObject $record): void
+    public function archive(DataObject $record, bool $force = false): void
     {
         $this->assertVersioned($record, 'archive');
+
+        if (!$force) {
+            $liveOrDraftDescendantIDs = array_unique(array_merge(
+                $this->findDescendantIDs($record, Versioned::LIVE),
+                $this->findDescendantIDs($record, Versioned::DRAFT)
+            ));
+
+            if ($liveOrDraftDescendantIDs !== []) {
+                throw new ApiError(
+                    ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS,
+                    sprintf(
+                        'Archiving %s #%d would also remove %d descendant(s) still nested under '
+                            . 'it in draft and/or live (ids: %s) — `enforce_strict_hierarchy` '
+                            . 'cascades a delete to every current child in whichever stage is '
+                            . 'being deleted from, and archive deletes from both. Move them out '
+                            . 'from under this record first if that\'s not intended, or pass '
+                            . 'force to proceed anyway and accept the loss.',
+                        get_class($record),
+                        (int) $record->ID,
+                        count($liveOrDraftDescendantIDs),
+                        implode(', ', $liveOrDraftDescendantIDs)
+                    )
+                );
+            }
+        }
+
         $record->doArchive();
     }
 
@@ -240,7 +278,7 @@ class PublishOrchestrator
         }
 
         match ($mode) {
-            'archive' => $record->doArchive(),
+            'archive' => $this->archive($record, $force),
             'unpublish' => $this->unpublish($record, $force),
             // Unreachable — $validModes above already rejected anything else.
             default => throw new ApiError(

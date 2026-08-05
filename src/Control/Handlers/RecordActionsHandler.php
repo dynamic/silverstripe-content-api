@@ -76,7 +76,7 @@ class RecordActionsHandler
                     $this->publisher->unpublish($record, !empty($body['force']));
                     break;
                 case 'archive':
-                    $this->publisher->archive($record);
+                    $this->publisher->archive($record, !empty($body['force']));
 
                     return [
                         'data' => [

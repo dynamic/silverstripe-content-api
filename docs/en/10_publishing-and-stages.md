@@ -86,37 +86,48 @@ stranded on draft behind a live page.
 |---|---|
 | `publish` | `publishSingle()`, or `publishRecursive()` with `{"recursive": true}` in the body |
 | `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below |
-| `archive` | Removes from both stages, recoverable via version history (`doArchive()`) |
+| `archive` | Removes from both stages, recoverable via version history (`doArchive()`) — same guard |
 
 `unpublish`/`archive` raise `400 PAYLOAD_INVALID` if called on an unversioned class
 (`assertVersioned()`). `publish` does **not** — `PublishOrchestrator::publish()` silently no-ops
 for a non-versioned record (same as `mode: "none"`) and the request still returns `200` with no
 state change, rather than erroring.
 
-## Unpublishing a `Hierarchy` record: the stranded-descendants guard
+## Unpublishing or archiving a `Hierarchy` record: the descendant-cascade guard
 
-**Unpublishing a page whose live children haven't been re-published to their new parent used to
-cascade the whole live subtree away, not just the target page** — confirmed live during a real
-IA restructure (#71): a wrapper page's children had already been reparented in draft to a
-different page, but never re-published there, so on **live** they were still nested under the
-wrapper. Unpublishing the wrapper removed not just the wrapper but every one of those children
-and their own descendants from live — an unrelated, unintended loss far beyond the one page
-targeted.
+**Unpublishing (or archiving) a page with any live tree children silently removed all of them
+too, recursively — not just the target page** — confirmed live during a real IA restructure
+(#71). The mechanism: SilverStripe's `SiteTree::onBeforeDelete()` cascades to
+`AllChildren()` and deletes each of them whenever `SiteTree.enforce_strict_hierarchy` is enabled
+(the framework's own default, on every project unless explicitly turned off). `doUnpublish()`
+deletes the record from the **LIVE** stage internally, so that cascade fires against whatever
+`Hierarchy` children the record currently has on live — every one of them, unconditionally.
 
-`unpublish()` (and `delete()` with `mode: "unpublish"`, which routes through the same path) now
-refuses this: before removing a record from live, it checks whether any of that record's
-*live* `Hierarchy` descendants are no longer among its *draft* descendants (reparented elsewhere,
-or removed from draft entirely). If any are found, the request fails with `409
-UNPUBLISH_STRANDS_DESCENDANTS`, naming the affected record ids, instead of silently cascading.
+**This is broader than "children that were reparented in draft."** An earlier version of this
+guard only refused when a live child's draft parent had diverged from live (matching how the
+original bug was first diagnosed — a wrapper's children *had* been reparented in draft ahead of
+the restructure). That undercounts the real risk: a live child that was never touched at all is
+cascade-deleted exactly the same way, the moment its parent is unpublished — proven by a test
+written to confirm the narrower guard was sufficient, which failed. The real condition is simply
+*does this record have any live `Hierarchy` children at all*, independent of their draft state.
 
-**Fix the caller, not the guard**: publish every still-live descendant to its new parent first
-(a `subtree` publish on the new parent covers this in one call), *then* unpublish the old
-wrapper — never the reverse. If the loss is genuinely intended, pass `{"force": true}` (the
-stage action's request body, or the batch delete op's `force` field) to bypass the guard and
-accept it explicitly.
+`unpublish()` (and `delete()` with `mode: "unpublish"`, routing through the same path) now
+refuses whenever the record has **any** live descendants, failing with `409
+UNPUBLISH_STRANDS_DESCENDANTS` and the affected record ids, instead of silently cascading.
+`archive()` (and `delete()` with `mode: "archive"`) shares the same guard, checked against
+**both** stages — `doArchive()` calls `doUnpublish()` internally (the live-stage risk above),
+then also deletes the draft-stage row directly, an equally cascading delete against whatever
+`Hierarchy` children currently exist in draft.
+
+**Fix the caller, not the guard**: if this is a restructure, publish (or move) every live
+descendant to its new home first — a `subtree` publish on the new parent covers this in one
+call — *then* unpublish/archive the old wrapper, never the reverse. If the cascade is genuinely
+intended (retiring a whole section on purpose), pass `{"force": true}` (the stage action's
+request body, or the batch delete op's `force` field) to bypass the guard and accept it
+explicitly.
 
 The guard only applies to classes carrying the `Hierarchy` extension — a plain versioned
-`DataObject` with no tree concept is unaffected (nothing to strand).
+`DataObject` with no tree concept is unaffected (nothing to cascade to).
 
 ## Composition-level publish restriction
 
