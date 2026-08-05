@@ -129,15 +129,24 @@ the two branches.
     otherwise identical to branch `1`'s `v1.5`; only that one prose sentence differs.
   - `tests/Control/BatchTest.php`: only the new
     `testBatchDeleteWithUnpublishModeRoutesThroughTheDescendantGuard()` test + its two imports
-    landed; #79's other changes to this file were entirely `ApiTestDeprecating`/
-    `ForceUnverifiedRollbackBatchProcessor` tests belonging to #70, which doesn't exist here.
+    landed. #79's only other change to this file was a cosmetic multiline reformat of an array
+    literal inside `testUnverifiedRollbackReportsDistinctlyFromAVerifiedOne()`, a pre-existing
+    #70-only test that doesn't exist here — `ApiTestDeprecatingObject`/
+    `ForceUnverifiedRollbackBatchProcessor` were already-present, unmodified imports that test
+    used, not something #79 added.
   - **Framework-behavior verification**: unlike #76's port (which found a real `canDelete()`
     divergence), this guard's three load-bearing mechanisms
     (`Hierarchy::getDescendantIDList()`/`AllChildren()`, `Versioned::doUnpublish()`/`doArchive()`,
     `SiteTree::onBeforeDelete()`'s `enforce_strict_hierarchy` cascade) were confirmed
-    byte-identical or semantically identical across `silverstripe/versioned` 3.2.1 (branch `1`),
-    2.2.2 (this branch's constraint floor), and 2.4.x-dev (a real SS5 site) — no divergence found,
-    confirmed live.
+    byte-identical or semantically identical across three real installs, checking the actual
+    packages each mechanism lives in (not just `silverstripe/versioned`, since
+    `SiteTree::onBeforeDelete()` is `silverstripe/cms` and `Hierarchy` is `silverstripe/framework`):
+    branch `1`'s testbed (`cms` 6.2.1, `framework` 6.2.2, `versioned` 3.2.1 — pinned releases),
+    this branch's constraint floor `^5.2` as actually installed on `mathedleadership` (`cms`
+    5.2.x-dev@c77a4c9, `framework` 5.2.x-dev@862a65e, `versioned` 2.2.x-dev@5bb8eb0 — dev-branch
+    aliases, not tagged releases, despite `^2.2` reading like a floor pin), and a real SS5 site,
+    `youth-sailing` (`cms`/`framework` 5.4.x-dev, `versioned` 2.4.x-dev) — no divergence found,
+    confirmed live against `youth-sailing`.
   - **Deviation from branch policy, again**: cherry-picked rather than `git merge origin/1`, for
     the reasons in the #76 note above (a real merge would drag in #65 and #70, unrelated to this
     fix). See the follow-up merge-sync issue this entry links to on GitHub.
