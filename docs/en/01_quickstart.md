@@ -32,16 +32,23 @@ DNADesign\Elemental\Models\ElementContent:
 > `WriteGuardExtension` — see [Security model](04_security-model.md) for why this is mandatory,
 > not optional hardening.
 
-## 2. Apply the external-id extension
+## 2. Apply extensions
 
-Apply to classes the API should upsert (same column spec as
-`recipe-silverstripe-essentials-fixtures` — legacy-populated sites are addressable as-is):
+Apply the external-id extension to classes the API should upsert (same column spec as
+`recipe-silverstripe-essentials-fixtures` — legacy-populated sites are addressable as-is), and
+`ContentApiGrantExtension` to any class a service account needs to write without holding
+`ADMIN`/`SITETREE_EDIT_ALL` (see [Grant extension](04_security-model.md#grant-extension) — it
+only grants a class that declares its own `api_access`/`content_api_access`):
 
 ```yml
 SilverStripe\CMS\Model\SiteTree:
-  extensions: ['Dynamic\ContentApi\Identity\ExternalIdentifierExtension']
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+    - Dynamic\ContentApi\Security\ContentApiGrantExtension
 DNADesign\Elemental\Models\BaseElement:
-  extensions: ['Dynamic\ContentApi\Identity\ExternalIdentifierExtension']
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+    - Dynamic\ContentApi\Security\ContentApiGrantExtension
 SilverStripe\Assets\File:
   extensions: ['Dynamic\ContentApi\Identity\ExternalIdentifierExtension']
 ```
@@ -53,7 +60,9 @@ service account's group — reads default to the draft stage, and without `VIEW_
 the account can't read back its own draft-only writes once draft and live diverge (see
 [Security model](04_security-model.md#service-account-permissions)). Add *Use content
 population endpoints* (`CONTENT_API_POPULATE`) too if the account needs batch/compositions/asset
-writes/page actions. A task provisions all of this in one step:
+writes/page actions. These permission codes satisfy the class-level gate and the draft-read
+check; `ContentApiGrantExtension` (step 2) is what satisfies the record-level `can*()` gate — a
+service account needs both. A task provisions the permission codes in one step:
 
 ```bash
 sake tasks:SetupContentApiServiceAccount --group="Content API Service Accounts"

@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#76)** `Dynamic\ContentApi\Security\ContentApiGrantExtension`: grants record-level
+  `canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any Member holding
+  `CONTENT_API_ACCESS`, so a service account can create/move/reparent/publish/archive records
+  without holding `ADMIN` — the app-level grant the module's own docs and
+  `ServiceAccountProvisioner` output have always said a project needs but previously left every
+  project to write itself. Project-applied via YAML, never auto-applied (same pattern as
+  `WriteGuardExtension`/`ExternalIdentifierExtension`). Scoped per-verb to a class's own
+  **uninherited** `content_api_access`/`api_access` declaration (new
+  `ClassRegistry::ownAccessVerbs()`) — a class that only inherits its ancestor's access never
+  gets a grant, closing a real privilege-escalation vector confirmed against a downstream
+  project's first-cut implementation (undeclared `Page` subclasses inheriting `DELETE`/`action`
+  at the class gate). See [docs/en/04_security-model.md#grant-extension](docs/en/04_security-model.md#grant-extension).
 - **many_many `through` support**: a many_many relation backed by an explicit join DataObject
   (`['through' => JoinClass, 'from' => ..., 'to' => ...]`, e.g. a `ProductSizeGTINProduct` join
   carrying `IsCurrent`/`SortOrder`) now round-trips its extra join data the same way a classic
@@ -50,6 +62,15 @@ All notable changes to this project are documented here. Format loosely follows
   minted without embedding the exact command inline (the command itself — `sake
   tasks:MintContentApiToken --email=<member-email>` — is now a separate line the task prints
   after, unchanged from before).
+
+### Docs
+- **(#76)** `docs/en/04_security-model.md`'s "Class-level gate" section claimed the gate was
+  "deny-by-default...checked against the record's concrete class, so a subclass may narrow
+  inherited access." Both halves were wrong: `api_access`/`content_api_access` are ordinary
+  inherited config, so an undeclared subclass inherits its ancestor's verbs rather than being
+  denied by default; and the concrete class the gate is checked against is whatever
+  `RecordsHandler::fetchRecord()`'s `get_by_id()` returns, which can be a subclass reached under
+  any mapped *ancestor* ref, not something the gate narrows to.
 
 ### Fixed
 - **(#72)** `SetupServiceAccountTaskTest` had no fixture file and no `$usesDatabase = true`, so

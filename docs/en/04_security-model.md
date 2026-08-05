@@ -40,12 +40,110 @@ CMS login capability, so the account stays API-scoped.
 `sake tasks:SetupContentApiServiceAccount` provisions both grants (plus `CONTENT_API_POPULATE`
 with `--populate`) in one step — see [Quick start](01_quickstart.md#3-grant-permissions-and-mint-a-token).
 
+`CONTENT_API_ACCESS` alone satisfies only the class-level gate below — it grants nothing at the
+record level. Without an app-level `canView()`/`canEdit()`/`canCreate()`/`canDelete()` grant, a
+plain `CONTENT_API_ACCESS` holder still fails every write with `FORBIDDEN_RECORD`, since a
+model's own `can*()` methods fall through to real CMS-login permissions (`ADMIN`,
+`SITETREE_EDIT_ALL`, ...) that account was never meant to hold. See
+[Grant extension](#grant-extension) below — the module ships one so projects don't have to write
+it themselves.
+
+## Grant extension
+
+`Dynamic\ContentApi\Security\ContentApiGrantExtension` grants record-level
+`canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any Member holding `CONTENT_API_ACCESS`.
+Apply it per class, the same pattern as `WriteGuardExtension` — the module never auto-applies it:
+
+```yml
+SilverStripe\CMS\Model\SiteTree:
+  extensions:
+    - Dynamic\ContentApi\Security\ContentApiGrantExtension
+DNADesign\Elemental\Models\BaseElement:
+  extensions:
+    - Dynamic\ContentApi\Security\ContentApiGrantExtension
+```
+
+Apply it to `BaseElement` too if the service account writes Elemental content, not just pages —
+`BaseElement::canView()`/`canEdit()`/`canDelete()` delegate to the owning page's own check, but
+`canCreate()` does not; it falls straight to `Permission::check('CMS_ACCESS', 'any', $member)`,
+which a `CONTENT_API_ACCESS`-only account can never satisfy. A grant on `SiteTree` alone lets the
+account edit/publish/archive pages but never create an element.
+
+**The grant is scoped to classes that declare their own `content_api_access` (or `api_access`),
+and to the verbs that declaration lists — both are load-bearing.** Since the class-level gate
+below inherits and doesn't narrow anything (see [Class-level gate](#class-level-gate)), a blanket
+record-level grant on every subclass would be a real privilege escalation: a project declaring
+access on `Page` would let the service account write and archive every undeclared `Page`
+subclass too. The extension avoids this by reading each class's access config **uninherited, and
+excluding any value contributed by another extension** (`Config::UNINHERITED |
+Config::EXCLUDE_EXTRA_SOURCES`) — a class only gets a grant answer if its own literal declaration
+names a verb; every other subclass gets `null` and falls through to its normal permission checks,
+unaffected. It then grants only the specific `can*()` hooks whose verb the class's own declaration
+lists — a class listing `action` but not `DELETE` never gets `canDelete()` granted, so [record
+actions' delete/action split](#record-level-gate) (`archive` needs `delete`, not `action`) still
+holds.
+
+Two caveats worth knowing:
+
+- **The grant is per concrete class, not inherited via the record-level check either.** A project
+  following the documented "`Image` inherits `File`'s `api_access`" convention gets `canCreate()`
+  on an uploaded `Image` (checked against `File` itself), but a later `canEdit()`/`canDelete()` on
+  that record checks `Image`'s own uninherited declaration — empty, if `Image` never declares its
+  own — and falls through to `FILE_EDIT_ALL`, which a `CONTENT_API_ACCESS`-only account doesn't
+  hold. Declare access on every concrete class a service account needs to write, not just the
+  ancestor it inherits HTTP exposure from.
+- **The uninherited check doesn't require the class to be registered in `ClassRegistry`'s exposure
+  map.** `content_api_access` is module-specific, so only a project sets it deliberately; the
+  legacy `api_access` key is one third-party code can self-declare for unrelated reasons, so a
+  vendor class that happens to declare it under a grant-applied ancestor gets a grant even if the
+  content API itself could never route to it. This mirrors the class-level gate's own existing
+  trust model for `api_access` (this extension is strictly narrower — uninherited vs inherited —
+  not broader), consistent with the module's design principle that a class's own `can*()` methods
+  are the real safety boundary, not map membership.
+
+Every hook returns `true` or `null`, never `false`: `DataObject::extendedCan()` takes the
+minimum of every extension's answer, so a `false` here would deny that permission for every
+other member and extension too, sitewide — including real CMS editors.
+
+**A draft-read 403 after applying this extension is not a missing grant** — see
+[Service account permissions](#service-account-permissions) above. `canView()` alone does not
+make a draft-only record readable: `Versioned::canViewVersioned()` independently vetoes once
+draft and live diverge, and that veto participates in the same `extendedCan()` minimum. `VIEW_DRAFT_CONTENT`
+is what satisfies it, and `SetupContentApiServiceAccount` already grants it alongside
+`CONTENT_API_ACCESS`. Don't widen this extension to work around that 403; check the account
+holds `VIEW_DRAFT_CONTENT` instead.
+
+Similarly, **`canEdit()`'s grant is what clears `Versioned::canDelete()`'s veto on an
+already-published record**, not `canDelete()`'s own answer: `Versioned::canDelete()` vetoes
+unless `canUnpublish()` succeeds, and `canUnpublish()` falls through to `canPublish()` falls
+through to `canEdit()`. A class declaring only the `delete` verb (no `update`/`action`) can
+archive a draft-only record but not a published one.
+
 ## Class-level gate
 
 `PermissionPolicy::checkClassAccess()` requires `CONTENT_API_ACCESS` **and** that the class
 exposes the requested verb via `api_access` / `content_api_access` (see
-[Configuration reference](02_configuration.md#per-exposed-class-config)) — deny-by-default,
-checked against the record's **concrete** class, so a subclass may narrow inherited access.
+[Configuration reference](02_configuration.md#per-exposed-class-config)).
+
+Two things about this gate are easy to assume and both are wrong:
+
+- **It is not deny-by-default for a subclass.** `api_access`/`content_api_access` are ordinary
+  SilverStripe config and therefore *inherit* — a class with no configured ancestor is denied by
+  default, but any subclass of an exposed class inherits its verbs unless it declares its own.
+  Declaring `content_api_access: 'GET,POST,PUT,DELETE,action'` on `Page` exposes every `Page`
+  subclass in the project — `ErrorPage`, `RedirectorPage`, `UserDefinedForm`, commerce page
+  types — to that same verb list, whether or not any of them appear in `content-api.yml`.
+- **It is not checked against "the record's concrete class" in the sense of narrowing to it.**
+  `RecordsHandler::fetchRecord()` resolves a record via `DataObject::get_by_id($resolvedClass,
+  $id)`, which returns whatever concrete class that row's `ClassName` actually is — so a
+  subclass is reachable under any mapped *ancestor* ref (`records/Page/$id`, not just
+  `records/ErrorPage/$id`). The class gate is evaluated against that concrete class, which is
+  accurate, but because the gate inherits (previous point), it doesn't narrow anything for an
+  undeclared subclass — it just answers the question the same way its declaring ancestor would.
+
+The practical consequence: the class-level gate alone never narrows a write to only the classes
+a project listed. The record-level `can*()` answer — your model's own permission logic, or the
+[grant extension](#grant-extension) above — is the only gate that can.
 
 Class-level checks deliberately never call `can*()` on an unhydrated singleton — a lesson
 carried over from an earlier tenant-scoped `can*()` implementation that 403'd on records that
