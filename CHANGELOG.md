@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
+  enforced on every write path, not just the CMS admin's "add element" picker. A composition,
+  batch, or generic upsert/update that attaches a `BaseElement` to an `ElementalArea` whose owning
+  page doesn't permit that element class is rejected with the new `ELEMENT_NOT_ALLOWED_ON_PAGE`
+  (422) error, listing the page's actual allowed types. New
+  `Dynamic\ContentApi\Registry\ElementPlacementPolicy` delegates entirely to
+  `ElementalAreasExtension::getElementalTypes()` (the CMS's own canonical check) rather than
+  reading the config directly, so `stop_element_inheritance`, per-element `canCreate()`, and the
+  `updateAvailableTypesForClass` hook all keep working exactly as they do in the CMS. Enforced once,
+  in `RecordWriter::write()`, since composition and batch/upsert both funnel through it. See
+  [docs/en/12_error-codes.md](docs/en/12_error-codes.md).
 - **(#76)** `Dynamic\ContentApi\Security\ContentApiGrantExtension`: grants record-level
   `canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any Member holding
   `CONTENT_API_ACCESS`, so a service account can create/move/reparent/publish/archive records

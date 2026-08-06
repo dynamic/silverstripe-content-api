@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestLink;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Write\Transformers\LinkTransformer;
+use DNADesign\Elemental\Extensions\ElementalAreasExtension;
 use DNADesign\Elemental\Models\ElementContent;
 use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\CMS\Model\SiteTree;
@@ -37,6 +38,13 @@ class CompositionTest extends ContentApiTestCase
     protected function tearDown(): void
     {
         TestAssetStore::reset();
+
+        // ElementalAreasExtension::getElementalTypes() caches its result per
+        // page class name in a static — Config::modify()'s rollback at the
+        // end of the test doesn't touch it, so a disallowed_elements test
+        // that doesn't reset this here would leak a stale (or fresh but
+        // now-wrong) allow-list into whichever test runs next.
+        ElementalAreasExtension::reset();
 
         parent::tearDown();
     }
@@ -658,5 +666,65 @@ class CompositionTest extends ContentApiTestCase
             $body['error']['message']
         );
         $this->assertSame('LinkText', $body['error']['details'][0]['field']);
+    }
+
+    /**
+     * #64: composing an element type the target page type's Elemental
+     * config disallows must be rejected — a CMS editor could never create
+     * this element through the "add element" picker on this page type, and
+     * the API is not a side door around that.
+     */
+    public function testComposingADisallowedElementIsRejected(): void
+    {
+        $page = $this->blockPage();
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'disallowed-1',
+                    'fields' => ['Title' => 'Should be rejected'],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'ELEMENT_NOT_ALLOWED_ON_PAGE', 422);
+        $this->assertNull(
+            ApiTestElement::get()->filter('FixtureIdentifier', 'disallowed-1')->first(),
+            'a rejected element must not be persisted'
+        );
+    }
+
+    /**
+     * The enforcement is per page-class-and-element-class, not a global
+     * kill switch — disallowing ApiTestElement on this page type must not
+     * also block a different, still-allowed element type.
+     */
+    public function testComposingAnAllowedElementStillSucceedsWhenAnotherTypeIsDisallowed(): void
+    {
+        $page = $this->blockPage();
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'still-allowed-1',
+                    'fields' => ['Title' => 'Still allowed', 'HTML' => '<p>ok</p>'],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->decode($response);
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['created'], array_column($body['data']['elements'], 'status'));
     }
 }

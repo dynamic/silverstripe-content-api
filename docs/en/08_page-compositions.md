@@ -70,6 +70,14 @@ untrusted colymba PUT surface (see [Security model](04_security-model.md#the-tru
 Element writes upsert with `publish: "none"` internally regardless of the request's top-level
 `publish` — the composition's own publish pass (below) handles publishing explicitly.
 
+`class` must also be one of the target page's **allowed** element types — Elemental's own
+per-page-type `allowed_elements`/`disallowed_elements` config (`ElementalAreasExtension::
+getElementalTypes()`, the same check the CMS admin's own "add element" picker uses) is enforced
+here too, not just in the CMS. An element type the page doesn't permit is `422
+ELEMENT_NOT_ALLOWED_ON_PAGE`, with the message listing the page's actual allowed types. This is
+enforced once, in `RecordWriter`, so it applies identically whether the element arrives via
+composition or a plain batch/upsert `ParentID` write (#64).
+
 ### `$ref` resolution
 
 `{"$ref": "heroImg"}` anywhere inside `fields`/`relations` (nested, deep) resolves to

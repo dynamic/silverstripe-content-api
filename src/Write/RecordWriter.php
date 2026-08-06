@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
+use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
@@ -186,6 +187,7 @@ class RecordWriter
         $requestedUrlSegment = $fields['URLSegment'] ?? null;
 
         $this->applicator->applyFields($record, $fields, $internalFields);
+        $this->assertElementPlacementAllowed($record);
 
         // The DB write and any relation writes it enables (has_one FK
         // repoints, has_many/many_many attaches) must land or fail together —
@@ -225,5 +227,62 @@ class RecordWriter
             'operation' => $operation,
             'warnings' => $warnings,
         ];
+    }
+
+    /**
+     * #64: an element being attached to an `ElementalArea` must be a type
+     * the area's owning page actually allows — checked here, the one place
+     * every write path (composition, batch, generic upsert/update) already
+     * shares once `ParentID` has been applied, rather than duplicated in
+     * each caller. Deliberately after `applyFields()` (so the FK just
+     * written is what's actually checked) and before the DB write below
+     * (so a disallowed placement never lands, not even inside a
+     * transaction that would otherwise roll back).
+     *
+     * A no-op for anything that isn't a `BaseElement`, isn't attached to an
+     * area yet, or where the area's owning page can't be resolved (e.g. a
+     * brand new area with no page pointing at it yet) — this policy has
+     * nothing to say about those cases, so it doesn't block them.
+     *
+     * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE
+     */
+    protected function assertElementPlacementAllowed(DataObject $record): void
+    {
+        if (
+            !class_exists('DNADesign\\Elemental\\Models\\BaseElement')
+            || !is_a($record, 'DNADesign\\Elemental\\Models\\BaseElement')
+            || empty($record->ParentID)
+        ) {
+            return;
+        }
+
+        $area = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID((int) $record->ParentID);
+
+        if (!$area || !$area->hasMethod('getOwnerPage')) {
+            return;
+        }
+
+        $page = $area->getOwnerPage();
+
+        if (!$page) {
+            return;
+        }
+
+        $elementClass = get_class($record);
+
+        if (Injector::inst()->get(ElementPlacementPolicy::class)->isAllowedOnPage($elementClass, $page)) {
+            return;
+        }
+
+        throw new ApiError(
+            ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE,
+            sprintf(
+                '"%s" is not an allowed element type on %s (#%d) — allowed types: %s.',
+                $elementClass,
+                get_class($page),
+                (int) $page->ID,
+                implode(', ', array_keys($page->getElementalTypes()))
+            )
+        );
     }
 }

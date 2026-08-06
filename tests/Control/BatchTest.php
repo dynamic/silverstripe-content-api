@@ -5,8 +5,10 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Batch\BatchProcessor;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
@@ -14,6 +16,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
+use DNADesign\Elemental\Extensions\ElementalAreasExtension;
+use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Versioned\Versioned;
@@ -27,6 +31,16 @@ class BatchTest extends ContentApiTestCase
         parent::setUp();
 
         $this->adminToken = $this->mintTokenFor('adminUser');
+    }
+
+    protected function tearDown(): void
+    {
+        // See CompositionTest's identical reset — ElementalAreasExtension's
+        // getElementalTypes() caches per page class name in a static that
+        // Config::modify()'s automatic rollback doesn't touch.
+        ElementalAreasExtension::reset();
+
+        parent::tearDown();
     }
 
     public function testMixedOperations(): void
@@ -1069,5 +1083,92 @@ class BatchTest extends ContentApiTestCase
         $this->assertFalse(
             (bool) Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $wrapper->ID)->exists()
         );
+    }
+
+    /**
+     * #64: the composition endpoint isn't the only way to attach an
+     * element to an area — a plain batch/upsert create can set `ParentID`
+     * directly too (BaseElement has no `api_writable_fields` here, so the
+     * default `guarded` policy leaves has_one FKs, including `ParentID`,
+     * writable). Elemental's per-page-type `disallowed_elements` must be
+     * enforced on this path just as much as on composition, or it's a
+     * side door around the CMS's own "add element" picker.
+     */
+    public function testBatchCreateOfADisallowedElementIsRejected(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Disallowed Target');
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Should be rejected', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('ELEMENT_NOT_ALLOWED_ON_PAGE', $body['data']['results'][0]['error']['code']);
+        $this->assertSame(
+            0,
+            ApiTestElement::get()->filter('ParentID', $area->ID)->count(),
+            'a rejected element must not be persisted into the area'
+        );
+    }
+
+    /**
+     * Companion to the rejection test: disallowing some other element type
+     * on this page must not also block ApiTestElement, which was never
+     * disallowed, from being attached to the same area via the same batch
+     * path.
+     */
+    public function testBatchCreateOfAnAllowedElementStillSucceedsWhenAnotherTypeIsDisallowed(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Allowed Target');
+
+        Config::modify()->set(
+            ApiTestBlockPage::class,
+            'disallowed_elements',
+            ['DNADesign\\Elemental\\Models\\ElementContent']
+        );
+        ElementalAreasExtension::reset();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Still allowed', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('created', $body['data']['results'][0]['status']);
+    }
+
+    /**
+     * Creates an ApiTestBlockPage with a genuinely persisted ElementalArea.
+     * Elemental only auto-creates the area during a write that happens in
+     * the DRAFT reading stage (`ElementalAreasExtension::
+     * allowAlteringElementalArea()`) — the same staging every write in this
+     * module already runs under via `Versioned::withVersionedMode()` (see
+     * `BatchProcessor::run()`) — so a bare `$page->write()` at the test's
+     * own top level, outside that stage, would silently leave the area
+     * relation at ID 0.
+     */
+    private function createBlockPageWithArea(string $title): ElementalArea
+    {
+        return Versioned::withVersionedMode(function () use ($title) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            $page = ApiTestBlockPage::create(['Title' => $title]);
+            $page->write();
+
+            return $page->ElementalArea();
+        });
     }
 }
