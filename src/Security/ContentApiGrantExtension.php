@@ -95,7 +95,7 @@ use SilverStripe\Security\Security;
  * publish/unpublish and reparenting work for a service account holding the
  * `update`/`action` verb.
  *
- * BRANCH NOTE: on branch `1`, `canEdit()`'s grant is *also* load-bearing for
+ * BRANCH NOTE: on branch `2`, `canEdit()`'s grant is *also* load-bearing for
  * archiving an already-*published* record — `Versioned::canDelete()` there
  * independently vetoes (returns `false`, in the same `extendedCan()` minimum
  * as this extension's own `canDelete()` answer) unless `canUnpublish()`
@@ -104,7 +104,7 @@ use SilverStripe\Security\Security;
  * `silverstripe/versioned` (confirmed against a real SS5.2 install,
  * `2.4.x-dev`) — `Versioned` has no `canDelete()` override at all here, only
  * a deprecated `canArchive()` whose own docblock says to use `canDelete()`
- * instead on the version branch `1` depends on.** A class declaring only the
+ * instead on the version branch `2` depends on.** A class declaring only the
  * `delete` verb (no `update`/`action`) can archive both a draft-only record
  * AND an already-published one on this branch — see
  * `ContentApiGrantExtensionTest::testCanDeleteOnAPublishedRecordDoesNotNeedTheEditGrantHere()`.
@@ -160,7 +160,7 @@ class ContentApiGrantExtension extends Extension
      * @return true|null true to grant, null to abstain — never false, see
      *   the class docblock. Typed `?bool` rather than `true|null` on this
      *   branch: standalone `true` as a type is PHP 8.2+, and this branch's
-     *   floor is PHP `^8.1` — branch `1` (a PHP 8.3 floor) enforces the invariant
+     *   floor is PHP `^8.1` — branch `2` (a PHP 8.3 floor) enforces the invariant
      *   at the type level; here it's convention plus the regression test.
      */
     protected function grant(string|array $verbs, $member = null): ?bool

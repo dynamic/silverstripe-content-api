@@ -10,9 +10,9 @@ use SilverStripe\Security\Permission;
 /**
  * Provision (or update) the permission Group a content API service account
  * needs. Idempotent — re-running only adds missing grants, never duplicates
- * or removes existing ones. Branch-neutral: both branch `1`'s SS6
+ * or removes existing ones. Branch-neutral: both branch `2`'s SS6
  * `SetupServiceAccountTask` adapter (`execute(InputInterface, PolyOutput): int`)
- * and `ss5`'s legacy `SetupServiceAccountTask` adapter (`run($request): void`)
+ * and branch `1`'s legacy `SetupServiceAccountTask` adapter (`run($request): void`)
  * call this directly rather than duplicating the business logic — see #65/#96.
  *
  * Grants CONTENT_API_ACCESS + VIEW_DRAFT_CONTENT unconditionally — the pair

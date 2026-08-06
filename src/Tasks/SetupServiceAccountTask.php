@@ -7,10 +7,10 @@ use Dynamic\ContentApi\Tasks\Support\TaskStatus;
 use SilverStripe\Dev\BuildTask;
 
 /**
- * `ss5` (this branch) entry point. All business logic lives in
+ * Branch `1` (this branch) entry point. All business logic lives in
  * {@see ServiceAccountProvisioner} — see #65/#96; this adapter only
  * translates the legacy `BuildTask::run($request)` request vars and echoes
- * the result. Branch `1`'s SS6 copy of this file wraps the same service
+ * the result. Branch `2`'s SS6 copy of this file wraps the same service
  * around `execute(InputInterface, PolyOutput): int` instead — there is no
  * shared entry point between the two branches, so a business-logic fix
  * belongs in `ServiceAccountProvisioner` (shared) rather than either
@@ -43,7 +43,7 @@ class SetupServiceAccountTask extends BuildTask
         $result = ServiceAccountProvisioner::create()->provision($title, $populate);
 
         foreach ($result->lines as $line) {
-            // ServiceAccountProvisioner is shared with branch `1`'s SS6 --flag-based
+            // ServiceAccountProvisioner is shared with branch `2`'s SS6 --flag-based
             // adapter, so its own message text uses that syntax — translate to this
             // branch's `key=value` request-var syntax before it reaches the operator.
             echo str_replace('--group', 'group', $line) . "\n";

@@ -88,8 +88,8 @@ class ContentApiGrantExtensionTest extends SapphireTest
     }
 
     /**
-     * BRANCH DIVERGENCE from branch `1`'s equivalent test
-     * (testCanDeleteOnAPublishedRecordAlsoNeedsTheEditGrant): on branch `1`,
+     * BRANCH DIVERGENCE from branch `2`'s equivalent test
+     * (testCanDeleteOnAPublishedRecordAlsoNeedsTheEditGrant): on branch `2`,
      * silverstripe/versioned's Versioned::canDelete() independently vetoes
      * (returns false, participating in the same extendedCan() minimum)
      * archiving an already-published record unless canUnpublish() succeeds —
@@ -100,9 +100,9 @@ class ContentApiGrantExtensionTest extends SapphireTest
      * (`2.4.x-dev`, confirmed against a real SS5.2 install): `Versioned.php`
      * has NO canDelete() override at all — only a deprecated canArchive()
      * whose own docblock says "Use canDelete() instead", i.e. canDelete()
-     * only starts carrying archive semantics on the version branch `1`
+     * only starts carrying archive semantics on the version branch `2`
      * depends on. `RecordActionsHandler` gates archive on canDelete()
-     * regardless of branch (that file is identical between `1` and `ss5`),
+     * regardless of branch (that file is identical between `1` and `2`),
      * so on THIS branch canDelete() answers this extension's own true
      * unchallenged — a class declaring only DELETE genuinely CAN archive an
      * already-published record here. Confirmed live: removing the canEdit

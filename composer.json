@@ -54,8 +54,7 @@
     },
     "extra": {
         "branch-alias": {
-            "dev-1": "1.x-dev",
-            "dev-ss5": "ss5.x-dev"
+            "dev-1": "1.x-dev"
         },
         "project-files-installed": [
             "behat.yml",

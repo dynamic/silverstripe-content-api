@@ -157,9 +157,9 @@ two branches are allowed to differ only in:
   Symfony Console's `PolyOutput`/`Command` — not present on this branch at all, since its two
   adapters `echo` `TaskResult::$lines` directly instead)
 - one documented `silverstripe/versioned` behavioral divergence: branch `2`'s `canDelete()` is
-  vetoed by an unmet `canUnpublish()` on an already-published record; this branch's `2.4.x-dev`
-  has no such veto (see `ContentApiGrantExtension`'s class docblock and
-  `docs/en/04_security-model.md#grant-extension`)
+  vetoed by an unmet `canUnpublish()` on an already-published record; this branch's
+  `silverstripe/versioned` `2.4.x-dev` has no such veto (see `ContentApiGrantExtension`'s class
+  docblock and `docs/en/04_security-model.md#grant-extension`)
 
 Everything else — application logic, tests, docs content beyond the requirements
 blocks — should read identically on both branches after a sync. A CI check

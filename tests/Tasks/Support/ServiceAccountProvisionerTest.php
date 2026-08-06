@@ -13,7 +13,7 @@ use SilverStripe\Security\Permission;
 /**
  * Business-logic coverage for the branch-neutral provisioner (#65) — asserts
  * on {@see TaskStatus}, a real enum, rather than parsing rendered output.
- * Written to be byte-identical when `ss5` adopts the same
+ * Written to be byte-identical when branch `1` adopts the same
  * `ServiceAccountProvisioner` (a follow-up to this PR); once it does, each
  * branch's own `SetupServiceAccountTaskTest` only needs to cover its thin
  * adapter (input parsing, output rendering, exit-code mapping).
@@ -139,7 +139,7 @@ class ServiceAccountProvisionerTest extends SapphireTest
         Group::create(['Title' => 'Test Ambiguous Title'])->write();
         // Group::write() enforces a unique Title via validate(). Branch 1's
         // write() does have a skipValidation flag (see
-        // SetupServiceAccountTaskTest's equivalent test), but ss5's doesn't —
+        // SetupServiceAccountTaskTest's equivalent test), but this branch's doesn't —
         // insert the second row directly so this test stays byte-identical
         // across both branches, constructing the pre-existing-duplicate-data
         // scenario the provisioner must defend against.

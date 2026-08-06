@@ -169,12 +169,13 @@ All notable changes to this project are documented here. Format loosely follows
   `verifyRollback()`'s own style (spotted while touching this file; unrelated deprecated call
   sites elsewhere in `src/` are out of scope here). Spec bumped to `v1.6`.
 
-## [Unreleased] — ss5
+## [Unreleased] — 1
 
-This branch tracks branch `1` (synced via `git merge origin/1`, never cherry-picked) and carries
-every entry above, plus the SS5-specific differences below. Baseline: SilverStripe `^5.2`, PHP
-`^8.1`. See the README's Branch policy section for what's allowed to permanently differ between
-the two branches.
+This branch (formerly `ss5`) tracks branch `2` (formerly `1`; synced via `git merge origin/2`,
+never cherry-picked) and carries every entry above, plus the SS5-specific differences below.
+Baseline: SilverStripe `^5.2`, PHP `^8.1`. See the README's Branch policy section for what's
+allowed to permanently differ between the two branches. Entries below predate the rename
+(issue #105) and use each branch's own then-current name.
 
 ### Added
 - **(#76)** `Dynamic\ContentApi\Security\ContentApiGrantExtension`, ported from branch `1` — see
