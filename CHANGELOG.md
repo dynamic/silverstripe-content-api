@@ -178,6 +178,25 @@ allowed to permanently differ between the two branches. Entries below predate th
 (issue #105) and use each branch's own then-current name.
 
 ### Fixed
+- **(#90, #102)** `PublishOrchestrator::publishSubtree()` had two real gaps: no per-descendant
+  authorization check (a token scoped to `Page` could publish a descendant of a subclass whose
+  own `api_access` only grants `read`, or a member without CMS access to a specific child page
+  could publish it via an ancestor they can edit — #90), and no way to avoid resurrecting a
+  deliberately-unpublished descendant when publishing a live ancestor's subtree (#102). Fixed
+  together since both live in the same walk:
+  - `publish()`/`publishSubtree()` now require a `Member` and authorization-check every
+    descendant (`checkClassAccess`/`checkRecordAccess`, `action` verb) before writing anything —
+    a two-pass design (collect + check the whole subtree, then publish) so a permission gap
+    partway through refuses the whole call rather than leaving earlier descendants live with no
+    way to undo it. `RecordActionsHandler`, `PageHandler`, `CompositionService`, and
+    `RecordWriter` all pass the acting member through.
+  - `mode: "subtree"` gained `liveOnly` (skip a descendant branch — no publish, no recursion —
+    that isn't already live) and `dryRun` (preview the would-publish set, no writes) request
+    body fields on the `publish` record action. Neither applies to any other mode. MCP spec
+    bumped to `v1.8` to document both.
+  - `docs/en/10_publishing-and-stages.md`'s existing recommendation to use `subtree` before
+    unpublishing an old wrapper now carries the resurrection-risk warning and the `liveOnly`
+    fix, rather than silently recommending a footgun.
 - **(#108)** `PublishOrchestrator`'s class docblock, and the matching passage in
   `docs/en/10_publishing-and-stages.md`, framed `publishRecursive()` not cascading into owned
   Elemental blocks as an SS6-specific fact. Issue #91's empirical test confirmed it's identical

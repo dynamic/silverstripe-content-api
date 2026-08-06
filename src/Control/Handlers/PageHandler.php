@@ -238,7 +238,7 @@ class PageHandler
                 throw ApiError::fromValidation($exception, 'Page conversion');
             }
 
-            $this->publisher->publish($converted, $publishMode);
+            $this->publisher->publish($converted, $publishMode, $context->member);
 
             return [
                 'data' => $this->serializer->serialize($converted),

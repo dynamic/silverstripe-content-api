@@ -70,7 +70,25 @@ class RecordActionsHandler
 
             switch ($action) {
                 case 'publish':
-                    $this->publisher->publish($record, $this->publishModeFromBody($body));
+                    $mode = $this->publishModeFromBody($body);
+
+                    // `liveOnly`/`dryRun` only affect `mode: "subtree"` — see
+                    // PublishOrchestrator::publishSubtree()'s docblock (#90,
+                    // #102). Harmless no-ops on every other mode.
+                    $entries = $this->publisher->publish(
+                        $record,
+                        $mode,
+                        $context->member,
+                        !empty($body['liveOnly']),
+                        !empty($body['dryRun'])
+                    );
+
+                    if (!empty($body['dryRun'])) {
+                        return [
+                            'data' => ['wouldPublish' => $entries ?? []],
+                            'meta' => ['operation' => 'publishDryRun', 'mode' => $mode],
+                        ];
+                    }
                     break;
                 case 'unpublish':
                     $this->publisher->unpublish($record, !empty($body['force']));

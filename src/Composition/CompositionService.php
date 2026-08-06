@@ -131,7 +131,7 @@ class CompositionService
 
         // 6. Publish
         if ($publishMode === 'recursive') {
-            $this->publishAll($page, $area, $elementResults);
+            $this->publishAll($page, $area, $elementResults, $member);
         }
 
         $response = [
@@ -707,15 +707,15 @@ class CompositionService
      * hasMethod('publishSingle') check keeps that answer from being able to
      * diverge between call sites.
      */
-    protected function publishAll(SiteTree $page, DataObject $area, array $elementResults): void
+    protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): void
     {
-        $this->publisher->publish($area, 'single');
+        $this->publisher->publish($area, 'single', $member);
 
         foreach ($elementResults as $result) {
-            $this->publisher->publish($result['record'], 'single');
+            $this->publisher->publish($result['record'], 'single', $member);
 
             foreach ($result['children'] as $childResult) {
-                $this->publisher->publish($childResult['record'], 'single');
+                $this->publisher->publish($childResult['record'], 'single', $member);
             }
         }
 

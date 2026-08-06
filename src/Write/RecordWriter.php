@@ -96,7 +96,7 @@ class RecordWriter
             $this->policy->checkClassAccess($className, 'update', $member);
             $this->policy->checkRecordAccess($existing, 'update', $member);
 
-            return $this->write($existing, $payload, 'updated', $internalFields);
+            return $this->write($existing, $payload, 'updated', $member, $internalFields);
         }
 
         $this->policy->checkClassAccess($className, 'create', $member);
@@ -119,7 +119,7 @@ class RecordWriter
             $record->setField($this->externalIds->fieldName(), $externalId);
         }
 
-        return $this->write($record, $payload, 'created', $internalFields);
+        return $this->write($record, $payload, 'created', $member, $internalFields);
     }
 
     /**
@@ -141,7 +141,7 @@ class RecordWriter
             $record->setField($this->externalIds->fieldName(), (string) $payload['externalId']);
         }
 
-        return $this->write($record, $payload, 'updated', $internalFields);
+        return $this->write($record, $payload, 'updated', $member, $internalFields);
     }
 
     /**
@@ -179,8 +179,13 @@ class RecordWriter
      *
      * @return array{record: DataObject, operation: string, warnings: array}
      */
-    protected function write(DataObject $record, array $payload, string $operation, array $internalFields = []): array
-    {
+    protected function write(
+        DataObject $record,
+        array $payload,
+        string $operation,
+        Member $member,
+        array $internalFields = []
+    ): array {
         $fields = (array) ($payload['fields'] ?? []);
         $relations = (array) ($payload['relations'] ?? []);
         $publishMode = (string) ($payload['publish'] ?? 'none');
@@ -229,7 +234,7 @@ class RecordWriter
             ];
         }
 
-        $this->publisher->publish($record, $publishMode);
+        $this->publisher->publish($record, $publishMode, $member);
 
         return [
             'record' => $record,
