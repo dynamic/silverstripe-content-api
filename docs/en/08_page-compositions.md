@@ -70,6 +70,25 @@ untrusted colymba PUT surface (see [Security model](04_security-model.md#the-tru
 Element writes upsert with `publish: "none"` internally regardless of the request's top-level
 `publish` — the composition's own publish pass (below) handles publishing explicitly.
 
+`class` must also be one of the target page's **allowed** element types — Elemental's own
+per-page-type `allowed_elements`/`disallowed_elements` config (`ElementalAreasExtension::
+getElementalTypes()`, the same check the CMS admin's own "add element" picker uses) is enforced
+here too, not just in the CMS. An element type the page doesn't permit is `422
+ELEMENT_NOT_ALLOWED_ON_PAGE`, with the message listing the page's actual allowed types. This is
+enforced once, in `RecordWriter`, so it applies identically whether the element arrives via
+composition or a plain batch/upsert/update `ParentID` write — and only when placement actually
+changes: re-POSTing the same already-composed element after its type becomes disallowed still
+succeeds as a plain edit, matching Elemental's own gate (which has no equivalent for "keep
+editing existing content," only for a new placement) (#64). An `ElementalArea`-type has_one FK
+(e.g. a page's own area relation) is never directly client-writable at all, on any surface,
+including colymba `/api` — only a `BaseElement`'s own `Parent` relation to its area is exempt,
+since that's the one FK this check inspects. Not covered by this check itself, though: the
+colymba `/api` surface can still create/attach an element via its own `ParentID` (a `BaseElement`'s
+FK is exempt from the guard above by design, and that surface never routes through this
+placement check at all), and attaching an *existing* element via `ElementalArea.Elements` if a
+project opts that relation into `api_writable_relations` — both pre-existing gaps in how those
+surfaces relate to this module's write pipeline, tracked separately.
+
 ### `$ref` resolution
 
 `{"$ref": "heroImg"}` anywhere inside `fields`/`relations` (nested, deep) resolves to

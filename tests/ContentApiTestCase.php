@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
@@ -45,6 +46,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestCascadeObject::class,
         ApiTestPolyObject::class,
         ApiTestMultiRelationalPolyObject::class,
+        ApiTestDeprecatingObject::class,
     ];
 
     protected function setUp(): void
@@ -62,6 +64,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ElementContent' => \DNADesign\Elemental\Models\ElementContent::class,
             'ApiTestPoly' => ApiTestPolyObject::class,
             'ApiTestMultiRelationalPoly' => ApiTestMultiRelationalPolyObject::class,
+            'ApiTestDeprecating' => ApiTestDeprecatingObject::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
@@ -78,6 +81,8 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
         Config::modify()->set(ApiTestPolyObject::class, 'api_access', true);
         Config::modify()->set(ApiTestMultiRelationalPolyObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestDeprecatingObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestDeprecatingObject::class, 'api_writable_fields', ['Title', 'ReceiptTitle']);
     }
 
     /**

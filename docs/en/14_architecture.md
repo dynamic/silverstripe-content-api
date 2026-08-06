@@ -58,7 +58,8 @@ class+message in dev/test, an opaque message in production).
 | `Auth/` | `AuthContext` | Resolved-auth value object for one request |
 | `Errors/` | `ErrorCode`, `ApiError` | Machine-readable codes + the throwable that carries them |
 | `Control/`, `Control/Handlers/` | `ContentApiController` + 8 handlers | Routing, envelope, per-endpoint logic |
-| `Tasks/` | `MintApiTokenTask` | `sake dev/tasks/MintContentApiToken` |
+| `Tasks/` | `MintApiTokenTask`, `SetupServiceAccountTask` | `sake dev/tasks/MintContentApiToken`, `sake dev/tasks/SetupContentApiServiceAccount` — thin `run($request)` adapters, translate legacy SS5 request vars only |
+| `Tasks/Support/` | `ApiTokenMinter`, `ServiceAccountProvisioner`, `TaskResult`, `TaskStatus` | Branch-neutral business logic behind the two tasks above (#65), byte-identical to branch `1`'s copies — this branch's adapters call the same services instead of duplicating ~180 lines per branch. Dependency-free (no `symfony/console`, which `ss5` doesn't require). Branch `1` additionally has `TaskResultRenderer`, the one piece of SS6-specific (`PolyOutput`/`Command`) rendering glue — not present here; this branch's adapters `echo` `TaskResult::$lines` directly |
 
 ## The two write surfaces
 

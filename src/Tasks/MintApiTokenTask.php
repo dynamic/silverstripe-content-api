@@ -2,23 +2,19 @@
 
 namespace Dynamic\ContentApi\Tasks;
 
-use Colymba\RESTfulAPI\Authenticators\TokenAuthenticator;
-use SilverStripe\Core\Injector\Injector;
+use Dynamic\ContentApi\Tasks\Support\ApiTokenMinter;
 use SilverStripe\Dev\BuildTask;
-use SilverStripe\Security\Member;
 
 /**
- * Mint (or rotate) a content API token for a member without a password
- * round-trip — the standard way to provision agent/service accounts. Uses
- * colymba/silverstripe-restfulapi's TokenAuthenticator, so the token works on
- * both the /api and /content-api/v1 surfaces.
+ * `ss5` (this branch) entry point. All business logic lives in
+ * {@see ApiTokenMinter} — see #65/#96; this adapter only translates the
+ * legacy `BuildTask::run($request)` request vars and echoes the result.
+ * Branch `1`'s SS6 copy of this file wraps the same service around
+ * `execute(InputInterface, PolyOutput): int` instead — there is no shared
+ * entry point between the two branches, so a business-logic fix belongs in
+ * `ApiTokenMinter` (shared) rather than either adapter.
  *
  * Usage: `sake dev/tasks/MintContentApiToken email=agent@example.com`
- *
- * SS5-branch note: this file uses the legacy BuildTask::run($request)
- * signature (branch `1`'s SS6 line uses execute(InputInterface, PolyOutput))
- * — there is no shared entry point between the two branches, so a business-
- * logic fix here must be manually ported to branch `1`'s copy and vice versa.
  */
 class MintApiTokenTask extends BuildTask
 {
@@ -32,32 +28,10 @@ class MintApiTokenTask extends BuildTask
 
     public function run($request)
     {
-        $email = trim((string) $request->getVar('email'));
+        $result = ApiTokenMinter::create()->mint((string) $request->getVar('email'));
 
-        if ($email === '') {
-            echo "Missing required option: email\n";
-
-            return;
+        foreach ($result->lines as $line) {
+            echo $line . "\n";
         }
-
-        $member = Member::get()->filter('Email', $email)->first();
-
-        if (!$member) {
-            echo "No member found with email {$email}\n";
-
-            return;
-        }
-
-        $auth = Injector::inst()->create(TokenAuthenticator::class);
-        $auth->resetToken((int) $member->ID);
-        $token = $auth->getToken((int) $member->ID);
-        $expires = date('c', (int) Member::get()->byID($member->ID)->ApiTokenExpire);
-
-        echo "Token minted for {$email} (member #{$member->ID}), expires {$expires}:\n";
-        echo "\n";
-        echo "  {$token}\n";
-        echo "\n";
-        echo "Note: colymba/silverstripe-restfulapi stores tokens in plaintext on the\n";
-        echo "Member record — anyone with CMS access to Members can read them.\n";
     }
 }

@@ -35,11 +35,13 @@ absent otherwise.
 | `CIRCULAR_REF` | 422 | A cycle among only-deferred composition elements (mutual unresolved `$ref`s) |
 | `EXTERNAL_ID_UNSUPPORTED` | 422 | Class lacks the external-id column (`ExternalIdentifierExtension` not applied) |
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
+| `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
 | `PAYLOAD_INVALID` | 400 | Malformed payload shape: bad relation value, missing polymorphic `class` hint, `..` in a folder path, bad `conflict`/`mode` value, missing `filename`, invalid `_stage`, unsupported filter modifier, missing `page.match`, etc. |
 | `HOMEPAGE_CONVERSION_FORBIDDEN` | 403 | Converting the site home page's class without `force: true` |
 | `ASSET_READ_FAILED` | 502 | Uploaded binary is empty/unreadable |
 | `FEATURE_UNAVAILABLE` | 501 | Endpoint needs an optional integration that isn't installed (elemental, linkfield, essentials-tools, elemental-templates) |
 | `SERVER_ERROR` | 500 | Uncaught exception. Dev/test environments get `ClassName: message`; production gets an opaque `"Internal server error."` |
+| `ROLLBACK_UNVERIFIED` | 500 | An atomic batch (`docs/en/07_batch-operations.md`) failed and the transaction rollback path ran, but re-checking every `created` result — and every `deleted` result whose mode could have reached the draft row (`archive`, or any mode on an unversioned class) — by id afterward found at least one in a state that contradicts the claimed rollback (or the check itself failed to complete, which also fails toward this code rather than a false `rolledBack: true`). `error.details` carries the same full results array as a normal rollback failure — it does not narrow down which record(s) are affected — so re-check every `created`/`deleted` result in it directly before retrying (#70, #75) |
 
 ## `URLSEGMENT_COLLISION`: a warning code, not a thrown error
 

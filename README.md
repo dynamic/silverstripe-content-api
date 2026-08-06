@@ -141,8 +141,19 @@ conflicts on the next sync). The two branches are allowed to differ only in:
 - composer constraints (framework/cms/PHP versions, the colymba branch + patch)
 - task entry-point signatures (`ss5`'s `src/Tasks/*.php` use SS5's legacy
   `BuildTask::run($request)`; `1` uses SS6's `execute(InputInterface, PolyOutput): int` — each
-  file carries a docblock noting the other branch's copy must be hand-ported)
+  file carries a docblock noting the other branch's copy must be hand-ported; the branch-neutral
+  business logic behind both lives in `Tasks/Support/`, kept byte-identical across branches)
 - requirement statements in this README and `docs/en/00_installation.md`
+- PHP-floor-dependent type declarations (e.g. `Security/ContentApiGrantExtension.php`'s `?bool`
+  here vs `true|null` on branch `1` — standalone `true` as a return type needs PHP 8.2+, and this
+  branch's floor is `^8.1`)
+- SS6-only glue with no `ss5` equivalent (e.g. `Tasks/Support/TaskResultRenderer.php`, which wraps
+  Symfony Console's `PolyOutput`/`Command` — not present on this branch at all, since its two
+  adapters `echo` `TaskResult::$lines` directly instead)
+- one documented `silverstripe/versioned` behavioral divergence: branch `1`'s `canDelete()` is
+  vetoed by an unmet `canUnpublish()` on an already-published record; this branch's `2.4.x-dev`
+  has no such veto (see `ContentApiGrantExtension`'s class docblock and
+  `docs/en/04_security-model.md#grant-extension`)
 
 Everything else — application logic, tests, docs content beyond the requirements
 blocks — should read identically on both branches after a sync. A CI check
