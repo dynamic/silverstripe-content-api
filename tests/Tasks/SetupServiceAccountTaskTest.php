@@ -83,7 +83,7 @@ class SetupServiceAccountTaskTest extends SapphireTest
     }
 
     /**
-     * ServiceAccountProvisioner's own message text uses branch `1`'s SS6
+     * ServiceAccountProvisioner's own message text uses branch `2`'s SS6
      * --flag syntax (`--group`) since it's shared between both branches —
      * this adapter translates it to this branch's `key=value` syntax before
      * it reaches the operator, so an SS5 user is never told to pass a flag

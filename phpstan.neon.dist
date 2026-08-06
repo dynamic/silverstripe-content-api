@@ -16,7 +16,7 @@ parameters:
     # root cause as the AllChildren() entry above (PHPStan can't narrow on a
     # runtime hasExtension() check), but a different diagnostic kind: this
     # one flags the intersection @var tag itself as unresolvable. Not present
-    # on branch `1`'s toolchain, so this entry is a deliberate branch-specific
+    # on branch `2`'s toolchain, so this entry is a deliberate branch-specific
     # divergence in this otherwise-shared file.
     - message: '#PHPDoc tag @var for variable \$staged contains unresolvable type\.#'
       identifier: varTag.unresolvableType

@@ -17,9 +17,9 @@ Optional integrations are feature-gated at runtime: an endpoint that needs one a
 | `dynamic/silverstripe-essentials-tools` | `$palette(N)` / `$button(N, Label)` color token resolution via `ColorTokenTransformer` |
 | `dynamic/silverstripe-elemental-templates` | `POST pages/$ID/apply-template` |
 
-> This is the `ss5` branch. Branch `1` targets SilverStripe 6 and requires
-> `colymba/silverstripe-restfulapi`'s `feature/cms-6-compatibility` branch instead — see the
-> README's Branch policy section.
+> This is the `1` branch (SilverStripe 5.2 line, default). Branch `2` targets SilverStripe 6
+> and requires `colymba/silverstripe-restfulapi`'s `feature/cms-6-compatibility` branch
+> instead — see the README's Branch policy section.
 
 ## Install
 

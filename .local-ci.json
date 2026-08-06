@@ -1,5 +1,5 @@
 {
   "checks": [
-    { "label": "ss5 doc drift (SS6 requirements / sake tasks: syntax)", "run": "scripts/check-doc-drift.sh" }
+    { "label": "branch-1 doc drift (SS6 requirements / sake tasks: syntax / stale legacy-branch-name refs)", "run": "scripts/check-doc-drift.sh" }
   ]
 }

@@ -6,10 +6,10 @@ use Dynamic\ContentApi\Tasks\Support\ApiTokenMinter;
 use SilverStripe\Dev\BuildTask;
 
 /**
- * `ss5` (this branch) entry point. All business logic lives in
+ * Branch `1` (this branch) entry point. All business logic lives in
  * {@see ApiTokenMinter} — see #65/#96; this adapter only translates the
  * legacy `BuildTask::run($request)` request vars and echoes the result.
- * Branch `1`'s SS6 copy of this file wraps the same service around
+ * Branch `2`'s SS6 copy of this file wraps the same service around
  * `execute(InputInterface, PolyOutput): int` instead — there is no shared
  * entry point between the two branches, so a business-logic fix belongs in
  * `ApiTokenMinter` (shared) rather than either adapter.
@@ -31,7 +31,7 @@ class MintApiTokenTask extends BuildTask
         $result = ApiTokenMinter::create()->mint((string) $request->getVar('email'));
 
         foreach ($result->lines as $line) {
-            // ApiTokenMinter is shared with branch `1`'s SS6 --flag-based adapter, so
+            // ApiTokenMinter is shared with branch `2`'s SS6 --flag-based adapter, so
             // its own message text uses that syntax — translate to this branch's
             // `key=value` request-var syntax before it reaches the operator.
             echo str_replace('--email', 'email', $line) . "\n";

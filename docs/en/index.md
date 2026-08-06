@@ -3,8 +3,8 @@
 Content population layer for SilverStripe 5.2+, built on
 [colymba/silverstripe-restfulapi](https://github.com/colymba/silverstripe-restfulapi) (via
 [dynamic/silverstripe-restfulapi](https://github.com/dynamic/silverstripe-restfulapi), a
-maintained SS5-compatible fork — see [Installation](00_installation.md)). This is the `ss5`
-branch; branch `1` targets SilverStripe 6.
+maintained SS5-compatible fork — see [Installation](00_installation.md)). This is the `1`
+branch (default); branch `2` targets SilverStripe 6.
 
 Two cooperating surfaces share one token and one models map:
 

@@ -29,8 +29,8 @@ see [docs/en/13_migrating-from-fixtures.md](docs/en/13_migrating-from-fixtures.m
   Installation below), a fork of silverstripeltd's `feature/v5` branch fixing 4 calls to methods
   removed in SilverStripe 4+; see [docs/en/upstream-issues.md](docs/en/upstream-issues.md)
 
-> This is the `ss5` branch. Branch `1` targets SilverStripe 6 and requires
-> `colymba/silverstripe-restfulapi`'s `feature/cms-6-compatibility` branch instead.
+> This is the `1` branch (SilverStripe 5.2 line, default). Branch `2` targets SilverStripe 6
+> and requires `colymba/silverstripe-restfulapi`'s `feature/cms-6-compatibility` branch instead.
 
 Optional integrations (feature-gated at runtime; endpoints answer `501
 FEATURE_UNAVAILABLE` when absent): `dnadesign/silverstripe-elemental` (compositions),
@@ -133,14 +133,17 @@ Full walkthrough with permission codes and next steps: [docs/en/01_quickstart.md
 
 ## Branch policy
 
-This repo carries two parallel lines: `1` (default, SilverStripe 6) and `ss5` (this branch,
-SilverStripe 5.2). `ss5` receives changes only via `git merge origin/1` — never the reverse,
+This repo carries two parallel lines: `1` (default, this branch, SilverStripe 5.2) and `2`
+(SilverStripe 6). `1` receives changes only via `git merge origin/2` — never the reverse,
 and never a cherry-pick (which would leave no merge base and re-present the same commits as
-conflicts on the next sync). The two branches are allowed to differ only in:
+conflicts on the next sync). (This merge direction is itself scheduled to flip — see
+[issue #106](https://github.com/dynamic/silverstripe-content-api/issues/106) — once branch `2`
+has its own doc-drift script; until then, `2` remains the source branch merges flow from.) The
+two branches are allowed to differ only in:
 
 - composer constraints (framework/cms/PHP versions, the colymba branch + patch)
-- task entry-point signatures (`ss5`'s `src/Tasks/*.php` use SS5's legacy
-  `BuildTask::run($request)`; `1` uses SS6's `execute(InputInterface, PolyOutput): int` — each
+- task entry-point signatures (`1`'s `src/Tasks/*.php` use SS5's legacy
+  `BuildTask::run($request)`; `2` uses SS6's `execute(InputInterface, PolyOutput): int` — each
   file carries a docblock noting the other branch's copy must be hand-ported. The branch-neutral
   business logic behind both lives in `Tasks/Support/`, kept behaviorally identical across
   branches — `TaskResult`/`TaskStatus` are byte-identical; `ApiTokenMinter`/
@@ -148,15 +151,15 @@ conflicts on the next sync). The two branches are allowed to differ only in:
   describe each branch's own adapter, but their code and returned messages must not)
 - requirement statements in this README and `docs/en/00_installation.md`
 - PHP-floor-dependent type declarations (e.g. `Security/ContentApiGrantExtension.php`'s `?bool`
-  here vs `true|null` on branch `1` — standalone `true` as a return type needs PHP 8.2+, and this
+  here vs `true|null` on branch `2` — standalone `true` as a return type needs PHP 8.2+, and this
   branch's floor is `^8.1`)
-- SS6-only glue with no `ss5` equivalent (e.g. `Tasks/Support/TaskResultRenderer.php`, which wraps
+- SS6-only glue with no `1` equivalent (e.g. `Tasks/Support/TaskResultRenderer.php`, which wraps
   Symfony Console's `PolyOutput`/`Command` — not present on this branch at all, since its two
   adapters `echo` `TaskResult::$lines` directly instead)
-- one documented `silverstripe/versioned` behavioral divergence: branch `1`'s `canDelete()` is
-  vetoed by an unmet `canUnpublish()` on an already-published record; this branch's `2.4.x-dev`
-  has no such veto (see `ContentApiGrantExtension`'s class docblock and
-  `docs/en/04_security-model.md#grant-extension`)
+- one documented `silverstripe/versioned` behavioral divergence: branch `2`'s `canDelete()` is
+  vetoed by an unmet `canUnpublish()` on an already-published record; this branch's
+  `silverstripe/versioned` `2.4.x-dev` has no such veto (see `ContentApiGrantExtension`'s class
+  docblock and `docs/en/04_security-model.md#grant-extension`)
 
 Everything else — application logic, tests, docs content beyond the requirements
 blocks — should read identically on both branches after a sync. A CI check
