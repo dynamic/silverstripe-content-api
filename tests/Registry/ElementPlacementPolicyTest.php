@@ -2,9 +2,9 @@
 
 namespace Dynamic\ContentApi\Tests\Registry;
 
-use DNADesign\Elemental\Extensions\ElementalAreasExtension;
 use DNADesign\Elemental\Models\ElementContent;
 use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
+use Dynamic\ContentApi\Tests\ResetsElementalTypesCacheTrait;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
@@ -20,6 +20,8 @@ use SilverStripe\Dev\SapphireTest;
  */
 class ElementPlacementPolicyTest extends SapphireTest
 {
+    use ResetsElementalTypesCacheTrait;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -36,7 +38,7 @@ class ElementPlacementPolicyTest extends SapphireTest
     {
         // getElementalTypes() caches per page class name in a static that
         // Config::modify()'s automatic rollback doesn't touch.
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         parent::tearDown();
     }
@@ -63,7 +65,7 @@ class ElementPlacementPolicyTest extends SapphireTest
     public function testAnElementInTheDisallowedListIsNotAllowed(): void
     {
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $policy = ElementPlacementPolicy::create();
         $page = ApiTestBlockPage::create();
@@ -80,7 +82,7 @@ class ElementPlacementPolicyTest extends SapphireTest
     public function testAnElementNotInAnExplicitAllowedListIsNotAllowed(): void
     {
         Config::modify()->set(ApiTestBlockPage::class, 'allowed_elements', [ElementContent::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $policy = ElementPlacementPolicy::create();
         $page = ApiTestBlockPage::create();

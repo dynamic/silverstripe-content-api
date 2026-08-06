@@ -100,6 +100,17 @@ class ContentApiGrantExtensionTest extends SapphireTest
      * vetoes published records), which is why
      * testVerbScopingWithholdsDeleteWhenNotDeclared below (unpublished)
      * doesn't exercise this interaction.
+     *
+     * BRANCH DIVERGENCE: that veto does not exist on branch `1`'s
+     * `silverstripe/versioned` (`2.4.x-dev`, confirmed against a real SS5.2
+     * install) — `Versioned.php` has no `canDelete()` override at all there,
+     * only a deprecated `canArchive()` whose own docblock says to use
+     * `canDelete()` instead on the version this branch depends on. A class
+     * declaring only DELETE genuinely can archive an already-published
+     * record on branch `1` — see that branch's own copy of this test
+     * (`testCanDeleteOnAPublishedRecordDoesNotNeedTheEditGrantHere`). Do not
+     * "fix" this branch's assertion to match branch `1`'s — it would fail
+     * against this branch's real, correct behaviour, not a bug.
      */
     public function testCanDeleteOnAPublishedRecordAlsoNeedsTheEditGrant(): void
     {

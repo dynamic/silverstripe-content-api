@@ -5,12 +5,16 @@ namespace Dynamic\ContentApi\Tests\Publish;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
 use Psr\Log\LoggerInterface;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Security\InheritedPermissions;
+use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -293,7 +297,7 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $leaf = ApiTestPage::create(['Title' => 'Subtree Leaf', 'ParentID' => $middle->ID]);
         $leaf->write();
 
-        $this->orchestrator->publish($root, 'subtree');
+        $this->orchestrator->publish($root, 'subtree', $this->apiMember());
 
         $this->assertTrue($this->isLive($root->ID));
         $this->assertTrue($this->isLive($middle->ID));
@@ -311,7 +315,7 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $child = ApiTestPage::create(['Title' => 'Subtree Child Moved', 'ParentID' => $elsewhere->ID]);
         $child->write();
 
-        $this->orchestrator->publish($root, 'subtree');
+        $this->orchestrator->publish($root, 'subtree', $this->apiMember());
 
         $this->assertTrue($this->isLive($root->ID));
         $this->assertFalse(
@@ -325,16 +329,182 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $record = ApiTestVersionedObject::create(['Title' => 'Not a tree']);
         $record->write();
 
-        $this->orchestrator->publish($record, 'subtree');
+        $this->orchestrator->publish($record, 'subtree', $this->apiMember());
 
         $this->assertTrue((bool) Versioned::get_by_stage(ApiTestVersionedObject::class, Versioned::LIVE)
             ->filter('ID', $record->ID)->exists());
+    }
+
+    /**
+     * #90: a descendant whose class doesn't grant the `action` verb must
+     * refuse the whole walk — not just skip that one descendant.
+     */
+    public function testSubtreePublishRefusesADescendantWhoseClassDoesNotGrantTheActionVerb(): void
+    {
+        $root = ApiTestPage::create(['Title' => 'Subtree Class-Gated Root']);
+        $root->write();
+
+        $child = ApiTestPage::create(['Title' => 'Subtree Class-Gated Child', 'ParentID' => $root->ID]);
+        $child->write();
+
+        // ApiTestPage's own api_access starts as `true` (full access, set
+        // in ContentApiTestCase::setUp()) — narrow it to `read` only, so
+        // checkClassAccess('action', ...) refuses regardless of $member.
+        Config::modify()->set(ApiTestPage::class, 'api_access', 'read');
+
+        try {
+            $this->orchestrator->publish($root, 'subtree', $this->apiMember());
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('FORBIDDEN_CLASS', $error->toArray()['code']);
+        }
+
+        $this->assertFalse(
+            $this->isLive($root->ID),
+            'the whole walk is authorization-checked before any write — root must not be published either'
+        );
+        $this->assertFalse($this->isLive($child->ID));
+    }
+
+    /**
+     * #90: a descendant the member can't edit (class allows `action`, but
+     * this specific record's own canEdit() refuses) must also refuse the
+     * whole walk. `ApiTestGrantSubPage` — not `ApiTestPage` — is the
+     * descendant here deliberately: this testbed's own
+     * `ContentApiGrantExtension` is applied broadly to `SiteTree`, and it
+     * grants canEdit() unconditionally to any `CONTENT_API_ACCESS` member
+     * on a class that declares its own `api_access`. `ApiTestGrantSubPage`
+     * inherits `ApiTestPage`'s class-level verbs (so `checkClassAccess`
+     * still passes) but declares none of its own, so the grant extension
+     * never answers for it (see the stub's own docblock) and real
+     * `CanEditType`/`EditorMembers` restrictions actually apply.
+     */
+    public function testSubtreePublishRefusesADescendantTheMemberCannotEdit(): void
+    {
+        $root = ApiTestPage::create(['Title' => 'Subtree Record-Gated Root']);
+        $root->write();
+
+        $child = ApiTestGrantSubPage::create([
+            'Title' => 'Subtree Record-Gated Child',
+            'ParentID' => $root->ID,
+            'CanEditType' => InheritedPermissions::ONLY_THESE_MEMBERS,
+        ]);
+        $child->write();
+
+        // A non-empty EditorMembers list that deliberately excludes
+        // apiUser — an empty list reads as "not yet restricted", not
+        // "restricted to nobody".
+        $child->EditorMembers()->add($this->objFromFixture(Member::class, 'adminUser'));
+
+        try {
+            $this->orchestrator->publish($root, 'subtree', $this->apiMember());
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('FORBIDDEN_RECORD', $error->toArray()['code']);
+            $this->assertStringContainsString((string) $child->ID, $error->getMessage());
+        }
+
+        $this->assertFalse($this->isLive($root->ID));
+        $this->assertFalse($this->isLive($child->ID));
+    }
+
+    /**
+     * #102: a deliberately-unpublished descendant must stay unpublished —
+     * not resurrected just because a live ancestor is going through
+     * `subtree` — and its own children (which liveOnly never even visits)
+     * must be left alone too.
+     */
+    public function testLiveOnlySkipsAnUnpublishedDescendantBranchEntirely(): void
+    {
+        $root = $this->publishedPage('LiveOnly Root');
+
+        $offlinePage = ApiTestPage::create(['Title' => 'LiveOnly Deliberately Offline', 'ParentID' => $root->ID]);
+        $offlinePage->write();
+        $offlinePage->publishRecursive();
+        $offlinePage->doUnpublish();
+
+        $grandchild = ApiTestPage::create([
+            'Title' => 'LiveOnly Grandchild Under Offline',
+            'ParentID' => $offlinePage->ID,
+        ]);
+        $grandchild->write();
+
+        $stillLiveChild = $this->publishedPage('LiveOnly Still-Live Child', $root->ID);
+
+        $entries = $this->orchestrator->publish($root, 'subtree', $this->apiMember(), liveOnly: true);
+
+        $this->assertTrue($this->isLive($root->ID));
+        $this->assertTrue($this->isLive($stillLiveChild->ID));
+        $this->assertFalse(
+            $this->isLive($offlinePage->ID),
+            'a deliberately-unpublished descendant must not be resurrected by an ancestor\'s subtree publish'
+        );
+        $this->assertFalse(
+            $this->isLive($grandchild->ID),
+            'liveOnly must not recurse into a skipped branch\'s own children either'
+        );
+
+        $touchedIDs = array_column($entries, 'id');
+        $this->assertContains((int) $root->ID, $touchedIDs);
+        $this->assertContains((int) $stillLiveChild->ID, $touchedIDs);
+        $this->assertNotContains((int) $offlinePage->ID, $touchedIDs);
+        $this->assertNotContains((int) $grandchild->ID, $touchedIDs);
+    }
+
+    /**
+     * #102: dryRun must authorization-check exactly as a real run would
+     * (so the same error surfaces up front) but never call publishSingle().
+     */
+    public function testDryRunReturnsTheWouldPublishSetWithoutWriting(): void
+    {
+        $root = ApiTestPage::create(['Title' => 'DryRun Root']);
+        $root->write();
+
+        $child = ApiTestPage::create(['Title' => 'DryRun Child', 'ParentID' => $root->ID]);
+        $child->write();
+
+        $entries = $this->orchestrator->publish($root, 'subtree', $this->apiMember(), dryRun: true);
+
+        $this->assertFalse($this->isLive($root->ID), 'dryRun must never write');
+        $this->assertFalse($this->isLive($child->ID));
+
+        $touchedIDs = array_column($entries, 'id');
+        $this->assertContains((int) $root->ID, $touchedIDs);
+        $this->assertContains((int) $child->ID, $touchedIDs);
+    }
+
+    public function testDryRunStillSurfacesTheSameAuthorizationErrorARealRunWould(): void
+    {
+        $root = ApiTestPage::create(['Title' => 'DryRun Refused Root']);
+        $root->write();
+
+        $child = ApiTestGrantSubPage::create([
+            'Title' => 'DryRun Refused Child',
+            'ParentID' => $root->ID,
+            'CanEditType' => InheritedPermissions::ONLY_THESE_MEMBERS,
+        ]);
+        $child->write();
+        $child->EditorMembers()->add($this->objFromFixture(Member::class, 'adminUser'));
+
+        try {
+            $this->orchestrator->publish($root, 'subtree', $this->apiMember(), dryRun: true);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('FORBIDDEN_RECORD', $error->toArray()['code']);
+        }
+
+        $this->assertFalse($this->isLive($root->ID));
     }
 
     public function testSubtreeIsAcceptedByAssertValidMode(): void
     {
         $this->orchestrator->assertValidMode('subtree');
         $this->addToAssertionCount(1);
+    }
+
+    private function apiMember(): Member
+    {
+        return $this->objFromFixture(Member::class, 'apiUser');
     }
 
     private function publishedPage(string $title, int $parentID = 0): ApiTestPage

@@ -74,8 +74,10 @@ Response `meta`: `total`, `limit`, `offset`, `stage`.
 
 ## `POST records/$ClassRef/$ID/{action}`
 
-`{action}` is `publish`, `unpublish`, or `archive`. `publish` accepts `{"recursive": true}` in
-the body to call `publishRecursive()` instead of `publishSingle()`. See
+`{action}` is `publish`, `unpublish`, or `archive`. `publish` accepts `{"mode": "..."}` to
+select a [publish mode](10_publishing-and-stages.md#publish-modes) (`{"recursive": true}`
+remains a legacy shorthand for `mode: "recursive"`) — `mode: "subtree"` alone also accepts
+`{"liveOnly": true}` and `{"dryRun": true}`. See
 [Publishing & stages](10_publishing-and-stages.md).
 
 ## `POST assets` / `GET assets/$ID`

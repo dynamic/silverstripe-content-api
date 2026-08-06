@@ -47,6 +47,28 @@ between call sites. No-op for `none` and for unversioned classes. `subtree` walk
 only for a class that carries the `Hierarchy` extension (`SiteTree` and its subclasses) — for
 anything else it's equivalent to `single`.
 
+`subtree` alone also takes two options (see [Publish/unpublish/archive
+actions](#publishunpublisharchive-actions) for how to pass them):
+
+- **Authorization**: every descendant `subtree` visits is checked (class `action` verb +
+  `canEdit()`) — a token scoped to `Page` can't reach a descendant of a subclass whose own
+  `api_access` only grants `read`, and a member without CMS access to a specific child page can't
+  publish it by publishing an ancestor they can edit instead. The whole subtree is checked
+  *before* anything is written — a permission gap on descendant #12 refuses the entire call
+  rather than leaving descendants #1-11 live with no way to undo it. The *root* record itself is
+  assumed to already be authorized by whichever call site is invoking `publish()` — that
+  assumption doesn't hold everywhere yet; see `PublishOrchestrator::collectSubtreeTargets()`'s
+  docblock (issue #114).
+- **`liveOnly`**: skip a descendant branch — no publish, no recursing into its own children —
+  when it isn't already live. See the resurrection-risk warning below.
+- **`dryRun`**: run the full authorization-checked walk (so the same error a real call would
+  throw still surfaces) and return the would-publish set, without calling `publishSingle()` on
+  anything.
+
+`liveOnly`/`dryRun` are rejected with `400 PAYLOAD_INVALID` on any mode other than `subtree` —
+they don't merely no-op, since silently ignoring `dryRun` would perform a real write while the
+caller reasonably expected a preview.
+
 ## What actually needs an explicit publish call
 
 None of `publishRecursive()`, `subtree`, or any other mode here cascades to *everything* a page
@@ -54,10 +76,11 @@ might own. Three distinct things a caller needs to reason about separately (conf
 way during a real IA restructure — see #71):
 
 1. **`SiteTree` tree children never cascade from a parent's publish, in any mode except
-   `subtree`.** `publishRecursive()` is for owned Elemental relations only (see below) — it does
-   **not** walk `Hierarchy` children. A 30-page subtree needing to go live needed 30 individual
-   `single` publish calls before `subtree` existed to do exactly that walk. `recursive` still
-   does not do this — use `subtree` when the goal is "this page and its whole draft tree."
+   `subtree`.** `publishRecursive()` cascades to some owned relations, but **not** `Hierarchy`
+   tree children, and — per the next section — not owned Elemental compositions either. A
+   30-page subtree needing to go live needed 30 individual `single` publish calls before
+   `subtree` existed to do exactly that walk. `recursive` still does not do this — use
+   `subtree` when the goal is "this page and its whole draft tree."
 2. **Owned Elemental compositions need `CompositionService::publishAll()`, not a bare
    `publishRecursive()`** — see the next section.
 3. **Arbitrary has_many/has_one relations outside both of the above never cascade, in any
@@ -71,7 +94,8 @@ way during a real IA restructure — see #71):
 
 ## `publishRecursive()` does not cascade to elements
 
-**A page's `publishRecursive()` does not cascade into owned elemental blocks in SS6.** This is
+**A page's `publishRecursive()` does not cascade into owned elemental blocks — confirmed
+identical on branches `1` and `2` (#91), not an SS6-specific gap.** This is
 the specific gap `CompositionService::publishAll()` exists to close: a `recursive` composition
 publish explicitly publishes the elemental area, then every written element (and its children)
 individually via `PublishOrchestrator::publish($record, 'single')`, and only then calls
@@ -84,7 +108,7 @@ stranded on draft behind a live page.
 
 | Action | Effect |
 |---|---|
-| `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present |
+| `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present. `mode: "subtree"` alone also accepts `{"liveOnly": true}` and `{"dryRun": true}` (see [Publish modes](#publish-modes)); both are `400 PAYLOAD_INVALID` on every other mode. `dryRun` responds with `{"data": {"wouldPublish": [...]}, "meta": {"operation": "publishDryRun", "mode": "subtree"}}` instead of the normal response. A real (non-`dryRun`) `subtree` call keeps the normal serialized-record response but adds `meta.published`: the same `[{id, className}, ...]` list, so a `liveOnly` call still reports what was actually touched |
 | `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below |
 | `archive` | Removes from both stages, recoverable via version history (`doArchive()`) — same guard |
 
@@ -125,6 +149,17 @@ call — *then* unpublish/archive the old wrapper, never the reverse. If the cas
 intended (retiring a whole section on purpose), pass `{"force": true}` (the stage action's
 request body, or the batch delete op's `force` field) to bypass the guard and accept it
 explicitly.
+
+**This recommendation carries its own resurrection risk if publish state is a business
+signal, not just a migration artifact (#102).** `subtree` on the new parent publishes *every*
+descendant currently on draft, unconditionally — including one a caller deliberately took
+offline (e.g. a product/class page pulled because it's no longer offered), with no way to opt
+out. If any descendant under the subtree being restructured was intentionally unpublished
+rather than merely not-yet-published, a plain `subtree` call puts it back live. Pass
+`{"liveOnly": true}` alongside `{"mode": "subtree"}` to publish only descendants that are
+*already* live, leaving deliberately-offline ones (and everything under them) untouched — or
+`{"dryRun": true}` first to see exactly what a real call would touch before running it for
+real.
 
 The guard only applies to classes carrying the `Hierarchy` extension — a plain versioned
 `DataObject` with no tree concept is unaffected (nothing to cascade to).

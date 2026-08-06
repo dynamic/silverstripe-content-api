@@ -34,8 +34,32 @@ class ColorTokenTest extends ContentApiTestCase
         $this->adminToken = $this->mintTokenFor('adminUser');
     }
 
+    /**
+     * A staggered-upgrade host (ColorConfigurationProvider present,
+     * ColorTokenResolver not yet — e.g. essentials-tools 2.2.0 on
+     * mathedleadership) makes every write in this file fail loud with
+     * TOKEN_RESOLUTION_FAILED regardless of what's actually being tested,
+     * since transform() never gets past the class_exists() check — so a
+     * genuinely-resolver-dependent test can't distinguish its own outcome
+     * from ambient breakage there. Called by the three tests that actually
+     * need a working resolver, deliberately NOT by
+     * testMissingResolverFailsTheWriteInsteadOfPersistingTheLiteral, which
+     * manufactures its own missing-resolver precondition via
+     * Config::modify() regardless of whether a real one exists — the exact
+     * scenario this host already provides ambiently, still a real,
+     * meaningful test of the same code path.
+     */
+    private function requireResolver(): void
+    {
+        if (!class_exists((string) Config::inst()->get(ColorTokenTransformer::class, 'color_token_resolver_class'))) {
+            $this->markTestSkipped('essentials-tools predates ColorTokenResolver');
+        }
+    }
+
     public function testPaletteTokenResolvesOnWrite(): void
     {
+        $this->requireResolver();
+
         $provider = ColorTokenTest::PROVIDER;
         $expected = array_values($provider::getBackgroundColors())[0];
 
@@ -59,6 +83,8 @@ class ColorTokenTest extends ContentApiTestCase
 
     public function testOutOfRangePaletteFailsTheWrite(): void
     {
+        $this->requireResolver();
+
         $body = $this->decode($this->apiPost('batch', [
             'operations' => [
                 [
@@ -79,6 +105,8 @@ class ColorTokenTest extends ContentApiTestCase
 
     public function testButtonTokenResolvesToJsonBlob(): void
     {
+        $this->requireResolver();
+
         $provider = ColorTokenTest::PROVIDER;
 
         if (empty($provider::getButtonColorCombinations())) {
