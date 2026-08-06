@@ -147,13 +147,19 @@ is the source branch merges flow from.) The two branches are allowed to differ o
 - requirement statements in this README and `docs/en/00_installation.md`
 - PHP-floor-dependent type declarations — `^8.3` here vs branch `1`'s `^8.1` floor. Two known
   instances, both worth checking explicitly on every merge-up since neither shows up as a git
-  conflict when branch `1` doesn't also touch the file in the same sync: `Security/
-  ContentApiGrantExtension.php`'s `true|null` here vs `?bool` on branch `1` (standalone `true` as
-  a return type needs PHP 8.2+); `Auth/AuthContext.php`'s whole-class `readonly class` here vs
-  per-property `readonly` on branch `1` (whole-class `readonly` needs PHP 8.2+)
+  conflict when branch `1` doesn't also touch the file in the same sync:
+  `Security/ContentApiGrantExtension.php`'s `true|null` here vs `?bool` on branch `1` (standalone
+  `true` as a return type needs PHP 8.2+); `Auth/AuthContext.php`'s whole-class `readonly class`
+  here vs per-property `readonly` on branch `1` (whole-class `readonly` needs PHP 8.2+)
 - SS6-only glue with no `1` equivalent (e.g. `Tasks/Support/TaskResultRenderer.php`, which wraps
   Symfony Console's `PolyOutput`/`Command` — not present on branch `1` at all, since its two
   adapters `echo` `TaskResult::$lines` directly instead)
+- framework namespace moves the SS6 line has already made that the SS5 line hasn't (e.g.
+  `SilverStripe\Core\Validation\ValidationException`/`ValidationResult` here vs
+  `SilverStripe\ORM\...` on branch `1`, the framework's own pre-move location) — unlike the two
+  PHP-floor cases above, a reversion here fails PHPStan and the test suite loudly rather than
+  merging silently, so it's lower-risk but still a real per-file divergence to expect in shared
+  files
 - one documented `silverstripe/versioned` behavioral divergence: this branch's `canDelete()` is
   vetoed by an unmet `canUnpublish()` on an already-published record; branch `1`'s
   `silverstripe/versioned` `2.4.x-dev` has no such veto (see `ContentApiGrantExtension`'s class
