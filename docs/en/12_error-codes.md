@@ -40,7 +40,7 @@ absent otherwise.
 | `ASSET_READ_FAILED` | 502 | Uploaded binary is empty/unreadable |
 | `FEATURE_UNAVAILABLE` | 501 | Endpoint needs an optional integration that isn't installed (elemental, linkfield, essentials-tools, elemental-templates) |
 | `SERVER_ERROR` | 500 | Uncaught exception. Dev/test environments get `ClassName: message`; production gets an opaque `"Internal server error."` |
-| `ROLLBACK_UNVERIFIED` | 500 | An atomic batch (`docs/en/07_batch-operations.md`) failed and the transaction rollback path ran, but re-checking every `created` result by id afterward found at least one still present (or the check itself failed to complete, which also fails toward this code rather than a false `rolledBack: true`). `error.details` carries the same full results array as a normal rollback failure — it does not narrow down which record(s) are still present — so re-check every `created` result in it directly before retrying (#70) |
+| `ROLLBACK_UNVERIFIED` | 500 | An atomic batch (`docs/en/07_batch-operations.md`) failed and the transaction rollback path ran, but re-checking every `created` result — and every `deleted` result whose mode could have reached the draft row (`archive`, or any mode on an unversioned class) — by id afterward found at least one in a state that contradicts the claimed rollback (or the check itself failed to complete, which also fails toward this code rather than a false `rolledBack: true`). `error.details` carries the same full results array as a normal rollback failure — it does not narrow down which record(s) are affected — so re-check every `created`/`deleted` result in it directly before retrying (#70, #75) |
 
 ## `URLSEGMENT_COLLISION`: a warning code, not a thrown error
 
