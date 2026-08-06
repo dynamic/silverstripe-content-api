@@ -35,6 +35,7 @@ absent otherwise.
 | `CIRCULAR_REF` | 422 | A cycle among only-deferred composition elements (mutual unresolved `$ref`s) |
 | `EXTERNAL_ID_UNSUPPORTED` | 422 | Class lacks the external-id column (`ExternalIdentifierExtension` not applied) |
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
+| `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
 | `PAYLOAD_INVALID` | 400 | Malformed payload shape: bad relation value, missing polymorphic `class` hint, `..` in a folder path, bad `conflict`/`mode` value, missing `filename`, invalid `_stage`, unsupported filter modifier, missing `page.match`, etc. |
 | `HOMEPAGE_CONVERSION_FORBIDDEN` | 403 | Converting the site home page's class without `force: true` |
 | `ASSET_READ_FAILED` | 502 | Uploaded binary is empty/unreadable |

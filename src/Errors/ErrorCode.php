@@ -36,6 +36,7 @@ enum ErrorCode: string
     case SERVER_ERROR = 'SERVER_ERROR';
     case ROLLBACK_UNVERIFIED = 'ROLLBACK_UNVERIFIED';
     case UNPUBLISH_STRANDS_DESCENDANTS = 'UNPUBLISH_STRANDS_DESCENDANTS';
+    case ELEMENT_NOT_ALLOWED_ON_PAGE = 'ELEMENT_NOT_ALLOWED_ON_PAGE';
 
     public function httpStatus(): int
     {
@@ -49,7 +50,8 @@ enum ErrorCode: string
             ErrorCode::URLSEGMENT_COLLISION, ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS => 409,
             ErrorCode::VALIDATION_FAILED, ErrorCode::UNKNOWN_FIELD, ErrorCode::READONLY_FIELD,
             ErrorCode::UNKNOWN_RELATION, ErrorCode::UNRESOLVED_REF, ErrorCode::CIRCULAR_REF,
-            ErrorCode::EXTERNAL_ID_UNSUPPORTED, ErrorCode::TOKEN_RESOLUTION_FAILED => 422,
+            ErrorCode::EXTERNAL_ID_UNSUPPORTED, ErrorCode::TOKEN_RESOLUTION_FAILED,
+            ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE => 422,
             ErrorCode::PAYLOAD_INVALID => 400,
             ErrorCode::ASSET_READ_FAILED => 502,
             ErrorCode::FEATURE_UNAVAILABLE => 501,
