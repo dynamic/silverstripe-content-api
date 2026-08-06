@@ -68,26 +68,49 @@ class RecordActionsHandler
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
             $this->policy->checkRecordAccess($record, $verb, $context->member);
 
+            $extraMeta = [];
+
             switch ($action) {
                 case 'publish':
                     $mode = $this->publishModeFromBody($body);
+                    $liveOnly = !empty($body['liveOnly']);
+                    $dryRun = !empty($body['dryRun']);
 
-                    // `liveOnly`/`dryRun` only affect `mode: "subtree"` — see
-                    // PublishOrchestrator::publishSubtree()'s docblock (#90,
-                    // #102). Harmless no-ops on every other mode.
-                    $entries = $this->publisher->publish(
-                        $record,
-                        $mode,
-                        $context->member,
-                        !empty($body['liveOnly']),
-                        !empty($body['dryRun'])
-                    );
+                    // liveOnly/dryRun only mean something for mode: "subtree"
+                    // — PublishOrchestrator::publish() itself just ignores
+                    // them on every other mode, which would silently perform
+                    // a real write while a caller reasonably believed
+                    // "dryRun": true guaranteed nothing changed. Refuse the
+                    // combination outright instead.
+                    if (($liveOnly || $dryRun) && $mode !== 'subtree') {
+                        throw new ApiError(
+                            ErrorCode::PAYLOAD_INVALID,
+                            'liveOnly/dryRun apply to "mode": "subtree" only.'
+                        );
+                    }
 
-                    if (!empty($body['dryRun'])) {
+                    $entries = $this->publisher->publish($record, $mode, $context->member, $liveOnly, $dryRun);
+
+                    // dryRun never wrote anything — serializing "the
+                    // record" as published would be misleading, so this
+                    // response shape replaces the normal one entirely
+                    // rather than adding to it.
+                    if ($dryRun) {
                         return [
                             'data' => ['wouldPublish' => $entries ?? []],
                             'meta' => ['operation' => 'publishDryRun', 'mode' => $mode],
                         ];
+                    }
+
+                    // A real subtree run keeps the normal serialized-record
+                    // response below (unchanged contract for existing
+                    // callers) but adds what was actually published —
+                    // otherwise a real liveOnly run has no way to tell the
+                    // caller what got skipped short of a separate dryRun
+                    // call beforehand, which isn't atomic with the real one
+                    // (#102).
+                    if ($entries !== null) {
+                        $extraMeta['published'] = $entries;
                     }
                     break;
                 case 'unpublish':
@@ -108,7 +131,7 @@ class RecordActionsHandler
 
             return [
                 'data' => $this->serializer->serialize($record),
-                'meta' => ['operation' => $action . 'ed'],
+                'meta' => ['operation' => $action . 'ed'] + $extraMeta,
             ];
         });
     }

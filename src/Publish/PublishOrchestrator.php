@@ -154,16 +154,27 @@ class PublishOrchestrator
      * than trusting an ambient stage the caller may or may not have already
      * set — self-contained regardless of calling context.
      *
-     * The root record passed in is the caller's already-authorized target —
-     * {@see publish()}'s own callers (`RecordActionsHandler`, `RecordWriter`,
-     * etc.) already check `canEdit()`/the class's `action` verb on it before
-     * ever reaching here (#90's gap was specifically that the subtree walk
-     * then touched every *descendant* with no equivalent check: a token
-     * scoped to `Page` could publish a descendant of a subclass whose own
+     * The root record is assumed to be the caller's own already-authorized
+     * target, so only descendants — `$isRoot === false` — are checked here.
+     * #90's gap was specifically that the subtree walk touched every
+     * *descendant* with no equivalent check at all: a token scoped to
+     * `Page` could publish a descendant of a subclass whose own
      * `api_access` only grants `read`, or a member without CMS access to a
      * specific child page could still publish it by publishing an ancestor
-     * they can edit). So only descendants — `$isRoot === false` — are
-     * checked here.
+     * they can edit. That gap is closed for descendants.
+     *
+     * The root assumption itself holds precisely at `RecordActionsHandler`,
+     * which checks `canEdit()` (`action` verb) on the exact record before
+     * calling {@see publish()}. It's weaker at `RecordWriter` (checks
+     * `update`, not `action` — a class granting `update` but withholding
+     * `action` could still have its root published via `subtree` through a
+     * write) and at `PageHandler::convert()` (checks the *pre-conversion*
+     * record's `update`, never the *target* class's verbs at all before
+     * publishing the converted instance as root). Both gaps predate this
+     * method and apply equally to every mode, not just `subtree` — but
+     * `subtree` raises the stakes from one record to a whole tree. Tracked
+     * as #114; not one this method can close on its own since it only ever
+     * sees the root after that decision has already been made.
      *
      * `$liveOnly` (#102) skips a descendant branch entirely — no
      * collecting it as a target, no recursing into its own children, no

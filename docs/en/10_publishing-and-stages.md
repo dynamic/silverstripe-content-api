@@ -50,18 +50,24 @@ anything else it's equivalent to `single`.
 `subtree` alone also takes two options (see [Publish/unpublish/archive
 actions](#publishunpublisharchive-actions) for how to pass them):
 
-- **Authorization**: every descendant `subtree` visits is checked the same way the root record
-  already is (class `action` verb + `canEdit()`) — a token scoped to `Page` can't reach a
-  descendant of a subclass whose own `api_access` only grants `read`, and a member without CMS
-  access to a specific child page can't publish it by publishing an ancestor they can edit
-  instead. The whole subtree is checked *before* anything is written — a permission gap on
-  descendant #12 refuses the entire call rather than leaving descendants #1-11 live with no way
-  to undo it.
+- **Authorization**: every descendant `subtree` visits is checked (class `action` verb +
+  `canEdit()`) — a token scoped to `Page` can't reach a descendant of a subclass whose own
+  `api_access` only grants `read`, and a member without CMS access to a specific child page can't
+  publish it by publishing an ancestor they can edit instead. The whole subtree is checked
+  *before* anything is written — a permission gap on descendant #12 refuses the entire call
+  rather than leaving descendants #1-11 live with no way to undo it. The *root* record itself is
+  assumed to already be authorized by whichever call site is invoking `publish()` — that
+  assumption doesn't hold everywhere yet; see `PublishOrchestrator::collectSubtreeTargets()`'s
+  docblock (issue #114).
 - **`liveOnly`**: skip a descendant branch — no publish, no recursing into its own children —
   when it isn't already live. See the resurrection-risk warning below.
 - **`dryRun`**: run the full authorization-checked walk (so the same error a real call would
   throw still surfaces) and return the would-publish set, without calling `publishSingle()` on
   anything.
+
+`liveOnly`/`dryRun` are rejected with `400 PAYLOAD_INVALID` on any mode other than `subtree` —
+they don't merely no-op, since silently ignoring `dryRun` would perform a real write while the
+caller reasonably expected a preview.
 
 ## What actually needs an explicit publish call
 
@@ -102,7 +108,7 @@ stranded on draft behind a live page.
 
 | Action | Effect |
 |---|---|
-| `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present. `mode: "subtree"` alone also accepts `{"liveOnly": true}` and `{"dryRun": true}` (see [Publish modes](#publish-modes)); both are ignored for every other mode. `dryRun` responds with `{"data": {"wouldPublish": [...]}, "meta": {"operation": "publishDryRun", "mode": "subtree"}}` instead of the normal serialized-record response |
+| `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present. `mode: "subtree"` alone also accepts `{"liveOnly": true}` and `{"dryRun": true}` (see [Publish modes](#publish-modes)); both are `400 PAYLOAD_INVALID` on every other mode. `dryRun` responds with `{"data": {"wouldPublish": [...]}, "meta": {"operation": "publishDryRun", "mode": "subtree"}}` instead of the normal response. A real (non-`dryRun`) `subtree` call keeps the normal serialized-record response but adds `meta.published`: the same `[{id, className}, ...]` list, so a `liveOnly` call still reports what was actually touched |
 | `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below |
 | `archive` | Removes from both stages, recoverable via version history (`doArchive()`) — same guard |
 
