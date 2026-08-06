@@ -1,0 +1,5 @@
+{
+  "checks": [
+    { "label": "branch-2 doc drift (SS5 requirements / sake dev/tasks/ syntax / stale legacy self-references)", "run": "scripts/check-doc-drift.sh" }
+  ]
+}

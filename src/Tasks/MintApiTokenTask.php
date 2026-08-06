@@ -10,12 +10,13 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 
 /**
- * SS6 (branch `1`) entry point. All business logic lives in
- * {@see ApiTokenMinter} — see #65; this adapter only translates Symfony
- * Console input/output. `ss5`'s copy of this file is intended to adopt the
- * same structure around its legacy `BuildTask::run($request)` entry point;
- * until that port lands, `ss5` still carries the inline logic (see the
- * docblock on its own copy of this file).
+ * Branch `2` (this branch, SS6) entry point. All business logic lives in
+ * {@see ApiTokenMinter} — see #65/#96; this adapter only translates Symfony
+ * Console input/output. Branch `1`'s SS5 copy of this file wraps the same
+ * service around the legacy `BuildTask::run($request)` entry point instead —
+ * there is no shared entry point between the two branches, so a
+ * business-logic fix belongs in `ApiTokenMinter` (shared) rather than either
+ * adapter.
  *
  * Usage: `sake tasks:MintContentApiToken --email=agent@example.com`
  */
