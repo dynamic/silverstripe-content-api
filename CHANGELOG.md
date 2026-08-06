@@ -103,8 +103,9 @@ All notable changes to this project are documented here. Format loosely follows
   re-checked by id against the database (using an uncached, non-deprecated lookup) before the
   response claims `rolledBack: true`; if any is still there, or the check itself fails for an
   unrelated reason, the response reports the new `500 ROLLBACK_UNVERIFIED` instead, carrying
-  the same full results array so every `created` entry can be checked by hand. `updated`/
-  `deleted` results aren't independently verified yet (#75). See `docs/en/12_error-codes.md`.
+  the same full results array so every `created` entry can be checked by hand. `updated`
+  results still aren't independently verified — no pre-image is retained to compare against.
+  `deleted` results are now verified too (#75, below). See `docs/en/12_error-codes.md`.
 - **(#71)** Unpublishing (or archiving) a `Hierarchy` record with any live tree children used
   to silently cascade-delete every one of them too, recursively — not just the target record —
   confirmed live during a real IA restructure. Root cause: `SiteTree::onBeforeDelete()`
@@ -128,6 +129,18 @@ All notable changes to this project are documented here. Format loosely follows
   ("publish the subtree to its new parent first") was otherwise unreachable from that endpoint.
   See
   `docs/en/10_publishing-and-stages.md#unpublishing-or-archiving-a-hierarchy-record-the-descendant-cascade-guard`.
+- **(#75)** `BatchProcessor::verifyRollback()` (#70) only re-checked `created` results after a
+  claimed atomic rollback — a `deleted` op's id was retained in the results array too, but its
+  verifiability depends on the delete mode, so it was left unverified rather than half-checked.
+  Now verified when the check is actually meaningful: `mode: "archive"`, or any mode at all on
+  an unversioned class (every mode converges on a real `delete()` there) — both reach the draft
+  row, so a genuine rollback restores it and its continued absence means the delete committed
+  for real despite the claim. `mode: "unpublish"` on a versioned class is still correctly
+  skipped: it only ever touches the live stage, so checking draft would read as falsely "fine"
+  regardless of the real outcome. Also swapped `BatchProcessor::fetch()`'s deprecated
+  `DataObject::get_by_id()` for `DataObject::get($className)->byID(...)`, matching
+  `verifyRollback()`'s own style (spotted while touching this file; unrelated deprecated call
+  sites elsewhere in `src/` are out of scope here). Spec bumped to `v1.6`.
 
 ## [1.4.0] - 2026-07-17
 

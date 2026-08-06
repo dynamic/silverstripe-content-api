@@ -966,6 +966,62 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #75: an atomic batch's archive-mode delete result is now verified the
+     * same way a created result always was — genuinely restored to DRAFT
+     * after a real rollback, not just claimed. Follows
+     * testAtomicBatchRollsBack()'s pattern above.
+     */
+    public function testAtomicBatchWithAnArchiveDeleteRollsBackAndVerifiesTheRestoredRecord(): void
+    {
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestVersioned', 'id' => (int) $record->ID, 'mode' => 'archive'],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertNotNull(
+            ApiTestVersionedObject::get()->byID($record->ID),
+            'the archive-mode delete must have been genuinely rolled back, not just reported as rolled back'
+        );
+    }
+
+    /**
+     * Companion to the test above: an unpublish-mode delete on a Hierarchy
+     * class must still report a genuinely-verified rollback — adding
+     * delete verification must not turn every unpublish-mode delete into a
+     * spurious ROLLBACK_UNVERIFIED, since DRAFT is untouched by an unpublish
+     * either way and verifyRollback() must recognize that and skip it.
+     */
+    public function testAtomicBatchWithAnUnpublishDeleteStillReportsAVerifiedRollback(): void
+    {
+        $page = ApiTestPage::create(['Title' => 'Unpublish Rollback Target']);
+        $page->write();
+        $page->publishRecursive();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestPage', 'id' => (int) $page->ID, 'mode' => 'unpublish'],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue(
+            $body['error']['details'][0]['rolledBack'],
+            'an unpublish-mode delete must not be misreported as ROLLBACK_UNVERIFIED'
+        );
+    }
+
+    /**
      * #71's stranded-descendants guard, wired end to end through the batch
      * delete op — every other test exercising it goes through
      * PublishOrchestrator directly or the record-action HTTP endpoint;

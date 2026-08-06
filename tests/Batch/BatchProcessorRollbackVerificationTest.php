@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Batch;
 use Dynamic\ContentApi\Batch\BatchProcessor;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use ReflectionMethod;
 
 /**
@@ -50,21 +51,185 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         );
     }
 
-    public function testNonCreateResultsAreSkipped(): void
+    public function testUpdateResultsAreSkipped(): void
     {
         $operations = [
             ['op' => 'update', 'class' => 'ApiTest'],
-            ['op' => 'delete', 'class' => 'ApiTest'],
         ];
         $results = [
             ['index' => 0, 'status' => 'updated', 'id' => 1],
-            ['index' => 1, 'status' => 'deleted', 'id' => 2],
         ];
 
         $this->assertTrue(
             $this->verifyRollback($operations, $results),
-            'update/delete results have no pre-image to compare against — only created rows are checked'
+            'an updated op has no pre-image to compare against, so it is never checked'
         );
+    }
+
+    public function testAnArchiveModeDeleteThatIsStillGoneFailsVerification(): void
+    {
+        $operations = [
+            ['op' => 'delete', 'class' => 'ApiTestVersioned', 'mode' => 'archive'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'deleted', 'id' => 999999999],
+        ];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results),
+            'a genuine rollback restores the draft row — absence means the delete committed for real'
+        );
+    }
+
+    public function testAnArchiveModeDeleteWhoseRecordIsBackPassesVerification(): void
+    {
+        $record = ApiTestVersionedObject::create(['Title' => 'Restored by a genuine rollback']);
+        $record->write();
+
+        $operations = [
+            ['op' => 'delete', 'class' => 'ApiTestVersioned', 'mode' => 'archive'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'deleted', 'id' => (int) $record->ID],
+        ];
+
+        $this->assertTrue($this->verifyRollback($operations, $results));
+    }
+
+    /**
+     * The default-to-archive fallback (no `mode` key on the operation at
+     * all) must apply to a VERSIONED class too, not just the unversioned
+     * case covered below — a missing key resolves through the same
+     * `?? 'archive'` expression either way, but only a versioned class
+     * exercises the "does the default actually verify against DRAFT, or
+     * get mistaken for an unpublish-and-skip" question.
+     */
+    public function testAVersionedDeleteWithNoModeKeyDefaultsToArchiveAndIsVerified(): void
+    {
+        $operations = [
+            ['op' => 'delete', 'class' => 'ApiTestVersioned'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'deleted', 'id' => 999999999],
+        ];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results),
+            'an unspecified mode on a versioned class must default to archive, not be treated as unpublish-and-skipped'
+        );
+    }
+
+    /**
+     * 'unpublish' mode on a versioned class only removes the LIVE row —
+     * DRAFT is untouched either way, so this must pass regardless of
+     * whether the draft record actually exists. Both sub-cases below (id
+     * definitely absent, id definitely present) must return true, so the
+     * test can't accidentally pass because the record happened to be
+     * there rather than because the check was genuinely skipped.
+     */
+    public function testAnUnpublishModeDeleteIsSkippedRegardlessOfDraftState(): void
+    {
+        $operations = [
+            ['op' => 'delete', 'class' => 'ApiTestVersioned', 'mode' => 'unpublish'],
+        ];
+
+        $this->assertTrue(
+            $this->verifyRollback($operations, [
+                ['index' => 0, 'status' => 'deleted', 'id' => 999999999],
+            ]),
+            'absent from draft: still skipped, not (coincidentally) verified-and-passing'
+        );
+
+        $record = ApiTestVersionedObject::create(['Title' => 'Present in draft regardless']);
+        $record->write();
+
+        $this->assertTrue(
+            $this->verifyRollback($operations, [
+                ['index' => 0, 'status' => 'deleted', 'id' => (int) $record->ID],
+            ]),
+            'present in draft: still skipped, not incidentally verified'
+        );
+    }
+
+    /**
+     * Every delete mode on an unversioned class converges on a real
+     * delete() (PublishOrchestrator::delete()) — mode never means "skip"
+     * here, unlike the versioned case above.
+     */
+    public function testAnUnversionedDeleteIsVerifiedRegardlessOfMode(): void
+    {
+        foreach (['unpublish', 'hard', 'archive'] as $mode) {
+            $operations = [
+                ['op' => 'delete', 'class' => 'ApiTest', 'mode' => $mode],
+            ];
+            $results = [
+                ['index' => 0, 'status' => 'deleted', 'id' => 999999999],
+            ];
+
+            $this->assertFalse(
+                $this->verifyRollback($operations, $results),
+                sprintf('mode "%s" on an unversioned class must still be verified', $mode)
+            );
+        }
+    }
+
+    public function testAnUnversionedDeleteDefaultsToArchiveModeWhenUnspecified(): void
+    {
+        $operations = [
+            ['op' => 'delete', 'class' => 'ApiTest'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'deleted', 'id' => 999999999],
+        ];
+
+        $this->assertFalse($this->verifyRollback($operations, $results));
+    }
+
+    public function testADeleteWithAMissingOperationFailsClosed(): void
+    {
+        $operations = [
+            ['op' => 'delete', 'class' => 'ApiTestVersioned', 'mode' => 'archive'],
+        ];
+        $results = [
+            // index 1 has no corresponding operation.
+            ['index' => 1, 'status' => 'deleted', 'id' => 999999999],
+        ];
+
+        $this->assertFalse($this->verifyRollback($operations, $results));
+    }
+
+    public function testAnUnresolvableClassOnADeleteFailsClosed(): void
+    {
+        $operations = [
+            ['op' => 'delete', 'class' => 'NoSuchRegisteredClassRef', 'mode' => 'archive'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'deleted', 'id' => 1],
+        ];
+
+        $this->assertFalse($this->verifyRollback($operations, $results));
+    }
+
+    /**
+     * A mixed batch shouldn't let one branch's early `continue` leak into
+     * the other's handling — a surviving created row after a genuinely
+     * verified delete must still be caught.
+     */
+    public function testACreatedAndADeletedResultAreBothCheckedInTheSameBatch(): void
+    {
+        $survivingCreate = ApiTestObject::create(['Title' => 'Still here']);
+        $survivingCreate->write();
+
+        $operations = [
+            ['op' => 'create', 'class' => 'ApiTest'],
+            ['op' => 'delete', 'class' => 'ApiTestVersioned', 'mode' => 'archive'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'created', 'id' => (int) $survivingCreate->ID],
+            ['index' => 1, 'status' => 'deleted', 'id' => 999999999],
+        ];
+
+        $this->assertFalse($this->verifyRollback($operations, $results));
     }
 
     public function testErrorResultsAreSkipped(): void

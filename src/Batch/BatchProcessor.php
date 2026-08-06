@@ -93,10 +93,10 @@ class BatchProcessor
             // framework's own transaction-nesting bookkeeping).
             // Report this distinctly rather than claiming "rolled back" —
             // the caller must check the database directly before retrying.
-            // Every 'created' result's id is listed in $result['results']
-            // below; there is no narrower list to give (verifyRollback()
-            // stops at the first unconfirmed record, it doesn't collect
-            // every one that's still there).
+            // Every 'created'/verifiable-'deleted' result's id is listed in
+            // $result['results'] below; there is no narrower list to give
+            // (verifyRollback() stops at the first unconfirmed record, it
+            // doesn't collect every one that's still there).
             throw new ApiError(
                 ErrorCode::ROLLBACK_UNVERIFIED,
                 sprintf(
@@ -113,23 +113,26 @@ class BatchProcessor
     }
 
     /**
-     * Re-check every record this batch reported as created, by id, after
-     * the transaction was supposed to roll back — confirms a real SQL
-     * ROLLBACK actually happened rather than trusting the exception-unwind
-     * path alone. Deliberately checked outside the failed transaction's own
-     * versioned-mode context (that context no longer applies once the
-     * transaction has unwound), reading the same DRAFT stage every write in
-     * this batch targeted.
+     * Re-check every record this batch reported as created or deleted, by
+     * id, after the transaction was supposed to roll back — confirms a
+     * real SQL ROLLBACK actually happened rather than trusting the
+     * exception-unwind path alone. Deliberately checked outside the failed
+     * transaction's own versioned-mode context (that context no longer
+     * applies once the transaction has unwound), reading the same DRAFT
+     * stage every write in this batch targeted.
      *
-     * Only covers 'created' results — an 'updated' op's pre-image isn't
-     * retained anywhere to compare against. A 'deleted' op's id IS
-     * retained, but whether its absence is actually meaningful depends on
-     * the delete mode (an 'unpublish' leaves the draft row untouched
-     * either way, so checking it here would read as falsely "fine"
-     * regardless of what really happened) — left as a known gap rather
-     * than half-verifying it; see dynamic/silverstripe-content-api#75.
-     * Catching every created record still there is the cheapest,
-     * highest-signal check available without that redesign.
+     * An 'updated' op's pre-image isn't retained anywhere to compare
+     * against, so those are still skipped entirely. A 'deleted' op's id
+     * IS retained, and is verified — but only when the delete could
+     * actually have touched DRAFT: an 'unpublish'-mode delete on a
+     * versioned class only removes the LIVE row, leaving DRAFT untouched
+     * either way, so checking for its presence there would read as
+     * falsely "fine" regardless of what really happened (#75). 'archive'
+     * mode, and any mode at all on an unversioned class (every delete
+     * mode converges on a real delete() there — see
+     * PublishOrchestrator::delete()), do reach DRAFT and are verified the
+     * same way a created record is: still-present after a claimed
+     * rollback means the delete committed for real.
      *
      * Every step here is deliberately defensive: this runs after the
      * batch has already failed, at the exact moment the caller most needs
@@ -149,7 +152,9 @@ class BatchProcessor
                 Versioned::set_stage(Versioned::DRAFT);
 
                 foreach ($results as $result) {
-                    if ($result['status'] !== 'created' || !isset($result['id'])) {
+                    $status = $result['status'] ?? '';
+
+                    if (!in_array($status, ['created', 'deleted'], true) || !isset($result['id'])) {
                         continue;
                     }
 
@@ -163,6 +168,24 @@ class BatchProcessor
                     }
 
                     $className = $this->registry->resolve((string) ($operation['class'] ?? ''));
+
+                    if ($status === 'deleted') {
+                        $mode = (string) ($operation['mode'] ?? 'archive');
+                        $isVersioned = DataObject::has_extension($className, Versioned::class);
+
+                        if ($mode !== 'archive' && $isVersioned) {
+                            // 'unpublish' (or 'hard', rejected earlier for
+                            // versioned classes) on a versioned class never
+                            // touches DRAFT — nothing here to verify.
+                            continue;
+                        }
+
+                        if (!DataObject::get($className)->byID((int) $result['id'])) {
+                            return false;
+                        }
+
+                        continue;
+                    }
 
                     if (DataObject::get($className)->byID((int) $result['id'])) {
                         return false;
@@ -289,7 +312,7 @@ class BatchProcessor
                 return $this->externalIds->find($className, substr($idParam, 4));
             }
 
-            $record = DataObject::get_by_id($className, (int) $idParam);
+            $record = DataObject::get($className)->byID((int) $idParam);
 
             if (!$record) {
                 throw new ApiError(
