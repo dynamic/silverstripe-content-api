@@ -123,6 +123,36 @@ override at all — only a deprecated `canArchive()` whose own docblock says to 
 instead on the version branch `2` depends on). A class declaring only `delete` on this branch can
 archive both a draft-only record and an already-published one.
 
+### The `extendedCan()` contract this extension depends on
+
+`ContentApiGrantExtension` only works through `DataObject::extendedCan()` — the standard
+SilverStripe mechanism every extension's `can*()` hook goes through. **Any class registered in
+`api_access`/`content_api_access` that this extension is applied to must route its own
+`can*()` methods through `extendedCan()`, exactly as `SiteTree`'s own `canView()`/`canEdit()`/
+`canCreate()`/`canDelete()` do (each starts with `$extended = $this->extendedCan('canEdit',
+$member); if ($extended !== null) return $extended;`), or the extension's hook is never
+consulted at all.**
+
+This is not hypothetical. Hit for real on a client project: FoxyStripe's `ProductPage` hard-
+overrides `canEdit()`/`canDelete()`/`canCreate()`/`canPublish()` directly and never calls
+`extendedCan()` — unlike `SiteTree`'s own implementations. The result was a plain 403 on every
+write to that class, with no error identifying the cause, no log line pointing at the extension
+being bypassed, and nothing in the module's diagnostics to say "is this class's `can*()` chain
+actually reachable by my extensions" — until now (see below). This fails *closed* in that
+concrete case (writes just don't work), but the same gap could just as easily fail *open* on a
+class whose override happens to return `true` unconditionally for some unrelated reason,
+granting the API access to a class no `api_access` config ever authorized — the module would
+never be in the loop either way.
+
+**Diagnostic task:** `sake dev/tasks/CheckGrantExtensionReachability` flags every class carrying
+`ContentApiGrantExtension` whose own declared verb has no resolvable `can*()` method with a
+visible `extendedCan()` call in its source. It's a reflection-based heuristic (reads the
+resolved method's source text for the literal string, doesn't execute anything) — see
+`Tasks\Support\GrantExtensionReachabilityChecker`'s own docblock for exactly what that can and
+can't catch (a call routed through an intermediate helper method won't be found, for instance).
+Run it after applying `ContentApiGrantExtension` to a new class, and again after upgrading a
+third-party module that might have changed a `can*()` override.
+
 ## Class-level gate
 
 `PermissionPolicy::checkClassAccess()` requires `CONTENT_API_ACCESS` **and** that the class
