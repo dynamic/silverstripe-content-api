@@ -10,6 +10,7 @@ use ReflectionMethod;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
+use Throwable;
 
 /**
  * Diagnostic for #103: `ContentApiGrantExtension` grants a verb's `can*()`
@@ -148,7 +149,16 @@ class GrantExtensionReachabilityChecker
      */
     protected function carriesGrantExtension(string $className): bool
     {
-        return DataObject::has_extension($className, ContentApiGrantExtension::class);
+        // has_extension() resolves non-name/subclass matches (%$Service
+        // forms, e.g.) by actually instantiating the class's extensions via
+        // Injector — a broken project extension's constructor or missing
+        // service elsewhere in the manifest must not abort this read-only
+        // diagnostic for every other class.
+        try {
+            return DataObject::has_extension($className, ContentApiGrantExtension::class);
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     protected function methodCallsExtendedCan(string $className, string $method): bool
@@ -158,7 +168,8 @@ class GrantExtensionReachabilityChecker
         // Couldn't read the source (unusual — e.g. a compiled/phar class)
         // — not this checker's job to guess, so don't flag a false
         // positive over a limitation of the check itself.
-        return $source === null || str_contains($this->stripCommentsAndStrings($source), 'extendedCan(');
+        return $source === null
+            || preg_match('/extendedCan\s*\(/', $this->stripCommentsAndStrings($source)) === 1;
     }
 
     /**
@@ -168,16 +179,20 @@ class GrantExtensionReachabilityChecker
      * "reachable" result, exactly the failure mode this checker's own
      * test suite hit while being written: a docblock comment describing
      * the bug used the method name in prose and was initially read as a
-     * real call.
+     * real call. `T_ENCAPSED_AND_WHITESPACE` (interpolated `"..."` bodies,
+     * heredocs, nowdocs) is stripped alongside `T_CONSTANT_ENCAPSED_STRING`
+     * (plain single/double-quoted literals) — both are string content, not
+     * code, and either can carry a prose mention just as a comment can.
      */
     protected function stripCommentsAndStrings(string $source): string
     {
         $tokens = token_get_all('<?php ' . $source);
         $stripped = '';
+        $stringTokens = [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE];
 
         foreach ($tokens as $token) {
             if (is_array($token)) {
-                if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING], true)) {
+                if (in_array($token[0], $stringTokens, true)) {
                     continue;
                 }
 

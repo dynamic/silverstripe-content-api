@@ -114,4 +114,52 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
         $this->assertFalse($isConcrete->invoke($checker, ApiTestGrantAbstractObject::class));
         $this->assertTrue($isConcrete->invoke($checker, ApiTestGrantUnreachableObject::class));
     }
+
+    /**
+     * `T_CONSTANT_ENCAPSED_STRING` alone only covers non-interpolated
+     * literals — an interpolated `"..."` body, a heredoc, or a nowdoc
+     * tokenizes as `T_ENCAPSED_AND_WHITESPACE` and would otherwise leak
+     * a prose mention of `extendedCan(` straight through the stripper,
+     * exactly the false-"reachable" failure mode comment-stripping was
+     * added to prevent — just relocated to a different token type.
+     * Exercises stripCommentsAndStrings() directly with fabricated
+     * source rather than through a real stub class, since a class body
+     * containing an unreachable `extendedCan(` mention only inside a
+     * heredoc/interpolated string, with no comment involved, isn't
+     * meaningfully different to construct than to hand-write inline.
+     */
+    public function testStripsInterpolatedStringsAndHeredocsNotJustPlainLiterals(): void
+    {
+        $checker = GrantExtensionReachabilityChecker::create();
+        $strip = new ReflectionMethod($checker, 'stripCommentsAndStrings');
+        $strip->setAccessible(true);
+
+        $interpolated = <<<'PHP'
+            public function canEdit($member = null): ?bool
+            {
+                throw new \Exception("{$this->ClassName} bypasses extendedCan( entirely");
+            }
+            PHP;
+
+        $heredoc = <<<'PHP'
+            public function canEdit($member = null): ?bool
+            {
+                $msg = <<<MSG
+                bypasses extendedCan( entirely
+                MSG;
+                throw new \Exception($msg);
+            }
+            PHP;
+
+        $this->assertStringNotContainsString(
+            'extendedCan(',
+            $strip->invoke($checker, $interpolated),
+            'a mention inside an interpolated string must not survive stripping'
+        );
+        $this->assertStringNotContainsString(
+            'extendedCan(',
+            $strip->invoke($checker, $heredoc),
+            'a mention inside a heredoc body must not survive stripping'
+        );
+    }
 }

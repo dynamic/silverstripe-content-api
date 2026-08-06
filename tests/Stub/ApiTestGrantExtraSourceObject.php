@@ -16,6 +16,15 @@ use SilverStripe\ORM\DataObject;
  * doesn't false-positive on it — `Extensible::getExtensionInstances()`
  * never actually instantiates `ContentApiGrantExtension` for this class,
  * so there's no real grant to check reachability for.
+ *
+ * `canEdit()` deliberately hard-overrides without calling
+ * `extendedCan()` — same shape as {@see ApiTestGrantUnreachableObject}
+ * — so `carriesGrantExtension()`'s extra-source exclusion is the *only*
+ * thing standing between this class and a finding. Without that
+ * override, `canEdit()` would inherit `DataObject::canEdit()`, which
+ * itself calls `extendedCan()`, and the class would produce no finding
+ * regardless of whether `carriesGrantExtension()` correctly excludes
+ * extra sources or not — the test wouldn't actually prove the fix.
  */
 class ApiTestGrantExtraSourceObject extends DataObject implements TestOnly
 {
@@ -26,4 +35,9 @@ class ApiTestGrantExtraSourceObject extends DataObject implements TestOnly
     private static array $extensions = [
         ApiTestGrantExtraSourceExtension::class,
     ];
+
+    public function canEdit($member = null): ?bool
+    {
+        return false;
+    }
 }
