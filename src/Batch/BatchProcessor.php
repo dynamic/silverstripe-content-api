@@ -171,7 +171,7 @@ class BatchProcessor
 
                     if ($status === 'deleted') {
                         $mode = (string) ($operation['mode'] ?? 'archive');
-                        $isVersioned = DataObject::singleton($className)->hasExtension(Versioned::class);
+                        $isVersioned = DataObject::has_extension($className, Versioned::class);
 
                         if ($mode !== 'archive' && $isVersioned) {
                             // 'unpublish' (or 'hard', rejected earlier for

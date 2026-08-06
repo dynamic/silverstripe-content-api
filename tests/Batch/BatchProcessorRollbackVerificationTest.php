@@ -97,6 +97,29 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
     }
 
     /**
+     * The default-to-archive fallback (no `mode` key on the operation at
+     * all) must apply to a VERSIONED class too, not just the unversioned
+     * case covered below — a missing key resolves through the same
+     * `?? 'archive'` expression either way, but only a versioned class
+     * exercises the "does the default actually verify against DRAFT, or
+     * get mistaken for an unpublish-and-skip" question.
+     */
+    public function testAVersionedDeleteWithNoModeKeyDefaultsToArchiveAndIsVerified(): void
+    {
+        $operations = [
+            ['op' => 'delete', 'class' => 'ApiTestVersioned'],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'deleted', 'id' => 999999999],
+        ];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results),
+            'an unspecified mode on a versioned class must default to archive, not be treated as unpublish-and-skipped'
+        );
+    }
+
+    /**
      * 'unpublish' mode on a versioned class only removes the LIVE row —
      * DRAFT is untouched either way, so this must pass regardless of
      * whether the draft record actually exists. Both sub-cases below (id
