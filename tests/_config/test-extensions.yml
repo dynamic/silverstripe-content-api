@@ -1,0 +1,48 @@
+---
+Name: content-api-test-extensions
+---
+# See #93. TestOnly stub classes living in this module's vendor-nested tests/
+# directory (reached by a host project via the autoload-dev mapping this
+# module's own docs/en/15_testing-and-contributing.md documents as required)
+# don't reliably get their own `private static array $extensions` read by
+# SilverStripe's Config system — confirmed via reflection (the PHP property
+# exists on the loaded class) vs Config::UNINHERITED (returns completely
+# empty), and confirmed identical on both branch `1` (SS6) and `ss5`, so this
+# is not a branch-specific quirk. Declaring the same extensions here via YAML
+# instead works, because `_config/*.yml` files are discovered through
+# ModuleManifest — a different code path than the one that reads PHP static
+# class properties, and the one that actually works for a vendor-nested
+# tests/ directory. This is a stopgap: #94 tracks migrating this module to
+# test itself standalone (silverstripe/recipe-testing, like
+# dynamic/silverstripe-elemental-card and its sibling modules), which would
+# make this file unnecessary entirely.
+Dynamic\ContentApi\Tests\Stub\ApiTestObject:
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject:
+  extensions:
+    - SilverStripe\Versioned\Versioned
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage:
+  extensions:
+    - DNADesign\Elemental\Extensions\ElementalPageExtension
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestElement:
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestElementItem:
+  extensions:
+    - SilverStripe\Versioned\Versioned
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject:
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject:
+  extensions:
+    - Dynamic\ContentApi\Write\WriteGuardExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject:
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
+Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject:
+  extensions:
+    - Dynamic\ContentApi\Identity\ExternalIdentifierExtension
