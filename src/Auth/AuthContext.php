@@ -7,11 +7,11 @@ use SilverStripe\Security\Member;
 /**
  * The resolved authentication state for a single API request.
  */
-class AuthContext
+readonly class AuthContext
 {
     public function __construct(
-        public readonly Member $member,
-        public readonly int $expires,
+        public Member $member,
+        public int $expires,
     ) {
     }
 }

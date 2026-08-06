@@ -145,10 +145,12 @@ is the source branch merges flow from.) The two branches are allowed to differ o
   `ServiceAccountProvisioner`'s class docblocks may legitimately differ in wording where they
   describe each branch's own adapter, but their code and returned messages must not)
 - requirement statements in this README and `docs/en/00_installation.md`
-- PHP-floor-dependent type declarations (e.g. `Security/ContentApiGrantExtension.php`'s
-  `true|null` here vs `?bool` on branch `1` — standalone `true` as a return type needs PHP 8.2+,
-  and branch `1`'s floor is `^8.1`; this branch's `^8.3` floor enforces the invariant at the type
-  level, where branch `1` relies on convention plus the regression test)
+- PHP-floor-dependent type declarations — `^8.3` here vs branch `1`'s `^8.1` floor. Two known
+  instances, both worth checking explicitly on every merge-up since neither shows up as a git
+  conflict when branch `1` doesn't also touch the file in the same sync: `Security/
+  ContentApiGrantExtension.php`'s `true|null` here vs `?bool` on branch `1` (standalone `true` as
+  a return type needs PHP 8.2+); `Auth/AuthContext.php`'s whole-class `readonly class` here vs
+  per-property `readonly` on branch `1` (whole-class `readonly` needs PHP 8.2+)
 - SS6-only glue with no `1` equivalent (e.g. `Tasks/Support/TaskResultRenderer.php`, which wraps
   Symfony Console's `PolyOutput`/`Command` — not present on branch `1` at all, since its two
   adapters `echo` `TaskResult::$lines` directly instead)

@@ -19,6 +19,18 @@ All notable changes to this project are documented here. Format loosely follows
   up (SS6 content attributed to branch `1`).
 
 ### Added
+- **(#106)** Merged branch `1` up to this branch (32 commits) — the first merge-up since the
+  branch rename flipped the sync direction (this branch now receives from branch `1`, not the
+  reverse; see the Branch policy section of the README). Brings two features that now land here
+  for the first time, ported to this branch's own conventions where the two branches'
+  entry-point shapes differ: **(#90, #102)** `PublishOrchestrator`'s `subtree` mode now
+  authorization-checks every descendant before publishing any of it, and accepts `liveOnly`
+  (skip already-unpublished descendant branches) and `dryRun` (report the would-publish set
+  without writing) options — see `docs/en/10_publishing-and-stages.md#publish-modes`. **(#103)**
+  A new diagnostic task, `sake tasks:CheckGrantExtensionReachability`
+  (`CheckGrantExtensionReachabilityTask`/`GrantExtensionReachabilityChecker`), flags any class
+  carrying `ContentApiGrantExtension` whose own `can*()` override never calls `extendedCan()` —
+  see `docs/en/04_security-model.md#the-extendedcan-contract-this-extension-depends-on`.
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
   enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
   `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is
@@ -184,11 +196,14 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased] — 1
 
-This branch (formerly `ss5`) tracks branch `2` (formerly `1`; synced via `git merge origin/2`,
-never cherry-picked) and carries every entry above, plus the SS5-specific differences below.
-Baseline: SilverStripe `^5.2`, PHP `^8.1`. See the README's Branch policy section for what's
-allowed to permanently differ between the two branches. Entries below predate the rename
-(issue #105) and use each branch's own then-current name.
+Carried over verbatim from branch `1`'s own CHANGELOG as of this merge (#106) — not this
+branch's own history. Branch `1` (formerly `ss5`) tracked branch `2` (formerly `1`) via
+`git merge origin/2`, never a cherry-pick, and carried every entry above plus the SS5-specific
+differences below; its baseline is SilverStripe `^5.2`, PHP `^8.1`. (The sync direction has since
+flipped — this branch now merges *from* branch `1`, not the reverse; see #105/#106 and the
+README's Branch policy section for what's allowed to permanently differ between the two
+branches.) Entries below predate the rename (issue #105) and use each branch's own then-current
+name; kept as-is rather than rewritten, per this file's own no-history-rewriting rule.
 
 ### Fixed
 - **(#90, #102)** `PublishOrchestrator::publishSubtree()` had two real gaps: no per-descendant
