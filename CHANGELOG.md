@@ -192,8 +192,18 @@ allowed to permanently differ between the two branches. Entries below predate th
     `RecordWriter` all pass the acting member through.
   - `mode: "subtree"` gained `liveOnly` (skip a descendant branch — no publish, no recursion —
     that isn't already live) and `dryRun` (preview the would-publish set, no writes) request
-    body fields on the `publish` record action. Neither applies to any other mode. MCP spec
-    bumped to `v1.8` to document both.
+    body fields on the `publish` record action. **Breaking for existing callers**: both are
+    `400 PAYLOAD_INVALID` on any mode other than `subtree` — an earlier version of this fix
+    silently ignored them there instead, which meant `{"dryRun": true}` with no `mode` (or any
+    non-subtree mode) performed a real write while the response claimed a preview; caught via
+    `/review-pr` before merge. MCP spec bumped to `v1.8` to document both.
+  - A real (non-`dryRun`) `subtree` call keeps the normal serialized-record response but adds
+    `meta.published`: the same `[{id, className}, ...]` list a `dryRun` call would preview, so a
+    real `liveOnly` call still reports what it actually touched (there's no separate skipped
+    list — a `liveOnly`-skipped descendant simply doesn't appear).
+  - `RecordWriter::write()` now runs `publish()` inside the same DB transaction as the field
+    write and relation writes, so a `subtree` descendant-authorization failure there rolls back
+    the field write too, rather than leaving it committed while the batch op reports "error".
   - `docs/en/10_publishing-and-stages.md`'s existing recommendation to use `subtree` before
     unpublishing an old wrapper now carries the resurrection-risk warning and the `liveOnly`
     fix, rather than silently recommending a footgun.

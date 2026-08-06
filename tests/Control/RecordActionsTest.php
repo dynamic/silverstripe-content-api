@@ -224,9 +224,12 @@ class RecordActionsTest extends ContentApiTestCase
 
     /**
      * A real (non-dryRun) subtree call must report what it actually
-     * touched — otherwise a liveOnly caller has no way to learn what was
-     * skipped short of a separate dryRun call beforehand, which isn't
-     * atomic with the real one (#102). Found via /review-pr on #113.
+     * published — meta.published lists what was touched, not what was
+     * skipped (there is no separate skipped list; a liveOnly-skipped
+     * descendant simply never appears). Without this, a caller had no way
+     * to confirm what a real liveOnly run actually did short of a
+     * separate dryRun call beforehand, which isn't atomic with the real
+     * one (#102). Found via /review-pr on #113.
      */
     public function testRealSubtreePublishReportsWhatWasActuallyPublished(): void
     {
@@ -258,7 +261,7 @@ class RecordActionsTest extends ContentApiTestCase
         $this->assertNotContains(
             (int) $offline->ID,
             $publishedIDs,
-            'liveOnly must report the offline descendant as skipped, not silently omit it from the count'
+            'liveOnly must not publish a deliberately-offline descendant, so it must not appear in meta.published'
         );
 
         // The normal serialized-record response is still the primary

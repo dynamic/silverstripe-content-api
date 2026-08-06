@@ -104,11 +104,12 @@ class RecordActionsHandler
 
                     // A real subtree run keeps the normal serialized-record
                     // response below (unchanged contract for existing
-                    // callers) but adds what was actually published —
-                    // otherwise a real liveOnly run has no way to tell the
-                    // caller what got skipped short of a separate dryRun
-                    // call beforehand, which isn't atomic with the real one
-                    // (#102).
+                    // callers) but adds what was actually published — no
+                    // separate skipped list, a liveOnly-skipped descendant
+                    // simply never appears here. Without this, confirming
+                    // what a real liveOnly call did required a separate
+                    // dryRun call beforehand, which isn't atomic with the
+                    // real one (#102).
                     if ($entries !== null) {
                         $extraMeta['published'] = $entries;
                     }
