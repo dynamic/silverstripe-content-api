@@ -8,7 +8,6 @@ use ReflectionClass;
 use ReflectionException;
 use ReflectionMethod;
 use SilverStripe\Core\ClassInfo;
-use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
 
@@ -29,14 +28,19 @@ use SilverStripe\ORM\DataObject;
  * verb — the exact same population {@see ContentApiGrantExtension::grant()}
  * itself checks — resolves the `can*()` method PHP will actually call
  * (following normal inheritance) and reads its declaring class's source
- * for a literal `extendedCan(` call.
+ * for a literal `extendedCan(` call, ignoring comments and string
+ * literals so a mention in prose (or a real call that's been commented
+ * out) can't produce a false "reachable" result.
  *
  * Necessarily a heuristic, not a proof: misses a call routed through an
  * intermediate helper method one level removed from the `can*()` method
- * itself, and can't distinguish a real call from one that's been
- * commented out. Chosen over a live behavioral probe (attach a
- * forced-veto extension at runtime, check whether a scratch record's
- * answer reflects it) because that approach needs a real `Member` holding
+ * itself. When the resolved method is defined on a trait rather than a
+ * class, the source scan still reads the trait's real body correctly, but
+ * the reported "declaring class" is the class that `use`s the trait, not
+ * the trait itself — cosmetic, not a correctness gap in what gets
+ * flagged. Chosen over a live behavioral probe (attach a forced-veto
+ * extension at runtime, check whether a scratch record's answer reflects
+ * it) because that approach needs a real `Member` holding
  * `CONTENT_API_ACCESS` to be meaningful, and constructing and safely
  * discarding one is real complexity and blast radius for a read-only
  * diagnostic that should be safe to run against a live database. If
@@ -68,54 +72,62 @@ class GrantExtensionReachabilityChecker
     ];
 
     /**
-     * @return array<int, array{class: string, verb: string, method: string, declaringClass: string}>
-     *   one entry per (class, verb) pair the extension would grant but
-     *   whose resolved `can*()` method's source has no `extendedCan(` call
+     * @return array<int, array{class: string, verbs: string[], method: string, declaringClass: string}>
+     *   one entry per (class, method) pair the extension would grant
+     *   at least one verb for but whose resolved `can*()` method's source
+     *   has no `extendedCan(` call — `verbs` lists every declared verb
+     *   that maps to that method, not just the first
      */
     public function check(): array
     {
         $findings = [];
-        $checkedMethods = [];
+        $verbsByMethod = [];
 
         foreach (ClassInfo::subclassesFor(DataObject::class, false) as $className) {
-            if (!$this->carriesGrantExtension($className)) {
+            if (!$this->isConcrete($className) || !$this->carriesGrantExtension($className)) {
                 continue;
             }
 
             foreach ($this->registry->ownAccessVerbs($className) as $verb) {
                 $method = self::VERB_METHODS[$verb] ?? null;
 
-                if ($method === null) {
+                if ($method === null || !method_exists($className, $method)) {
                     continue;
                 }
 
                 // read/update/action can all point at the same resolved
-                // method on one class — check each (class, method) pair
-                // once regardless of how many verbs reach it.
-                $dedupeKey = $className . '::' . $method;
-
-                if (isset($checkedMethods[$dedupeKey])) {
-                    continue;
-                }
-
-                $checkedMethods[$dedupeKey] = true;
-
-                if (!method_exists($className, $method)) {
-                    continue;
-                }
-
-                if (!$this->methodCallsExtendedCan($className, $method)) {
-                    $findings[] = [
-                        'class' => $className,
-                        'verb' => $verb,
-                        'method' => $method,
-                        'declaringClass' => $this->declaringClass($className, $method),
-                    ];
-                }
+                // method on one class — group every verb that reaches it
+                // under one (class, method) entry rather than reporting
+                // (and re-checking) each separately.
+                $verbsByMethod[$className . '::' . $method][] = $verb;
             }
         }
 
+        foreach ($verbsByMethod as $dedupeKey => $verbs) {
+            [$className, $method] = explode('::', $dedupeKey, 2);
+
+            if ($this->methodCallsExtendedCan($className, $method)) {
+                continue;
+            }
+
+            $findings[] = [
+                'class' => $className,
+                'verbs' => $verbs,
+                'method' => $method,
+                'declaringClass' => $this->declaringClass($className, $method),
+            ];
+        }
+
         return $findings;
+    }
+
+    protected function isConcrete(string $className): bool
+    {
+        try {
+            return (new ReflectionClass($className))->isInstantiable();
+        } catch (ReflectionException) {
+            return false;
+        }
     }
 
     /**
@@ -123,13 +135,20 @@ class GrantExtensionReachabilityChecker
      * (`SiteTree`, `BaseElement`) is genuinely active on every subclass —
      * matches `ContentApiGrantExtension`'s own real runtime behavior, not
      * the class-access-declaration check below (which is deliberately
-     * uninherited).
+     * uninherited). `DataObject::has_extension()` — not a raw `extensions`
+     * Config read — because a raw read would both false-positive (an
+     * `extensions` entry contributed by a *different* extension applied to
+     * the class, which `Extensible::getExtensionInstances()` itself
+     * resolves with `Config::EXCLUDE_EXTRA_SOURCES` and would never
+     * actually instantiate) and false-negative (a project subclassing
+     * `ContentApiGrantExtension`, or a `%$ServiceName`/`Extension('args')`
+     * config form, or a case variant) against what the framework actually
+     * applies. `ClassRegistry::ownAccessVerbs()`'s own docblock names
+     * `EXCLUDE_EXTRA_SOURCES` as load-bearing for exactly this reason.
      */
     protected function carriesGrantExtension(string $className): bool
     {
-        $extensions = (array) Config::inst()->get($className, 'extensions');
-
-        return in_array(ContentApiGrantExtension::class, $extensions, true);
+        return DataObject::has_extension($className, ContentApiGrantExtension::class);
     }
 
     protected function methodCallsExtendedCan(string $className, string $method): bool
@@ -139,7 +158,36 @@ class GrantExtensionReachabilityChecker
         // Couldn't read the source (unusual — e.g. a compiled/phar class)
         // — not this checker's job to guess, so don't flag a false
         // positive over a limitation of the check itself.
-        return $source === null || str_contains($source, 'extendedCan');
+        return $source === null || str_contains($this->stripCommentsAndStrings($source), 'extendedCan(');
+    }
+
+    /**
+     * Drops comments and string-literal contents (keeping everything else,
+     * including whitespace and real code) so a mention of `extendedCan(`
+     * in prose — or inside a commented-out call — can't produce a false
+     * "reachable" result, exactly the failure mode this checker's own
+     * test suite hit while being written: a docblock comment describing
+     * the bug used the method name in prose and was initially read as a
+     * real call.
+     */
+    protected function stripCommentsAndStrings(string $source): string
+    {
+        $tokens = token_get_all('<?php ' . $source);
+        $stripped = '';
+
+        foreach ($tokens as $token) {
+            if (is_array($token)) {
+                if (in_array($token[0], [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING], true)) {
+                    continue;
+                }
+
+                $stripped .= $token[1];
+            } else {
+                $stripped .= $token;
+            }
+        }
+
+        return $stripped;
     }
 
     protected function declaringClass(string $className, string $method): string

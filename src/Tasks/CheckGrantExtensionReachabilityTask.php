@@ -38,9 +38,9 @@ class CheckGrantExtensionReachabilityTask extends BuildTask
             return;
         }
 
-        echo "Found " . count($findings) . " class/verb pair(s) where ContentApiGrantExtension\n";
-        echo "is applied and would grant the verb, but the resolved can*() method's source has\n";
-        echo "no visible extendedCan() call:\n\n";
+        echo "Found " . count($findings) . " class/method pair(s) where ContentApiGrantExtension\n";
+        echo "is applied and would grant at least one verb, but the resolved can*() method's\n";
+        echo "source has no visible extendedCan() call:\n\n";
 
         foreach ($findings as $finding) {
             $selfDeclared = $finding['class'] === $finding['declaringClass']
@@ -48,11 +48,11 @@ class CheckGrantExtensionReachabilityTask extends BuildTask
                 : sprintf(' (inherited from %s)', $finding['declaringClass']);
 
             echo sprintf(
-                "  %s::%s()%s — declares the \"%s\" verb\n",
+                "  %s::%s()%s — declares the \"%s\" verb(s)\n",
                 $finding['class'],
                 $finding['method'],
                 $selfDeclared,
-                $finding['verb']
+                implode('", "', $finding['verbs'])
             );
         }
 

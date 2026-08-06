@@ -7,13 +7,17 @@ use SilverStripe\Dev\TestOnly;
 use SilverStripe\ORM\DataObject;
 
 /**
- * Carries `ContentApiGrantExtension` and declares its own `action`/`create`
- * verbs, same as {@see ApiTestGrantReachableObject} — but this
- * `canEdit()` hard-overrides without ever calling `extendedCan()`, the
- * real-world FoxyStripe `ProductPage` shape #103 was filed against. The
- * grant extension's hook is never reached here, no matter what it would
- * answer. Used by `GrantExtensionReachabilityCheckerTest` to prove the
- * checker actually flags this class.
+ * Carries `ContentApiGrantExtension` and declares its own `create`/
+ * `update`/`action` verbs (the latter two both resolve to `canEdit()` —
+ * declaring both deliberately, so this stub also proves the checker
+ * groups every verb reaching one resolved method into a single finding
+ * rather than reporting `update` and `action` separately or dropping
+ * one), same class shape as {@see ApiTestGrantReachableObject} — but
+ * this `canEdit()` hard-overrides without ever calling `extendedCan()`,
+ * the real-world FoxyStripe `ProductPage` shape #103 was filed against.
+ * The grant extension's hook is never reached here, no matter what it
+ * would answer. Used by `GrantExtensionReachabilityCheckerTest` to prove
+ * the checker actually flags this class.
  */
 class ApiTestGrantUnreachableObject extends DataObject implements TestOnly
 {
@@ -23,7 +27,7 @@ class ApiTestGrantUnreachableObject extends DataObject implements TestOnly
         'Title' => 'Varchar',
     ];
 
-    private static string $content_api_access = 'read,create,action';
+    private static string $content_api_access = 'read,create,update,action';
 
     private static array $extensions = [
         ContentApiGrantExtension::class,
@@ -31,15 +35,14 @@ class ApiTestGrantUnreachableObject extends DataObject implements TestOnly
 
     public function canEdit($member = null): ?bool
     {
-        // Deliberately skips the standard extension-consultation hook the
-        // bug #103 exists to catch. A real-world equivalent might check a
-        // role field, a workflow state, or (as in the FoxyStripe case)
-        // hard-code a permission code — the specific logic doesn't
-        // matter, only that it bypasses the mechanism entirely. (This
-        // comment must not spell out the hook method's name literally —
-        // GrantExtensionReachabilityCheckerTest asserts on its absence
-        // from this method's source, and the checker itself can't tell a
-        // real call from a mention in prose.)
+        // Deliberately never calls extendedCan() -- the bug #103 exists to
+        // catch. A real-world equivalent might check a role field, a
+        // workflow state, or (as in the FoxyStripe case) hard-code a
+        // permission code -- the specific logic doesn't matter, only that
+        // it bypasses the extension mechanism entirely. Safe to mention
+        // extendedCan() by name in this comment: the checker strips
+        // comments and string literals before matching, so only a real
+        // call in actual code counts.
         return false;
     }
 }
