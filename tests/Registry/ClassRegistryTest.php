@@ -34,6 +34,14 @@ class ClassRegistryTest extends SapphireTest
 
     public function testDiscoveryIsOffByDefault(): void
     {
+        // Explicit, not relied-on-by-omission: a project's own discovery_roots
+        // could legitimately include an ancestor of ApiTestDiscoveryChild,
+        // which would make this test pass by accident rather than by
+        // actually exercising the "discovery off" default this test is
+        // named for.
+        Config::modify()->set(ClassRegistry::class, 'discovery_roots', []);
+        Config::modify()->set(ClassRegistry::class, 'discovery_write_policy', 'off');
+
         $registry = ClassRegistry::singleton();
 
         $this->assertArrayNotHasKey('ApiTestDiscoveryChild', $registry->allExposed());
@@ -68,7 +76,7 @@ class ClassRegistryTest extends SapphireTest
     public function testDiscoveryWritePolicyOffExcludesDiscoveredClassesEntirely(): void
     {
         Config::modify()->set(ClassRegistry::class, 'discovery_roots', [ApiTestDiscoveryRoot::class]);
-        // discovery_write_policy left at its default ('off').
+        Config::modify()->set(ClassRegistry::class, 'discovery_write_policy', 'off');
 
         $registry = ClassRegistry::singleton();
 
