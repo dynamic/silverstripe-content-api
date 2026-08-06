@@ -17,14 +17,14 @@ use SilverStripe\Versioned\Versioned;
  * publish-cascade ambiguity are the bugs this class exists to prevent.
  *
  * Publish modes: `none` (leave on draft), `single` (publishSingle),
- * `recursive` (publishRecursive — note SS6 does NOT cascade a page's
- * publishRecursive into owned elemental blocks; composition-level cascades
- * publish each written element explicitly in M4), `subtree` (publishes the
- * record, then every draft tree child, depth-first — publishRecursive()
- * does NOT cascade to `Hierarchy` tree children either, only owned
- * relations; a caller restructuring a 30-page subtree needs `subtree`
- * instead of 30 individual `single` calls). See #71 and
- * `docs/en/10_publishing-and-stages.md`.
+ * `recursive` (publishRecursive — does NOT cascade a page's
+ * publishRecursive into owned elemental blocks, confirmed identical on
+ * both branches (#91): composition-level cascades publish each written
+ * element explicitly in M4), `subtree` (publishes the record, then every
+ * draft tree child, depth-first — publishRecursive() does NOT cascade to
+ * `Hierarchy` tree children either, only owned relations; a caller
+ * restructuring a 30-page subtree needs `subtree` instead of 30 individual
+ * `single` calls). See #71 and `docs/en/10_publishing-and-stages.md`.
  */
 class PublishOrchestrator
 {
