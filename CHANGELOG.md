@@ -12,7 +12,7 @@ All notable changes to this project are documented here. Format loosely follows
   rename, now the SS5 line) or referred to the SS5 line by its old name `ss5`. Also updated two
   docblocks/comments describing a follow-up port to `ServiceAccountProvisioner`/`ApiTokenMinter`
   as still pending — that port landed on the SS5 line in #96/#104. Added
-  `scripts/check-doc-drift.sh` (mirroring the SS5 line's own, added in #96) and wired it into
+  `scripts/check-doc-drift.sh` (mirroring the SS5 line's own, added in #52) and wired it into
   `.local-ci.json` so this doesn't happen again: it catches SS5-era requirement/constraint text or
   `sake dev/tasks/` invocation syntax leaking onto this branch, plus the specific self-contradiction
   this fix cleans up (SS6 content attributed to branch `1`).

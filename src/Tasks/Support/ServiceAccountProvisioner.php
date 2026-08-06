@@ -12,9 +12,8 @@ use SilverStripe\Security\Permission;
  * needs. Idempotent — re-running only adds missing grants, never duplicates
  * or removes existing ones. Branch-neutral: both branch `2`'s SS6
  * `SetupServiceAccountTask` adapter (`execute(InputInterface, PolyOutput): int`)
- * and branch `1`'s legacy `SetupServiceAccountTask` adapter
- * (`run($request): void`) call this directly rather than duplicating the
- * business logic — see #65/#96.
+ * and branch `1`'s legacy `SetupServiceAccountTask` adapter (`run($request): void`)
+ * call this directly rather than duplicating the business logic — see #65/#96.
  *
  * Grants CONTENT_API_ACCESS + VIEW_DRAFT_CONTENT unconditionally — the pair
  * a service account needs so a draft-only write (batch/composition default

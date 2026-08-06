@@ -7,8 +7,7 @@ namespace Dynamic\ContentApi\Tasks\Support;
  * the human-readable lines a BuildTask adapter renders. Keeping the lines as
  * an ordered array (rather than a single string) lets each branch's adapter
  * decide how to emit them (`PolyOutput::writeln()` per line on branch `2`,
- * `echo` per line on branch `1`) without either side parsing the other's
- * output.
+ * `echo` per line on branch `1`) without either side parsing the other's output.
  */
 final class TaskResult
 {
