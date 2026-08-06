@@ -25,7 +25,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 matches=$(grep -rniE 'SilverStripe .?\^6|PHP .?\^8\.3|dev-feature/cms-6-compatibility|sake tasks:' \
-    README.md docs/ src/ composer.json)
+    README.md docs/ src/ tests/ composer.json phpstan.neon.dist)
 status=$?
 
 if [ "$status" -eq 0 ]; then
@@ -39,9 +39,12 @@ fi
 
 # This branch's own prior name — a leftover reference here means a rename
 # (like the 2026-08 `ss5`->`1` / `1`->`2` split, issue #105) half-landed.
-# CHANGELOG.md excluded — see comment above.
-stale_name=$(grep -rniE '`ss5`|\bss5 branch\b' \
-    README.md docs/ src/ tests/ composer.json .local-ci.json)
+# CHANGELOG.md excluded — see comment above. Case-SENSITIVE and no `-i`:
+# a case-insensitive \bss5\b collides with "SS5" the framework version,
+# which is legitimate everywhere on this branch — the lowercase `ss5`
+# branch-name token never legitimately appears with that casing.
+stale_name=$(grep -rnE '\bss5\b' \
+    README.md docs/ src/ tests/ composer.json .local-ci.json phpstan.neon.dist)
 status=$?
 
 if [ "$status" -eq 0 ]; then

@@ -109,7 +109,7 @@ class ContentApiGrantExtensionTest extends SapphireTest
      * grant does not block archive on a real SS5.2 site running this
      * branch's dependency versions.
      *
-     * Do not "fix" this by porting the branch-`1` assertion here — it would
+     * Do not "fix" this by porting the branch-`2` assertion here — it would
      * fail against this branch's real, correct behaviour, not a bug.
      */
     public function testCanDeleteOnAPublishedRecordDoesNotNeedTheEditGrantHere(): void
@@ -124,7 +124,7 @@ class ContentApiGrantExtensionTest extends SapphireTest
 
         $this->assertTrue(
             (bool) $page->canDelete($member),
-            'on this branch, unlike branch 1, silverstripe/versioned does not override '
+            'on this branch, unlike branch 2, silverstripe/versioned does not override '
                 . 'canDelete() to veto based on canUnpublish() — see this test\'s docblock'
         );
     }
