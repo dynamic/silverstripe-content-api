@@ -177,6 +177,17 @@ Baseline: SilverStripe `^5.2`, PHP `^8.1`. See the README's Branch policy sectio
 allowed to permanently differ between the two branches. Entries below predate the rename
 (issue #105) and use each branch's own then-current name.
 
+### Fixed
+- **(#108)** `PublishOrchestrator`'s class docblock, and the matching passage in
+  `docs/en/10_publishing-and-stages.md`, framed `publishRecursive()` not cascading into owned
+  Elemental blocks as an SS6-specific fact. Issue #91's empirical test confirmed it's identical
+  on both branches — reworded both to say so, and fixed a second inaccuracy in the same
+  docblock/doc passage that #91 also flagged: text nearby asserted `publishRecursive()` cascades
+  to owned relations generally, which doesn't hold for the Elemental relation specifically.
+  (#107, the four `Tasks/Support/*` docblocks tracked alongside this one for the same "pending a
+  follow-up port" staleness, turned out to already be correct — fixed as a side effect of the
+  #105 branch-rename sweep.)
+
 ### Added
 - **(#76)** `Dynamic\ContentApi\Security\ContentApiGrantExtension`, ported from branch `1` — see
   the shared `[Unreleased]` entry above. No `Tasks/Support/ServiceAccountProvisioner` exists on

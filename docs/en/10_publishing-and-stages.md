@@ -54,10 +54,11 @@ might own. Three distinct things a caller needs to reason about separately (conf
 way during a real IA restructure — see #71):
 
 1. **`SiteTree` tree children never cascade from a parent's publish, in any mode except
-   `subtree`.** `publishRecursive()` is for owned Elemental relations only (see below) — it does
-   **not** walk `Hierarchy` children. A 30-page subtree needing to go live needed 30 individual
-   `single` publish calls before `subtree` existed to do exactly that walk. `recursive` still
-   does not do this — use `subtree` when the goal is "this page and its whole draft tree."
+   `subtree`.** `publishRecursive()` cascades to some owned relations, but **not** `Hierarchy`
+   tree children, and — per the next section — not owned Elemental compositions either. A
+   30-page subtree needing to go live needed 30 individual `single` publish calls before
+   `subtree` existed to do exactly that walk. `recursive` still does not do this — use
+   `subtree` when the goal is "this page and its whole draft tree."
 2. **Owned Elemental compositions need `CompositionService::publishAll()`, not a bare
    `publishRecursive()`** — see the next section.
 3. **Arbitrary has_many/has_one relations outside both of the above never cascade, in any
@@ -71,7 +72,8 @@ way during a real IA restructure — see #71):
 
 ## `publishRecursive()` does not cascade to elements
 
-**A page's `publishRecursive()` does not cascade into owned elemental blocks in SS6.** This is
+**A page's `publishRecursive()` does not cascade into owned elemental blocks — confirmed
+identical on branches `1` and `2` (#91), not an SS6-specific gap.** This is
 the specific gap `CompositionService::publishAll()` exists to close: a `recursive` composition
 publish explicitly publishes the elemental area, then every written element (and its children)
 individually via `PublishOrchestrator::publish($record, 'single')`, and only then calls
