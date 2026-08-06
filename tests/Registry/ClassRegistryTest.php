@@ -68,7 +68,7 @@ class ClassRegistryTest extends SapphireTest
     public function testDiscoveryWritePolicyOffExcludesDiscoveredClassesEntirely(): void
     {
         Config::modify()->set(ClassRegistry::class, 'discovery_roots', [ApiTestDiscoveryRoot::class]);
-        // discovery_write_policy left at its default ('off').
+        Config::modify()->set(ClassRegistry::class, 'discovery_write_policy', 'off');
 
         $registry = ClassRegistry::singleton();
 
