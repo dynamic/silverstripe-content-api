@@ -32,12 +32,17 @@ cd "$(dirname "$0")/.." || exit 1
 # colymba's own SS5 pin ("^5.0") and branch 1's SS5-line fork repository URL
 # are checked the same way branch 1's script checks for ITS OWN SS6-only
 # colymba branch (`dev-feature/cms-6-compatibility`) leaking the other way.
-# Scoped to the packages whose major version actually tracks the CMS major
-# (framework/cms/asset-admin) — `silverstripe/linkfield`,
-# `silverstripe/recipe-testing`, etc. version independently, so
-# `silverstripe/linkfield": "^5"` is legitimate on this branch and would
-# false-positive against a broader `silverstripe/[a-z-]+` pattern.
-matches=$(grep -rniE 'SilverStripe.{0,8}\^5|PHP.{0,8}\^8\.1|"php": *"\^8\.1|"silverstripe/(framework|cms|asset-admin)": *"\^5|"colymba/silverstripe-restfulapi": *"\^5|dynamic/silverstripe-restfulapi|sake dev/tasks/' \
+# `silverstripe/framework`/`cms` are checked against their SS5-line "^5"
+# constraint; `versioned`/`asset-admin` version on their own schedule (SS5
+# line: "^2.2"; this branch: "^3") rather than tracking the CMS major, so
+# they're checked against their own real SS5-line value instead — a bare
+# "^5" alternative for them would never match anything real (their SS5-line
+# constraint isn't "^5"), silently covering nothing. `silverstripe/linkfield`
+# and `silverstripe/recipe-testing` version independently of both, so
+# they're deliberately left out — a broader `silverstripe/[a-z-]+": *"\^5`
+# pattern false-positives on `silverstripe/linkfield": "^5"`, which is
+# correct on this branch.
+matches=$(grep -rniE 'SilverStripe.{0,8}\^5|PHP.{0,8}\^8\.1|"php": *"\^8\.1|"silverstripe/(framework|cms)": *"\^5|"silverstripe/(versioned|asset-admin)": *"\^2|"colymba/silverstripe-restfulapi": *"\^5|dynamic/silverstripe-restfulapi|sake dev/tasks/' \
     README.md docs/ src/ tests/ composer.json phpstan.neon.dist)
 status=$?
 
@@ -84,14 +89,19 @@ fi
 #
 # A line can legitimately mention both "SS6" and "branch `1`" close together
 # without being a contradiction if branch `1` is correctly paired with its
-# own version right there (e.g. "branch `2` (SS6) and branch `1` (SS5)") —
-# checked by excluding any candidate where "SS5" appears within a further
-# short window immediately before or after the `branch `1`` token itself,
-# not anywhere else on the line. (An exclusion keyed on "branch `2`"
-# appearing *anywhere* on the line was tried first and rejected: on a long
-# line, a branch `2` mention far from the actual SS6/branch-`1` pairing
-# would wrongly wave through a real contradiction elsewhere in the same
-# line.)
+# own version right there (e.g. "branch `2` (SS6) and branch `1` (SS5)").
+# Checked positionally, not line-wide: the legitimate pairing text is
+# stripped out of each candidate line first, and only the *remainder* is
+# re-tested against the same SS6/branch-`1` pattern. A line-wide exclusion
+# (grep -v on the whole line for a legitimate pairing appearing anywhere)
+# was tried first and rejected: a line carrying both a legitimate pairing
+# AND a genuine, separate contradiction would have the whole line waved
+# through, masking the real one. The "SS5" half of the strip is
+# deliberately case-SENSITIVE (unlike the rest of this check) for the same
+# reason the stale-name check above is: a case-insensitive match would let
+# the stale lowercase `ss5` branch-name token satisfy a strip meant for the
+# framework version "SS5", silently suppressing a real contradiction that
+# happens to sit near a leftover `ss5` reference.
 candidates=$(grep -rniE 'SS6.{0,15}branch .1.|branch .1.{0,15}SS6' README.md docs/ src/ tests/)
 status=$?
 
@@ -100,7 +110,9 @@ if [ "$status" -gt 1 ]; then
     exit "$status"
 fi
 
-contradiction=$(printf '%s\n' "$candidates" | grep -viE 'branch .1.{0,15}\(?SS5|SS5.{0,15}branch .1.')
+contradiction=$(printf '%s\n' "$candidates" \
+    | sed -E 's/[Bb]ranch .1.{0,15}\(?SS5/ /g; s/SS5.{0,15}[Bb]ranch .1./ /g' \
+    | grep -iE 'SS6.{0,15}branch .1.|branch .1.{0,15}SS6')
 
 if [ -n "$contradiction" ]; then
     echo "$contradiction" >&2

@@ -13,9 +13,10 @@ All notable changes to this project are documented here. Format loosely follows
   docblocks/comments describing a follow-up port to `ServiceAccountProvisioner`/`ApiTokenMinter`
   as still pending — that port landed on the SS5 line in #96/#104. Added
   `scripts/check-doc-drift.sh` (mirroring the SS5 line's own, added in #52) and wired it into
-  `.local-ci.json` so this doesn't happen again: it catches SS5-era requirement/constraint text or
-  `sake dev/tasks/` invocation syntax leaking onto this branch, plus the specific self-contradiction
-  this fix cleans up (SS6 content attributed to branch `1`).
+  `.local-ci.json` so this doesn't happen again: it catches a stale lowercase `ss5` reference (the
+  bulk of what this sweep actually found), SS5-era requirement/constraint text or `sake dev/tasks/`
+  invocation syntax leaking onto this branch, plus the specific self-contradiction this fix cleans
+  up (SS6 content attributed to branch `1`).
 
 ### Added
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
