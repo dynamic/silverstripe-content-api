@@ -31,13 +31,19 @@ class BatchTest extends ContentApiTestCase
         parent::setUp();
 
         $this->adminToken = $this->mintTokenFor('adminUser');
+
+        // See tearDown() — reset on both sides of the test so a prior test's
+        // leftover cache entry (this class caches per page class name
+        // regardless of which test file touched it) can never leak in, not
+        // just so this test doesn't leak one out.
+        ElementalAreasExtension::reset();
     }
 
     protected function tearDown(): void
     {
-        // See CompositionTest's identical reset — ElementalAreasExtension's
-        // getElementalTypes() caches per page class name in a static that
-        // Config::modify()'s automatic rollback doesn't touch.
+        // ElementalAreasExtension::getElementalTypes() caches per page class
+        // name in a static that Config::modify()'s automatic rollback
+        // doesn't touch.
         ElementalAreasExtension::reset();
 
         parent::tearDown();
@@ -1148,6 +1154,98 @@ class BatchTest extends ContentApiTestCase
         ], $this->adminToken));
 
         $this->assertSame('created', $body['data']['results'][0]['status']);
+    }
+
+    /**
+     * #64 review follow-up: `assertElementPlacementAllowed()` only fires
+     * when `ParentID` actually changes — a plain field-only update to an
+     * element already sitting on a page must keep succeeding even after
+     * that page's config narrows to newly disallow the element's type.
+     * Elemental's own `getElementalTypes()` gate has no equivalent for
+     * "keep editing existing content," only for a new placement.
+     */
+    public function testBatchUpdateOfAnAlreadyPlacedElementIsUnaffectedByALaterDisallow(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Edit Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Created while allowed', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $updated = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestElement',
+                    'id' => $elementId,
+                    'fields' => ['Title' => 'Just fixing a typo'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $updated['data']['results'][0]['status']);
+        $this->assertSame('Just fixing a typo', ApiTestElement::get()->byID($elementId)->Title);
+    }
+
+    /**
+     * The other side of the same fix: a batch update that DOES change
+     * `ParentID` — re-parenting an already-placed element onto a
+     * different page's area — is a genuine new placement on the target
+     * page and must still be checked against it, exactly like a create.
+     */
+    public function testBatchUpdateReparentingAnElementToADisallowedAreaIsRejected(): void
+    {
+        $sourceArea = $this->createBlockPageWithArea('Batch Reparent Source');
+        $targetArea = $this->createBlockPageWithArea('Batch Reparent Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Reparent me', 'ParentID' => (int) $sourceArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        // Both pages are the same class, so this necessarily disallows the
+        // type on the source page too — irrelevant here, since the source
+        // placement is pre-existing and unchanged, and the fix under test
+        // is precisely that an unchanged placement is never re-checked.
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $reparented = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestElement',
+                    'id' => $elementId,
+                    'fields' => ['ParentID' => (int) $targetArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $reparented['data']['results'][0]['status']);
+        $this->assertSame('ELEMENT_NOT_ALLOWED_ON_PAGE', $reparented['data']['results'][0]['error']['code']);
+        $this->assertSame(
+            (int) $sourceArea->ID,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'a rejected re-parent must leave the element in its original area'
+        );
     }
 
     /**

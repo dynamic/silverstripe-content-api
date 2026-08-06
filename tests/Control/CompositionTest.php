@@ -33,6 +33,12 @@ class CompositionTest extends ContentApiTestCase
         $this->adminToken = $this->mintTokenFor('adminUser');
 
         Config::modify()->set(SiteTree::class, 'api_access', 'read,update');
+
+        // See tearDown() — reset on both sides of the test so a prior
+        // test's leftover cache entry (this cache is keyed only by page
+        // class name, regardless of which test file touched it) can never
+        // leak in, not just so this test doesn't leak one out.
+        ElementalAreasExtension::reset();
     }
 
     protected function tearDown(): void
@@ -726,5 +732,54 @@ class CompositionTest extends ContentApiTestCase
 
         $this->assertNull($body['error']);
         $this->assertSame(['created'], array_column($body['data']['elements'], 'status'));
+    }
+
+    /**
+     * #64 review follow-up: `getElementalTypes()` (the CMS "add element"
+     * picker, `moveTo()`) only ever gates a NEW placement — it has no
+     * equivalent for "keep editing an element already on the page". A
+     * plain re-POST of an already-composed element must keep succeeding
+     * even after the page's config narrows to newly disallow that
+     * element's type, or this module's own re-POST idempotency guarantee
+     * (`schema/endpoints.json`) breaks the moment any page's Elemental
+     * config changes.
+     */
+    public function testEditingAnAlreadyPlacedElementSucceedsEvenAfterItsTypeBecomesDisallowed(): void
+    {
+        $page = $this->blockPage();
+
+        $create = $this->decode($this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'edit-after-disallow',
+                    'fields' => ['Title' => 'Created while allowed'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame(['created'], array_column($create['data']['elements'], 'status'));
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $edit = $this->decode($this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'edit-after-disallow',
+                    'fields' => ['Title' => 'Edited after disallow'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($edit['error']);
+        $this->assertSame(['updated'], array_column($edit['data']['elements'], 'status'));
+        $this->assertSame(
+            'Edited after disallow',
+            ApiTestElement::get()->filter('FixtureIdentifier', 'edit-after-disallow')->first()->Title
+        );
     }
 }

@@ -7,16 +7,27 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
-  enforced on every write path, not just the CMS admin's "add element" picker. A composition,
-  batch, or generic upsert/update that attaches a `BaseElement` to an `ElementalArea` whose owning
-  page doesn't permit that element class is rejected with the new `ELEMENT_NOT_ALLOWED_ON_PAGE`
-  (422) error, listing the page's actual allowed types. New
-  `Dynamic\ContentApi\Registry\ElementPlacementPolicy` delegates entirely to
+  enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
+  `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is
+  rejected with the new `ELEMENT_NOT_ALLOWED_ON_PAGE` (422) error, listing the page's actual
+  allowed types. New `Dynamic\ContentApi\Registry\ElementPlacementPolicy` delegates entirely to
   `ElementalAreasExtension::getElementalTypes()` (the CMS's own canonical check) rather than
   reading the config directly, so `stop_element_inheritance`, per-element `canCreate()`, and the
-  `updateAvailableTypesForClass` hook all keep working exactly as they do in the CMS. Enforced once,
-  in `RecordWriter::write()`, since composition and batch/upsert both funnel through it. See
-  [docs/en/12_error-codes.md](docs/en/12_error-codes.md).
+  `updateAvailableTypesForClass` hook all keep working exactly as they do in the CMS. Enforced
+  once, in `RecordWriter::write()`, since composition and batch/upsert/update all funnel through
+  it — and only when placement actually changes, so a plain content edit to an already-existing
+  element never gets caught out by a later config change (this module's own re-POST idempotency
+  guarantee depends on that). A page's own `ElementalArea`-type has_one FK is no longer directly
+  client-writable at all (`WriteApplicator`), closing the side door this check would otherwise
+  have left open: repointing a restricted page's area onto a different, already-populated area
+  without any of *that* area's elements passing through the new check.
+  **Known gaps, not covered by this change** (tracked as follow-up issues): the colymba `/api`
+  generic write surface (`WriteGuardExtension`) never routes through `RecordWriter` and so isn't
+  checked at all; attaching an existing element via `ElementalArea.Elements`
+  `api_writable_relations` (`WriteApplicator::applyRelations()`) is the same — neither is a
+  regression introduced here, both are pre-existing gaps in how those surfaces relate to this
+  module's write pipeline. See [docs/en/12_error-codes.md](docs/en/12_error-codes.md) and
+  [docs/en/08_page-compositions.md](docs/en/08_page-compositions.md).
 - **(#76)** `Dynamic\ContentApi\Security\ContentApiGrantExtension`: grants record-level
   `canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any Member holding
   `CONTENT_API_ACCESS`, so a service account can create/move/reparent/publish/archive records

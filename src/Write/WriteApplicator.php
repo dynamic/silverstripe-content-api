@@ -201,6 +201,38 @@ class WriteApplicator
             };
             $columnName = $isHasOne ? $name . 'ID' : $name;
 
+            // An `ElementalArea`-type has_one FK is never directly
+            // client-writable, on any class other than the `BaseElement`
+            // itself whose own "Parent" relation this points at — the
+            // framework auto-provisions this FK (`ElementalAreasExtension::
+            // onBeforeWrite()`), and a client repointing e.g. a page's own
+            // area FK onto a different, already-populated area would relink
+            // that area's whole existing element tree without any of those
+            // elements individually passing `ElementPlacementPolicy` (#64) —
+            // `RecordWriter::assertElementPlacementAllowed()` only ever
+            // inspects the record actually being written, not an area's
+            // pre-existing contents. Unconditional (not gated on $trusted):
+            // no in-process caller needs this either — `CompositionService::
+            // resolveArea()` sets this FK via `setField()` directly, bypassing
+            // `applyFields()` entirely.
+            if (
+                $relationName !== null
+                && !is_a($record, 'DNADesign\\Elemental\\Models\\BaseElement')
+                && class_exists('DNADesign\\Elemental\\Models\\ElementalArea')
+                && is_a((string) ($hasOne[$relationName] ?? ''), 'DNADesign\\Elemental\\Models\\ElementalArea', true)
+            ) {
+                $problems[] = [
+                    'field' => $name,
+                    'code' => ErrorCode::READONLY_FIELD->value,
+                    'message' => sprintf(
+                        'Field "%s" is not writable via the content API — an Elemental area is managed'
+                            . ' automatically, never repointed directly.',
+                        $name
+                    ),
+                ];
+                continue;
+            }
+
             if (!$this->isFieldWritable($className, $columnName, $relationName, $trusted)) {
                 $problems[] = [
                     'field' => $name,

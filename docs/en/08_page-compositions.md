@@ -76,7 +76,14 @@ getElementalTypes()`, the same check the CMS admin's own "add element" picker us
 here too, not just in the CMS. An element type the page doesn't permit is `422
 ELEMENT_NOT_ALLOWED_ON_PAGE`, with the message listing the page's actual allowed types. This is
 enforced once, in `RecordWriter`, so it applies identically whether the element arrives via
-composition or a plain batch/upsert `ParentID` write (#64).
+composition or a plain batch/upsert/update `ParentID` write — and only when placement actually
+changes: re-POSTing the same already-composed element after its type becomes disallowed still
+succeeds as a plain edit, matching Elemental's own gate (which has no equivalent for "keep
+editing existing content," only for a new placement) (#64). Not covered by this check at all: the
+colymba `/api` generic write surface, and attaching an existing element via
+`ElementalArea.Elements` if a project opts that relation into `api_writable_relations` — both are
+pre-existing gaps in how those surfaces relate to this module's write pipeline, tracked
+separately.
 
 ### `$ref` resolution
 

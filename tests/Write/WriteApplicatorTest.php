@@ -2,7 +2,11 @@
 
 namespace Dynamic\ContentApi\Tests\Write;
 
+use Dynamic\ContentApi\Errors\ApiError;
+use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyCollidingDbFieldObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
@@ -184,5 +188,51 @@ class WriteApplicatorTest extends SapphireTest
                 $hasOne
             )
         );
+    }
+
+    /**
+     * #64 review follow-up: an `ElementalArea`-type has_one FK (e.g. a
+     * page's own "ElementalArea" relation) must never be directly
+     * client-writable — the framework auto-provisions it
+     * (`ElementalAreasExtension::onBeforeWrite()`), and a client repointing
+     * it onto a different, already-populated area would relink that area's
+     * whole existing element tree onto this record without any of those
+     * elements passing `RecordWriter::assertElementPlacementAllowed()`,
+     * which only ever inspects the record actually being written.
+     */
+    public function testElementalAreaTypedHasOneIsNeverDirectlyWritable(): void
+    {
+        if (!class_exists('DNADesign\\Elemental\\Models\\ElementalArea')) {
+            $this->markTestSkipped('elemental not installed');
+        }
+
+        $applicator = WriteApplicator::create();
+        $page = ApiTestBlockPage::create(['Title' => 'Reparent attempt']);
+
+        try {
+            $applicator->applyFields($page, ['ElementalArea' => 999], []);
+            $this->fail('Expected an ApiError for a direct ElementalArea FK write.');
+        } catch (ApiError $error) {
+            $this->assertSame(ErrorCode::READONLY_FIELD, $error->getErrorCode());
+        }
+    }
+
+    /**
+     * The guard above must not catch a `BaseElement`'s own "Parent" has_one
+     * to its `ElementalArea` — that FK is exactly the placement this
+     * module's #64 enforcement is built to check, not to block outright.
+     */
+    public function testABaseElementsOwnParentRelationIsExemptFromTheElementalAreaGuard(): void
+    {
+        if (!class_exists('DNADesign\\Elemental\\Models\\ElementalArea')) {
+            $this->markTestSkipped('elemental not installed');
+        }
+
+        $applicator = WriteApplicator::create();
+        $element = ApiTestElement::create(['Title' => 'Attach attempt']);
+
+        $applicator->applyFields($element, ['Parent' => 999], []);
+
+        $this->assertSame(999, (int) $element->ParentID);
     }
 }
