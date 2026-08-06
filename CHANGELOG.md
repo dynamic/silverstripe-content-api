@@ -249,11 +249,16 @@ the two branches.
   kept as thin `run($request)` adapters instead of ~180 lines of duplicated inline logic each.
   `TaskResultRenderer` (branch `1`'s Symfony `Command`/`PolyOutput` rendering glue) is SS6-only and
   not present here — these adapters `echo` `TaskResult::$lines` directly instead. The two wording
-  changes #65's shared entry above describes now apply on this branch too. Their previously
-  monolithic tests split the same way branch `1`'s did: behavioral coverage (group creation,
-  idempotence, healing, duplicate-title refusal, validation) moved to the branch-neutral
+  changes #65's shared entry above describes now apply on this branch too, with one further
+  translation on top: `ApiTokenMinter`/`ServiceAccountProvisioner`'s own message text names
+  branch `1`'s SS6 `--flag` syntax (`--email`, `--group`) since the two services are shared —
+  each adapter here rewrites that to this branch's `key=value` syntax before it reaches the
+  operator, so a `sake dev/tasks/` user is never told to pass a flag this branch's
+  `run($request)` entry point doesn't accept. Their previously monolithic tests split the same
+  way branch `1`'s did: behavioral coverage (group creation, idempotence, healing,
+  duplicate-title refusal, validation) moved to the branch-neutral
   `tests/Tasks/Support/ServiceAccountProvisionerTest.php`; `tests/Tasks/*TaskTest.php` now cover
-  only the `run($request)` adapter's own request-var parsing and output.
+  only the `run($request)` adapter's own request-var parsing, syntax translation, and output.
 
 ### Docs
 - **(#76)** Ported the `04_security-model.md` class-level-gate correction above, plus one
@@ -277,7 +282,10 @@ the two branches.
   allowed to permanently differ — it previously covered only composer constraints, task
   entry-point signatures, and requirement statements; now also names PHP-floor-dependent type
   declarations (`?bool` here vs `true|null` on branch `1`, since standalone `true` as a type needs
-  PHP 8.2+) and SS6-only task-rendering glue (`TaskResultRenderer`) being absent here.
+  PHP 8.2+) and SS6-only task-rendering glue (`TaskResultRenderer`) being absent here. Also
+  corrected `Tasks/Support/ApiTokenMinter`/`ServiceAccountProvisioner`'s class docblocks, which
+  still described `ss5`'s adapters as carrying inline logic "pending a follow-up port" — stale as
+  of this merge; the same correction is needed on branch `1`'s copies, tracked as a follow-up.
 
 ## [1.4.0] - 2026-07-17
 

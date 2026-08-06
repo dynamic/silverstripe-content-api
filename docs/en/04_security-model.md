@@ -123,14 +123,6 @@ override at all — only a deprecated `canArchive()` whose own docblock says to 
 instead on the version branch `1` depends on). A class declaring only `delete` on this branch can
 archive both a draft-only record and an already-published one.
 
-`CONTENT_API_ACCESS` alone satisfies only the class-level gate below — it grants nothing at the
-record level. Without an app-level `canView()`/`canEdit()`/`canCreate()`/`canDelete()` grant, a
-plain `CONTENT_API_ACCESS` holder still fails every write with `FORBIDDEN_RECORD`, since a
-model's own `can*()` methods fall through to real CMS-login permissions (`ADMIN`,
-`SITETREE_EDIT_ALL`, ...) that account was never meant to hold. See
-[Grant extension](#grant-extension) below — the module ships one so projects don't have to write
-it themselves.
-
 ## Class-level gate
 
 `PermissionPolicy::checkClassAccess()` requires `CONTENT_API_ACCESS` **and** that the class

@@ -141,8 +141,11 @@ conflicts on the next sync). The two branches are allowed to differ only in:
 - composer constraints (framework/cms/PHP versions, the colymba branch + patch)
 - task entry-point signatures (`ss5`'s `src/Tasks/*.php` use SS5's legacy
   `BuildTask::run($request)`; `1` uses SS6's `execute(InputInterface, PolyOutput): int` — each
-  file carries a docblock noting the other branch's copy must be hand-ported; the branch-neutral
-  business logic behind both lives in `Tasks/Support/`, kept byte-identical across branches)
+  file carries a docblock noting the other branch's copy must be hand-ported. The branch-neutral
+  business logic behind both lives in `Tasks/Support/`, kept behaviorally identical across
+  branches — `TaskResult`/`TaskStatus` are byte-identical; `ApiTokenMinter`/
+  `ServiceAccountProvisioner`'s class docblocks may legitimately differ in wording where they
+  describe each branch's own adapter, but their code and returned messages must not)
 - requirement statements in this README and `docs/en/00_installation.md`
 - PHP-floor-dependent type declarations (e.g. `Security/ContentApiGrantExtension.php`'s `?bool`
   here vs `true|null` on branch `1` — standalone `true` as a return type needs PHP 8.2+, and this

@@ -43,7 +43,10 @@ class SetupServiceAccountTask extends BuildTask
         $result = ServiceAccountProvisioner::create()->provision($title, $populate);
 
         foreach ($result->lines as $line) {
-            echo $line . "\n";
+            // ServiceAccountProvisioner is shared with branch `1`'s SS6 --flag-based
+            // adapter, so its own message text uses that syntax — translate to this
+            // branch's `key=value` request-var syntax before it reaches the operator.
+            echo str_replace('--group', 'group', $line) . "\n";
         }
 
         if ($result->status === TaskStatus::Success) {

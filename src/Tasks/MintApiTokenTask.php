@@ -31,7 +31,10 @@ class MintApiTokenTask extends BuildTask
         $result = ApiTokenMinter::create()->mint((string) $request->getVar('email'));
 
         foreach ($result->lines as $line) {
-            echo $line . "\n";
+            // ApiTokenMinter is shared with branch `1`'s SS6 --flag-based adapter, so
+            // its own message text uses that syntax — translate to this branch's
+            // `key=value` request-var syntax before it reaches the operator.
+            echo str_replace('--email', 'email', $line) . "\n";
         }
     }
 }

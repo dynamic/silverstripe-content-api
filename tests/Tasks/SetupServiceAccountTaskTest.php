@@ -40,9 +40,9 @@ class SetupServiceAccountTaskTest extends SapphireTest
      * Presence-based, not value-based — matches the old VALUE_NONE
      * `--populate` flag's semantics (there was no way to pass "false" to
      * it either). A plain PHP truthy check on the raw request var would
-     * otherwise treat `populate=false` or `populate=no` as NOT granting it,
-     * the opposite of every other `sake dev/tasks/` flag's convention on
-     * this branch.
+     * otherwise treat `populate=false` or `populate=no` as granting it,
+     * since both non-empty strings are truthy — the opposite of what an
+     * operator typing `populate=false` would expect.
      */
     public function testPopulateVarIsPresenceBasedNotTruthyBased(): void
     {
@@ -67,6 +67,34 @@ class SetupServiceAccountTaskTest extends SapphireTest
             'Mint a token: sake dev/tasks/MintContentApiToken email=<member-email>',
             $output
         );
+    }
+
+    /**
+     * The "Mint a token" hint is adapter-owned (gated on `TaskStatus::Success`
+     * in `SetupServiceAccountTask::run()` itself, not inside `TaskResult::$lines`),
+     * so it has no coverage from `ServiceAccountProvisionerTest` — confirm it's
+     * actually suppressed on a rejected request, not just present on success.
+     */
+    public function testMintTokenHintIsSuppressedOnFailure(): void
+    {
+        $output = $this->runTask(['group' => '']);
+
+        $this->assertStringNotContainsString('Mint a token', $output);
+    }
+
+    /**
+     * ServiceAccountProvisioner's own message text uses branch `1`'s SS6
+     * --flag syntax (`--group`) since it's shared between both branches —
+     * this adapter translates it to this branch's `key=value` syntax before
+     * it reaches the operator, so an SS5 user is never told to pass a flag
+     * that this branch's `run($request)` entry point doesn't accept.
+     */
+    public function testEmptyGroupRejectionUsesThisBranchsSyntax(): void
+    {
+        $output = $this->runTask(['group' => '']);
+
+        $this->assertStringContainsString('group cannot be empty.', $output);
+        $this->assertStringNotContainsString('--group', $output);
     }
 
     protected function runTask(array $vars): string

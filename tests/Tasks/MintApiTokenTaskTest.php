@@ -33,11 +33,19 @@ class MintApiTokenTaskTest extends SapphireTest
         $this->assertNotEmpty($member->ApiToken);
     }
 
+    /**
+     * ApiTokenMinter's own message text uses branch `1`'s SS6 --flag syntax
+     * (`--email`) since it's shared between both branches — this adapter
+     * translates it to this branch's `key=value` syntax before it reaches
+     * the operator, so an SS5 user is never told to pass a flag that this
+     * branch's `run($request)` entry point doesn't accept.
+     */
     public function testMissingEmailIsReported(): void
     {
         $output = $this->runTask([]);
 
-        $this->assertStringContainsString('Missing required option', $output);
+        $this->assertStringContainsString('Missing required option: email', $output);
+        $this->assertStringNotContainsString('--email', $output);
     }
 
     public function testUnknownEmailIsReported(): void
