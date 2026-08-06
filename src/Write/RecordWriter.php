@@ -96,7 +96,7 @@ class RecordWriter
             $this->policy->checkClassAccess($className, 'update', $member);
             $this->policy->checkRecordAccess($existing, 'update', $member);
 
-            return $this->write($existing, $payload, 'updated', $internalFields);
+            return $this->write($existing, $payload, 'updated', $member, $internalFields);
         }
 
         $this->policy->checkClassAccess($className, 'create', $member);
@@ -119,7 +119,7 @@ class RecordWriter
             $record->setField($this->externalIds->fieldName(), $externalId);
         }
 
-        return $this->write($record, $payload, 'created', $internalFields);
+        return $this->write($record, $payload, 'created', $member, $internalFields);
     }
 
     /**
@@ -141,7 +141,7 @@ class RecordWriter
             $record->setField($this->externalIds->fieldName(), (string) $payload['externalId']);
         }
 
-        return $this->write($record, $payload, 'updated', $internalFields);
+        return $this->write($record, $payload, 'updated', $member, $internalFields);
     }
 
     /**
@@ -179,8 +179,13 @@ class RecordWriter
      *
      * @return array{record: DataObject, operation: string, warnings: array}
      */
-    protected function write(DataObject $record, array $payload, string $operation, array $internalFields = []): array
-    {
+    protected function write(
+        DataObject $record,
+        array $payload,
+        string $operation,
+        Member $member,
+        array $internalFields = []
+    ): array {
         $fields = (array) ($payload['fields'] ?? []);
         $relations = (array) ($payload['relations'] ?? []);
         $publishMode = (string) ($payload['publish'] ?? 'none');
@@ -198,16 +203,24 @@ class RecordWriter
         $this->applicator->applyFields($record, $fields, $internalFields);
         $this->assertElementPlacementAllowed($record, $priorParentID);
 
-        // The DB write and any relation writes it enables (has_one FK
-        // repoints, has_many/many_many attaches) must land or fail together —
-        // a relation that resolves to NOT_FOUND after the record itself is
-        // already persisted would otherwise leave a half-written draft record
-        // behind while the operation reports "error", corrupting a batch's
-        // retry-failed-indices contract (a retry could double-create).
+        // The DB write, any relation writes it enables (has_one FK repoints,
+        // has_many/many_many attaches — a relation that resolves to
+        // NOT_FOUND after the record itself is already persisted would
+        // otherwise leave a half-written draft record behind while the
+        // operation reports "error", corrupting a batch's
+        // retry-failed-indices contract), and the publish step all land or
+        // fail together. Publish is in the same transaction specifically
+        // for mode: "subtree" (#90): its authorization check runs against
+        // every descendant before anything publishes, but without this the
+        // field write would already have committed by the time that check
+        // fails — a descendant permission gap would leave the field write
+        // standing while the operation reports "error", the same
+        // half-landed-but-reported-as-failed shape as the relation case.
         try {
-            DbTransaction::run(function () use ($record, $relations) {
+            DbTransaction::run(function () use ($record, $relations, $publishMode, $member) {
                 $record->write();
                 $this->applicator->applyRelations($record, $relations);
+                $this->publisher->publish($record, $publishMode, $member);
             });
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception);
@@ -228,8 +241,6 @@ class RecordWriter
                 'field' => 'URLSegment',
             ];
         }
-
-        $this->publisher->publish($record, $publishMode);
 
         return [
             'record' => $record,
