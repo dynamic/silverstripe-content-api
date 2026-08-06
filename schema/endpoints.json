@@ -1,6 +1,6 @@
 {
   "$comment": "MCP-style tool definitions for every content API endpoint. dynamic/silverstripe-content-api-mcp maps one tool per entry onto the REST endpoint, injecting the X-Silverstripe-Apitoken header. Class payload contracts are discovered at runtime via the schema_class tool.",
-  "version": "v1.7",
+  "version": "v1.8",
   "baseRoute": "content-api/v1",
   "tools": [
     {
@@ -117,7 +117,7 @@
     },
     {
       "name": "content_records_stage",
-      "description": "Publish, unpublish or archive a record. Response reports resulting draft/live state. unpublish refuses (409 UNPUBLISH_STRANDS_DESCENDANTS) if the record has any live Hierarchy descendants; archive refuses if it has any in either stage (SiteTree.enforce_strict_hierarchy cascades a delete to every current child in the stage(s) being deleted from) — move/publish them elsewhere first, or pass force to proceed anyway and accept the loss.",
+      "description": "Publish, unpublish or archive a record. Response reports resulting draft/live state. unpublish refuses (409 UNPUBLISH_STRANDS_DESCENDANTS) if the record has any live Hierarchy descendants; archive refuses if it has any in either stage (SiteTree.enforce_strict_hierarchy cascades a delete to every current child in the stage(s) being deleted from) — move/publish them elsewhere first, or pass force to proceed anyway and accept the loss. mode=subtree authorization-checks every descendant it would touch before writing anything (403 FORBIDDEN_CLASS/FORBIDDEN_RECORD on the first one the caller can't publish, nothing written on refusal); pass liveOnly=true to skip a descendant branch entirely (no publish, no recursing into it) when it isn't already live, or dryRun=true to preview the would-publish set (same authorization checks, no writes) instead of the normal response. liveOnly/dryRun are 400 PAYLOAD_INVALID on any mode other than subtree. A real (non-dryRun) subtree call keeps the normal response but adds meta.published: the same [{id, className}, ...] list dryRun previews, so a liveOnly call still reports what was actually touched.",
       "method": "POST",
       "path": "records/{classRef}/{id}/{action}",
       "inputSchema": {
@@ -155,6 +155,16 @@
             "type": "boolean",
             "default": false,
             "description": "unpublish/archive only: bypass the descendant-cascade guard"
+          },
+          "liveOnly": {
+            "type": "boolean",
+            "default": false,
+            "description": "mode=subtree only, 400 PAYLOAD_INVALID otherwise: skip a descendant branch entirely (no publish, no recursing into its own children) when it isn't already live — prevents resurrecting a page deliberately taken offline just because a live ancestor is being restructured"
+          },
+          "dryRun": {
+            "type": "boolean",
+            "default": false,
+            "description": "mode=subtree only, 400 PAYLOAD_INVALID otherwise: run the full authorization-checked walk and return the would-publish set without writing anything"
           }
         },
         "required": [

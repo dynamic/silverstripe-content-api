@@ -221,4 +221,124 @@ class RecordActionsTest extends ContentApiTestCase
                 'fall back to single'
         );
     }
+
+    /**
+     * A real (non-dryRun) subtree call must report what it actually
+     * published — meta.published lists what was touched, not what was
+     * skipped (there is no separate skipped list; a liveOnly-skipped
+     * descendant simply never appears). Without this, a caller had no way
+     * to confirm what a real liveOnly run actually did short of a
+     * separate dryRun call beforehand, which isn't atomic with the real
+     * one (#102). Found via /review-pr on #113.
+     */
+    public function testRealSubtreePublishReportsWhatWasActuallyPublished(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $root = ApiTestPage::create(['Title' => 'Subtree Meta Root']);
+        $root->write();
+        $root->publishRecursive();
+
+        $offline = ApiTestPage::create(['Title' => 'Subtree Meta Offline', 'ParentID' => $root->ID]);
+        $offline->write();
+        $offline->publishRecursive();
+        $offline->doUnpublish();
+
+        $stillLive = ApiTestPage::create(['Title' => 'Subtree Meta Still Live', 'ParentID' => $root->ID]);
+        $stillLive->write();
+        $stillLive->publishRecursive();
+
+        $response = $this->decode($this->apiPost(
+            "records/ApiTestPage/{$root->ID}/publish",
+            ['mode' => 'subtree', 'liveOnly' => true],
+            $token
+        ));
+
+        $this->assertSame('published', $response['meta']['operation']);
+        $publishedIDs = array_column($response['meta']['published'], 'id');
+        $this->assertContains((int) $root->ID, $publishedIDs);
+        $this->assertContains((int) $stillLive->ID, $publishedIDs);
+        $this->assertNotContains(
+            (int) $offline->ID,
+            $publishedIDs,
+            'liveOnly must not publish a deliberately-offline descendant, so it must not appear in meta.published'
+        );
+
+        // The normal serialized-record response is still the primary
+        // payload — meta.published is additive, not a replacement.
+        $this->assertSame((int) $root->ID, $response['data']['id']);
+    }
+
+    /**
+     * dryRun/liveOnly silently no-op-ing on a non-subtree mode would let a
+     * caller send {"dryRun": true} (or omit "mode" entirely, which
+     * defaults to "single") and get a REAL write while the response reads
+     * like nothing happened. Must refuse instead. Found via /review-pr on
+     * #113.
+     */
+    public function testDryRunOnANonSubtreeModeIsRejectedNotSilentlyIgnored(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $page = ApiTestPage::create(['Title' => 'DryRun Wrong Mode']);
+        $page->write();
+
+        // No "mode" key at all — publishModeFromBody() defaults to
+        // "single", the exact case that silently wrote for real before
+        // this fix.
+        $response = $this->apiPost("records/ApiTestPage/{$page->ID}/publish", ['dryRun' => true], $token);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        $this->assertFalse(
+            Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $page->ID)->exists(),
+            'a refused dryRun request must not have published the record'
+        );
+    }
+
+    public function testLiveOnlyOnAnExplicitNonSubtreeModeIsAlsoRejected(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $page = ApiTestPage::create(['Title' => 'LiveOnly Wrong Mode']);
+        $page->write();
+
+        $response = $this->apiPost(
+            "records/ApiTestPage/{$page->ID}/publish",
+            ['mode' => 'recursive', 'liveOnly' => true],
+            $token
+        );
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        $this->assertFalse(
+            Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $page->ID)->exists()
+        );
+    }
+
+    public function testSubtreeDryRunViaHttpReturnsThePreviewEnvelopeWithoutWriting(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $root = ApiTestPage::create(['Title' => 'DryRun Envelope Root']);
+        $root->write();
+
+        $child = ApiTestPage::create(['Title' => 'DryRun Envelope Child', 'ParentID' => $root->ID]);
+        $child->write();
+
+        $response = $this->decode($this->apiPost(
+            "records/ApiTestPage/{$root->ID}/publish",
+            ['mode' => 'subtree', 'dryRun' => true],
+            $token
+        ));
+
+        $this->assertSame('publishDryRun', $response['meta']['operation']);
+        $this->assertSame('subtree', $response['meta']['mode']);
+        $previewedIDs = array_column($response['data']['wouldPublish'], 'id');
+        $this->assertContains((int) $root->ID, $previewedIDs);
+        $this->assertContains((int) $child->ID, $previewedIDs);
+
+        $this->assertFalse(
+            Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $root->ID)->exists(),
+            'dryRun must never write, over HTTP any more than at the orchestrator level'
+        );
+    }
 }

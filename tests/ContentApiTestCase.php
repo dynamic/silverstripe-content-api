@@ -29,6 +29,8 @@ use SilverStripe\Security\Member;
  */
 abstract class ContentApiTestCase extends FunctionalTest
 {
+    use ResetsElementalTypesCacheTrait;
+
     // Resolved relative to the concrete test class (tests/Control/).
     protected static $fixture_file = '../fixtures/api-test.yml';
 

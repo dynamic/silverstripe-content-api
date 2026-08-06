@@ -8,7 +8,7 @@ parameters:
   ignoreErrors:
     # Versioned decorates DataObject with magic methods; call sites are guarded
     # by hasExtension(Versioned::class) checks PHPStan cannot narrow on.
-    - message: '#Call to an undefined method SilverStripe\\ORM\\DataObject::(isPublished|stagesDiffer|publishSingle|publishRecursive|doUnpublish|doArchive)\(\)#'
+    - message: '#Call to an undefined method SilverStripe\\ORM\\DataObject::(isPublished|stagesDiffer|publishSingle|publishRecursive|doUnpublish|doArchive|AllChildren)\(\)#'
       identifier: method.notFound
 
     # $dependencies is read by the SilverStripe Injector via config, not PHP.
