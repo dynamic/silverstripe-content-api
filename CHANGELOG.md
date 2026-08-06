@@ -5,6 +5,18 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **(#105)** This branch (`2`, SS6) had never been swept for stale self-references after the
+  2026-08 branch rename (`1`->`2` SS6, `ss5`->`1` SS5 — #106): several docblocks and one doc table
+  still described this branch's own SS6 code as living on "branch `1`" (its name *before* the
+  rename, now the SS5 line) or referred to the SS5 line by its old name `ss5`. Also updated two
+  docblocks/comments describing a follow-up port to `ServiceAccountProvisioner`/`ApiTokenMinter`
+  as still pending — that port landed on the SS5 line in #96/#104. Added
+  `scripts/check-doc-drift.sh` (mirroring the SS5 line's own, added in #96) and wired it into
+  `.local-ci.json` so this doesn't happen again: it catches SS5-era requirement/constraint text or
+  `sake dev/tasks/` invocation syntax leaking onto this branch, plus the specific self-contradiction
+  this fix cleans up (SS6 content attributed to branch `1`).
+
 ### Added
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
   enforced on composition and batch/upsert/update — a request that newly places (or re-places) a

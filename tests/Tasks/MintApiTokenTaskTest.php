@@ -11,7 +11,7 @@ use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputDefinition;
 
 /**
- * Adapter-only coverage for branch `1`'s SS6 entry point: option parsing and
+ * Adapter-only coverage for branch `2`'s (this branch's) SS6 entry point: option parsing and
  * exit-code mapping. The minting business logic is exercised once,
  * branch-neutrally, in `Tasks/Support/ApiTokenMinterTest` — see #65. This
  * task previously had no test coverage at all, before or after the #65
