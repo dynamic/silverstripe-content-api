@@ -11,7 +11,6 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestLink;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Write\Transformers\LinkTransformer;
-use DNADesign\Elemental\Extensions\ElementalAreasExtension;
 use DNADesign\Elemental\Models\ElementContent;
 use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\CMS\Model\SiteTree;
@@ -38,7 +37,7 @@ class CompositionTest extends ContentApiTestCase
         // test's leftover cache entry (this cache is keyed only by page
         // class name, regardless of which test file touched it) can never
         // leak in, not just so this test doesn't leak one out.
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
     }
 
     protected function tearDown(): void
@@ -50,7 +49,7 @@ class CompositionTest extends ContentApiTestCase
         // end of the test doesn't touch it, so a disallowed_elements test
         // that doesn't reset this here would leak a stale (or fresh but
         // now-wrong) allow-list into whichever test runs next.
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         parent::tearDown();
     }
@@ -685,7 +684,7 @@ class CompositionTest extends ContentApiTestCase
         $page = $this->blockPage();
 
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $response = $this->apiPost('compositions/page', [
             'page' => ['match' => ['id' => (int) $page->ID]],
@@ -715,7 +714,7 @@ class CompositionTest extends ContentApiTestCase
         $page = $this->blockPage();
 
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $response = $this->apiPost('compositions/page', [
             'page' => ['match' => ['id' => (int) $page->ID]],
@@ -762,7 +761,7 @@ class CompositionTest extends ContentApiTestCase
         $this->assertSame(['created'], array_column($create['data']['elements'], 'status'));
 
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $edit = $this->decode($this->apiPost('compositions/page', [
             'page' => ['match' => ['id' => (int) $page->ID]],

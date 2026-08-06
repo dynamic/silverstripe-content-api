@@ -16,7 +16,6 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
-use DNADesign\Elemental\Extensions\ElementalAreasExtension;
 use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
@@ -36,7 +35,7 @@ class BatchTest extends ContentApiTestCase
         // leftover cache entry (this class caches per page class name
         // regardless of which test file touched it) can never leak in, not
         // just so this test doesn't leak one out.
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
     }
 
     protected function tearDown(): void
@@ -44,7 +43,7 @@ class BatchTest extends ContentApiTestCase
         // ElementalAreasExtension::getElementalTypes() caches per page class
         // name in a static that Config::modify()'s automatic rollback
         // doesn't touch.
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         parent::tearDown();
     }
@@ -1105,7 +1104,7 @@ class BatchTest extends ContentApiTestCase
         $area = $this->createBlockPageWithArea('Batch Disallowed Target');
 
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $body = $this->decode($this->apiPost('batch', [
             'operations' => [
@@ -1141,7 +1140,7 @@ class BatchTest extends ContentApiTestCase
             'disallowed_elements',
             ['DNADesign\\Elemental\\Models\\ElementContent']
         );
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $body = $this->decode($this->apiPost('batch', [
             'operations' => [
@@ -1181,7 +1180,7 @@ class BatchTest extends ContentApiTestCase
         $elementId = (int) $created['data']['results'][0]['id'];
 
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $updated = $this->decode($this->apiPost('batch', [
             'operations' => [
@@ -1226,7 +1225,7 @@ class BatchTest extends ContentApiTestCase
         // placement is pre-existing and unchanged, and the fix under test
         // is precisely that an unchanged placement is never re-checked.
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
-        ElementalAreasExtension::reset();
+        static::resetElementalTypesCache();
 
         $reparented = $this->decode($this->apiPost('batch', [
             'operations' => [
