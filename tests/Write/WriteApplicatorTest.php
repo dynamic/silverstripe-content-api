@@ -195,10 +195,18 @@ class WriteApplicatorTest extends SapphireTest
      * page's own "ElementalArea" relation) must never be directly
      * client-writable — the framework auto-provisions it
      * (`ElementalAreasExtension::onBeforeWrite()`), and a client repointing
-     * it onto a different, already-populated area would relink that area's
-     * whole existing element tree onto this record without any of those
-     * elements passing `RecordWriter::assertElementPlacementAllowed()`,
-     * which only ever inspects the record actually being written.
+     * it onto a different, already-populated area would relink that
+     * area's whole existing element tree onto this record without any of
+     * those elements passing `RecordWriter::
+     * assertElementPlacementAllowed()`, which only ever inspects the
+     * record actually being written. Asserted directly against
+     * `isFieldWritable()` (not just via the `READONLY_FIELD` code an
+     * ordinary allowlist rejection would also produce) so this doesn't
+     * pass for the wrong reason if `ApiTestBlockPage` ever gains its own
+     * `api_writable_fields`. Also unwritable when `$trusted` — no
+     * in-process caller needs this either; `CompositionService::
+     * resolveArea()` sets this FK via `setField()` directly, bypassing
+     * `isFieldWritable()` entirely.
      */
     public function testElementalAreaTypedHasOneIsNeverDirectlyWritable(): void
     {
@@ -207,20 +215,45 @@ class WriteApplicatorTest extends SapphireTest
         }
 
         $applicator = WriteApplicator::create();
-        $page = ApiTestBlockPage::create(['Title' => 'Reparent attempt']);
+
+        $this->assertFalse($applicator->isFieldWritable(ApiTestBlockPage::class, 'ElementalAreaID', 'ElementalArea'));
+        $this->assertFalse(
+            $applicator->isFieldWritable(ApiTestBlockPage::class, 'ElementalAreaID', 'ElementalArea', true)
+        );
+    }
+
+    /**
+     * The bare FK-column key form (`ElementalAreaID` rather than the
+     * relation name `ElementalArea`) must be rejected too, end to end
+     * through `applyFields()` — it takes a different `$relationName`
+     * derivation branch than the relation-name form the unit test above
+     * exercises directly.
+     */
+    public function testElementalAreaFkColumnFormIsAlsoRejectedThroughApplyFields(): void
+    {
+        if (!class_exists('DNADesign\\Elemental\\Models\\ElementalArea')) {
+            $this->markTestSkipped('elemental not installed');
+        }
+
+        $applicator = WriteApplicator::create();
+        $page = ApiTestBlockPage::create(['Title' => 'FK column reparent attempt']);
 
         try {
-            $applicator->applyFields($page, ['ElementalArea' => 999], []);
-            $this->fail('Expected an ApiError for a direct ElementalArea FK write.');
+            $applicator->applyFields($page, ['ElementalAreaID' => 999], []);
+            $this->fail('Expected an ApiError for a direct ElementalAreaID FK write.');
         } catch (ApiError $error) {
             $this->assertSame(ErrorCode::READONLY_FIELD, $error->getErrorCode());
         }
     }
 
     /**
-     * The guard above must not catch a `BaseElement`'s own "Parent" has_one
-     * to its `ElementalArea` — that FK is exactly the placement this
-     * module's #64 enforcement is built to check, not to block outright.
+     * The guard above must not catch a `BaseElement`'s own "Parent"
+     * has_one to its `ElementalArea` — that FK is exactly the placement
+     * this module's #64 enforcement is built to check, not to block
+     * outright. A SECOND `ElementalArea`-typed has_one on an element
+     * subclass (e.g. a nested-area pattern) is deliberately NOT exempt —
+     * only "Parent" is, matching the one relation
+     * `assertElementPlacementAllowed()` actually inspects.
      */
     public function testABaseElementsOwnParentRelationIsExemptFromTheElementalAreaGuard(): void
     {
@@ -229,10 +262,11 @@ class WriteApplicatorTest extends SapphireTest
         }
 
         $applicator = WriteApplicator::create();
+
+        $this->assertTrue($applicator->isFieldWritable(ApiTestElement::class, 'ParentID', 'Parent'));
+
         $element = ApiTestElement::create(['Title' => 'Attach attempt']);
-
         $applicator->applyFields($element, ['Parent' => 999], []);
-
         $this->assertSame(999, (int) $element->ParentID);
     }
 }

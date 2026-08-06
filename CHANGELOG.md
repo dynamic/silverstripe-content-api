@@ -17,14 +17,19 @@ All notable changes to this project are documented here. Format loosely follows
   once, in `RecordWriter::write()`, since composition and batch/upsert/update all funnel through
   it — and only when placement actually changes, so a plain content edit to an already-existing
   element never gets caught out by a later config change (this module's own re-POST idempotency
-  guarantee depends on that). A page's own `ElementalArea`-type has_one FK is no longer directly
-  client-writable at all (`WriteApplicator`), closing the side door this check would otherwise
-  have left open: repointing a restricted page's area onto a different, already-populated area
-  without any of *that* area's elements passing through the new check.
+  guarantee depends on that). Any `ElementalArea`-type has_one FK is no longer directly
+  client-writable at all — enforced in `WriteApplicator::isFieldWritable()`, the module's single
+  shared writability decision (colymba `/api`, batch, compositions, and `SchemaService`'s
+  advertised writability all read it), not just in the composition/batch write path — except a
+  `BaseElement`'s own `Parent` relation, the one FK `ElementPlacementPolicy` is built to check,
+  not to block. Closes the side door this check would otherwise have left open: repointing a
+  restricted page's area onto a different, already-populated area without any of *that* area's
+  elements passing through the new check, on any write surface.
   **Known gaps, not covered by this change** (tracked as follow-up issues): the colymba `/api`
-  generic write surface (`WriteGuardExtension`) never routes through `RecordWriter` and so isn't
-  checked at all; attaching an existing element via `ElementalArea.Elements`
-  `api_writable_relations` (`WriteApplicator::applyRelations()`) is the same — neither is a
+  surface can still create/attach an element via its own `ParentID` — a `BaseElement`'s FK is
+  exempt from the guard above by design, and that surface never routes through `RecordWriter`'s
+  placement check at all; attaching an *existing* element via `ElementalArea.Elements`
+  `api_writable_relations` (`WriteApplicator::applyRelations()`) is the same. Neither is a
   regression introduced here, both are pre-existing gaps in how those surfaces relate to this
   module's write pipeline. See [docs/en/12_error-codes.md](docs/en/12_error-codes.md) and
   [docs/en/08_page-compositions.md](docs/en/08_page-compositions.md).

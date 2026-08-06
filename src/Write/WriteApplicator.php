@@ -201,38 +201,6 @@ class WriteApplicator
             };
             $columnName = $isHasOne ? $name . 'ID' : $name;
 
-            // An `ElementalArea`-type has_one FK is never directly
-            // client-writable, on any class other than the `BaseElement`
-            // itself whose own "Parent" relation this points at — the
-            // framework auto-provisions this FK (`ElementalAreasExtension::
-            // onBeforeWrite()`), and a client repointing e.g. a page's own
-            // area FK onto a different, already-populated area would relink
-            // that area's whole existing element tree without any of those
-            // elements individually passing `ElementPlacementPolicy` (#64) —
-            // `RecordWriter::assertElementPlacementAllowed()` only ever
-            // inspects the record actually being written, not an area's
-            // pre-existing contents. Unconditional (not gated on $trusted):
-            // no in-process caller needs this either — `CompositionService::
-            // resolveArea()` sets this FK via `setField()` directly, bypassing
-            // `applyFields()` entirely.
-            if (
-                $relationName !== null
-                && !is_a($record, 'DNADesign\\Elemental\\Models\\BaseElement')
-                && class_exists('DNADesign\\Elemental\\Models\\ElementalArea')
-                && is_a((string) ($hasOne[$relationName] ?? ''), 'DNADesign\\Elemental\\Models\\ElementalArea', true)
-            ) {
-                $problems[] = [
-                    'field' => $name,
-                    'code' => ErrorCode::READONLY_FIELD->value,
-                    'message' => sprintf(
-                        'Field "%s" is not writable via the content API — an Elemental area is managed'
-                            . ' automatically, never repointed directly.',
-                        $name
-                    ),
-                ];
-                continue;
-            }
-
             if (!$this->isFieldWritable($className, $columnName, $relationName, $trusted)) {
                 $problems[] = [
                     'field' => $name,
@@ -443,6 +411,42 @@ class WriteApplicator
         );
 
         if (in_array($columnName, $protected, true) || ($relationName && in_array($relationName, $protected, true))) {
+            return false;
+        }
+
+        // An `ElementalArea`-type has_one FK is never directly
+        // client-writable — the framework auto-provisions it
+        // (`ElementalAreasExtension::onBeforeWrite()`), and repointing it
+        // onto a different, already-populated area would relink that
+        // area's whole existing element tree onto this record without any
+        // of those elements passing `RecordWriter::
+        // assertElementPlacementAllowed()` (#64), which only ever inspects
+        // the record actually being written. An absolute floor like
+        // `protected_fields` above — not gated on `$trusted`, since no
+        // in-process caller needs this either (`CompositionService::
+        // resolveArea()` sets this FK via `setField()` directly, bypassing
+        // this method entirely). This is `isFieldWritable()`'s own
+        // docblock's "single source of truth... colymba /api, batch,
+        // compositions" — putting the rule here, not in `applyFields()`
+        // alone, is what makes it actually apply to all three, plus
+        // `SchemaService`'s advertised writability.
+        //
+        // The one exemption is a `BaseElement`'s own `Parent` relation to
+        // its area — that FK is exactly the placement this module's #64
+        // enforcement is built to check, not to block outright. A SECOND
+        // `ElementalArea`-typed has_one on an element subclass (e.g. a
+        // nested-area pattern) is deliberately NOT exempt — only the one
+        // relation `assertElementPlacementAllowed()` actually inspects.
+        if (
+            $relationName !== null
+            && !($relationName === 'Parent' && is_a($className, 'DNADesign\\Elemental\\Models\\BaseElement', true))
+            && class_exists('DNADesign\\Elemental\\Models\\ElementalArea')
+            && is_a(
+                (string) DataObject::getSchema()->hasOneComponent($className, $relationName),
+                'DNADesign\\Elemental\\Models\\ElementalArea',
+                true
+            )
+        ) {
             return false;
         }
 
