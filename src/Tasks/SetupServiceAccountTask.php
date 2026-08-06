@@ -2,39 +2,22 @@
 
 namespace Dynamic\ContentApi\Tasks;
 
-use Dynamic\ContentApi\Security\ContentApiPermissions;
+use Dynamic\ContentApi\Tasks\Support\ServiceAccountProvisioner;
+use Dynamic\ContentApi\Tasks\Support\TaskStatus;
 use SilverStripe\Dev\BuildTask;
-use SilverStripe\Security\Group;
-use SilverStripe\Security\Permission;
 
 /**
- * Provision (or update) the permission Group a content API service account
- * needs. Idempotent — re-running only adds missing grants, never duplicates
- * or removes existing ones.
- *
- * Grants CONTENT_API_ACCESS + VIEW_DRAFT_CONTENT unconditionally — the pair
- * a service account needs so a draft-only write (batch/composition default
- * `publish: "none"`) can be read back by the same account that wrote it.
- * Without VIEW_DRAFT_CONTENT, silverstripe/versioned's own canView() hook
- * denies the read the moment draft and live diverge, regardless of any
- * app-level canView() grant — see
- * docs/en/04_security-model.md#service-account-permissions (#42).
- * CONTENT_API_POPULATE is added only with populate=1 — a separate, narrower
- * grant most service accounts don't need.
- *
- * Permission codes only: the record-level can*() grant a service account
- * separately needs (Security\ContentApiGrantExtension) is applied by a
- * project via YAML, per class — this task can't reach into a project's
- * config to add it, and doing so blindly would grant it to every class a
- * project happens to have, not just the ones meant to be writable.
+ * `ss5` (this branch) entry point. All business logic lives in
+ * {@see ServiceAccountProvisioner} — see #65/#96; this adapter only
+ * translates the legacy `BuildTask::run($request)` request vars and echoes
+ * the result. Branch `1`'s SS6 copy of this file wraps the same service
+ * around `execute(InputInterface, PolyOutput): int` instead — there is no
+ * shared entry point between the two branches, so a business-logic fix
+ * belongs in `ServiceAccountProvisioner` (shared) rather than either
+ * adapter.
  *
  * Usage: `sake dev/tasks/SetupContentApiServiceAccount group="Content API Service Accounts"`
  * (add `populate=1` too if the account needs batch/compositions/asset writes/page actions).
- *
- * SS5-branch note: this file uses the legacy BuildTask::run($request)
- * signature (branch `1`'s SS6 line uses execute(InputInterface, PolyOutput))
- * — there is no shared entry point between the two branches, so a business-
- * logic fix here must be manually ported to branch `1`'s copy and vice versa.
  */
 class SetupServiceAccountTask extends BuildTask
 {
@@ -51,58 +34,24 @@ class SetupServiceAccountTask extends BuildTask
         $rawGroup = $request->getVar('group');
         $title = $rawGroup === null ? 'Content API Service Accounts' : trim((string) $rawGroup);
 
-        if ($title === '') {
-            echo "group cannot be empty.\n";
-
-            return;
-        }
-
-        $matches = Group::get()->filter('Title', $title);
-
-        if ($matches->count() > 1) {
-            echo sprintf(
-                "Multiple groups titled \"%s\" found (IDs: %s) — refusing to guess which one to "
-                    . "grant content API permissions to. Disambiguate by renaming or deleting the "
-                    . "unintended group, then re-run.\n",
-                $title,
-                implode(', ', $matches->column('ID'))
-            );
-
-            return;
-        }
-
-        $group = $matches->first();
-
-        if (!$group) {
-            $group = Group::create();
-            $group->Title = $title;
-            $group->write();
-            echo "Created group \"{$title}\" (#{$group->ID}).\n";
-        } else {
-            echo "Using existing group \"{$title}\" (#{$group->ID}).\n";
-        }
-
-        $codes = [ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT'];
-
         // Presence-based, not value-based — matches the old VALUE_NONE
         // --populate flag's semantics (there was no way to pass "false" to
         // it either). A PHP truthy check on the raw string would otherwise
         // treat `populate=false` or `populate=no` as granting it.
-        if ($request->getVar('populate') !== null) {
-            $codes[] = ContentApiPermissions::POPULATE;
+        $populate = $request->getVar('populate') !== null;
+
+        $result = ServiceAccountProvisioner::create()->provision($title, $populate);
+
+        foreach ($result->lines as $line) {
+            // ServiceAccountProvisioner is shared with branch `1`'s SS6 --flag-based
+            // adapter, so its own message text uses that syntax — translate to this
+            // branch's `key=value` request-var syntax before it reaches the operator.
+            echo str_replace('--group', 'group', $line) . "\n";
         }
 
-        foreach ($codes as $code) {
-            Permission::grant((int) $group->ID, $code);
-            echo "  granted {$code}\n";
+        if ($result->status === TaskStatus::Success) {
+            echo "\n";
+            echo "Mint a token: sake dev/tasks/MintContentApiToken email=<member-email>\n";
         }
-
-        echo "\n";
-        echo "This task provisions permission codes only. A service account also needs a "
-            . "canView()/canEdit()/canCreate()/canDelete() grant on the classes it writes — apply "
-            . "Dynamic\\ContentApi\\Security\\ContentApiGrantExtension to those classes via YAML "
-            . "(only classes declaring their own content_api_access or api_access are grantable; "
-            . "see docs/en/04_security-model.md). Assign a Member to this group, then mint a "
-            . "token: sake dev/tasks/MintContentApiToken email=<member-email>\n";
     }
 }

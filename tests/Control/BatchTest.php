@@ -2,16 +2,24 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Batch\BatchProcessor;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
+use DNADesign\Elemental\Extensions\ElementalAreasExtension;
+use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Versioned\Versioned;
 
 class BatchTest extends ContentApiTestCase
@@ -23,6 +31,22 @@ class BatchTest extends ContentApiTestCase
         parent::setUp();
 
         $this->adminToken = $this->mintTokenFor('adminUser');
+
+        // See tearDown() — reset on both sides of the test so a prior test's
+        // leftover cache entry (this class caches per page class name
+        // regardless of which test file touched it) can never leak in, not
+        // just so this test doesn't leak one out.
+        ElementalAreasExtension::reset();
+    }
+
+    protected function tearDown(): void
+    {
+        // ElementalAreasExtension::getElementalTypes() caches per page class
+        // name in a static that Config::modify()'s automatic rollback
+        // doesn't touch.
+        ElementalAreasExtension::reset();
+
+        parent::tearDown();
     }
 
     public function testMixedOperations(): void
@@ -133,6 +157,112 @@ class BatchTest extends ContentApiTestCase
             ApiTestObject::get()->filter('FixtureIdentifier', 'atomic-1')->first(),
             'successful op before the failure must be rolled back'
         );
+    }
+
+    /**
+     * Companion coverage for #70, NOT a regression test for the output-
+     * buffering fix itself — SilverStripe's FunctionalTest invokes the
+     * controller in-process and inspects the returned HTTPResponse object
+     * directly, bypassing the real PHP output stream a live web request
+     * concatenates stray echo output onto, so this harness can't observe
+     * that specific corruption (see ContentApiControllerOutputBufferingTest
+     * for the test that actually exercises the buffering, and does fail
+     * without the fix). What this test does confirm: a deprecation notice
+     * from application code (dynamic/foxystripe's real
+     * ProductPage::onBeforeWrite() calling trim() on a nullable field is
+     * the real-world shape) doesn't otherwise disrupt normal batch write
+     * semantics — the op still reports 'created' and the record is really
+     * there.
+     */
+    public function testDeprecationNoticeDuringWriteDoesNotCorruptTheResponse(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestDeprecating',
+                    'externalId' => 'deprecating-1',
+                    'fields' => ['Title' => 'Triggers a deprecation on write'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['created'], array_column($body['data']['results'], 'status'));
+        $this->assertNotNull(ApiTestDeprecatingObject::get()->filter('FixtureIdentifier', 'deprecating-1')->first());
+    }
+
+    /**
+     * Same scope note as the test above (companion coverage, not a
+     * buffering regression test — see ContentApiControllerOutputBufferingTest
+     * for that). Through the atomic path with a genuine op failure
+     * alongside the deprecation: confirms a deprecating op doesn't prevent
+     * verifyRollback() from doing its job — the deprecating op's own row
+     * is confirmed truly gone afterward (not just claimed gone), matching
+     * the real committed-atomic-batch-still-rolls-back case.
+     */
+    public function testDeprecationNoticeInsideAnAtomicBatchThatGenuinelyFailsStillReportsAccurately(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestDeprecating',
+                    'externalId' => 'deprecating-atomic-1',
+                    'fields' => ['Title' => 'Triggers a deprecation on write'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'deprecating-atomic-2',
+                    'fields' => ['Bogus' => 1],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('VALIDATION_FAILED', $body['error']['code']);
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertNull(
+            ApiTestDeprecatingObject::get()->filter('FixtureIdentifier', 'deprecating-atomic-1')->first(),
+            'the deprecating op must be genuinely rolled back, not just reported as rolled back'
+        );
+    }
+
+    /**
+     * End-to-end coverage of the ROLLBACK_UNVERIFIED response path itself
+     * (BatchProcessorRollbackVerificationTest covers verifyRollback() in
+     * isolation, but nothing else exercises process()'s catch block taking
+     * the $verified === false branch). The framework's real rollback
+     * mechanism works correctly under normal conditions — confirmed by
+     * testAtomicBatchRollsBack above — so nothing in a real request can
+     * force a genuine failed-verification outcome; ForceUnverifiedRollback
+     * BatchProcessor swaps in to force it instead.
+     */
+    public function testUnverifiedRollbackReportsDistinctlyFromAVerifiedOne(): void
+    {
+        Injector::inst()->registerService(
+            ForceUnverifiedRollbackBatchProcessor::create(),
+            BatchProcessor::class
+        );
+
+        $body = $this->decode($this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'unverified-1',
+                    'fields' => ['Title' => 'First'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'externalId' => 'unverified-2', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('ROLLBACK_UNVERIFIED', $body['error']['code']);
+        $this->assertSame(500, $body['error']['status']);
+        $this->assertFalse($body['error']['details'][0]['rolledBack']);
+        $this->assertStringContainsString('could not be verified', $body['error']['message']);
     }
 
     public function testDefaultPublishApplies(): void
@@ -856,6 +986,62 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #75: an atomic batch's archive-mode delete result is now verified the
+     * same way a created result always was — genuinely restored to DRAFT
+     * after a real rollback, not just claimed. Follows
+     * testAtomicBatchRollsBack()'s pattern above.
+     */
+    public function testAtomicBatchWithAnArchiveDeleteRollsBackAndVerifiesTheRestoredRecord(): void
+    {
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestVersioned', 'id' => (int) $record->ID, 'mode' => 'archive'],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertNotNull(
+            ApiTestVersionedObject::get()->byID($record->ID),
+            'the archive-mode delete must have been genuinely rolled back, not just reported as rolled back'
+        );
+    }
+
+    /**
+     * Companion to the test above: an unpublish-mode delete on a Hierarchy
+     * class must still report a genuinely-verified rollback — adding
+     * delete verification must not turn every unpublish-mode delete into a
+     * spurious ROLLBACK_UNVERIFIED, since DRAFT is untouched by an unpublish
+     * either way and verifyRollback() must recognize that and skip it.
+     */
+    public function testAtomicBatchWithAnUnpublishDeleteStillReportsAVerifiedRollback(): void
+    {
+        $page = ApiTestPage::create(['Title' => 'Unpublish Rollback Target']);
+        $page->write();
+        $page->publishRecursive();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                ['op' => 'delete', 'class' => 'ApiTestPage', 'id' => (int) $page->ID, 'mode' => 'unpublish'],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue(
+            $body['error']['details'][0]['rolledBack'],
+            'an unpublish-mode delete must not be misreported as ROLLBACK_UNVERIFIED'
+        );
+    }
+
+    /**
      * #71's stranded-descendants guard, wired end to end through the batch
      * delete op — every other test exercising it goes through
      * PublishOrchestrator directly or the record-action HTTP endpoint;
@@ -903,5 +1089,184 @@ class BatchTest extends ContentApiTestCase
         $this->assertFalse(
             (bool) Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $wrapper->ID)->exists()
         );
+    }
+
+    /**
+     * #64: the composition endpoint isn't the only way to attach an
+     * element to an area — a plain batch/upsert create can set `ParentID`
+     * directly too (BaseElement has no `api_writable_fields` here, so the
+     * default `guarded` policy leaves has_one FKs, including `ParentID`,
+     * writable). Elemental's per-page-type `disallowed_elements` must be
+     * enforced on this path just as much as on composition, or it's a
+     * side door around the CMS's own "add element" picker.
+     */
+    public function testBatchCreateOfADisallowedElementIsRejected(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Disallowed Target');
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Should be rejected', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('ELEMENT_NOT_ALLOWED_ON_PAGE', $body['data']['results'][0]['error']['code']);
+        $this->assertSame(
+            0,
+            ApiTestElement::get()->filter('ParentID', $area->ID)->count(),
+            'a rejected element must not be persisted into the area'
+        );
+    }
+
+    /**
+     * Companion to the rejection test: disallowing some other element type
+     * on this page must not also block ApiTestElement, which was never
+     * disallowed, from being attached to the same area via the same batch
+     * path.
+     */
+    public function testBatchCreateOfAnAllowedElementStillSucceedsWhenAnotherTypeIsDisallowed(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Allowed Target');
+
+        Config::modify()->set(
+            ApiTestBlockPage::class,
+            'disallowed_elements',
+            ['DNADesign\\Elemental\\Models\\ElementContent']
+        );
+        ElementalAreasExtension::reset();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Still allowed', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('created', $body['data']['results'][0]['status']);
+    }
+
+    /**
+     * #64 review follow-up: `assertElementPlacementAllowed()` only fires
+     * when `ParentID` actually changes — a plain field-only update to an
+     * element already sitting on a page must keep succeeding even after
+     * that page's config narrows to newly disallow the element's type.
+     * Elemental's own `getElementalTypes()` gate has no equivalent for
+     * "keep editing existing content," only for a new placement.
+     */
+    public function testBatchUpdateOfAnAlreadyPlacedElementIsUnaffectedByALaterDisallow(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Edit Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Created while allowed', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $updated = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestElement',
+                    'id' => $elementId,
+                    'fields' => ['Title' => 'Just fixing a typo'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $updated['data']['results'][0]['status']);
+        $this->assertSame('Just fixing a typo', ApiTestElement::get()->byID($elementId)->Title);
+    }
+
+    /**
+     * The other side of the same fix: a batch update that DOES change
+     * `ParentID` — re-parenting an already-placed element onto a
+     * different page's area — is a genuine new placement on the target
+     * page and must still be checked against it, exactly like a create.
+     */
+    public function testBatchUpdateReparentingAnElementToADisallowedAreaIsRejected(): void
+    {
+        $sourceArea = $this->createBlockPageWithArea('Batch Reparent Source');
+        $targetArea = $this->createBlockPageWithArea('Batch Reparent Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Reparent me', 'ParentID' => (int) $sourceArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        // Both pages are the same class, so this necessarily disallows the
+        // type on the source page too — irrelevant here, since the source
+        // placement is pre-existing and unchanged, and the fix under test
+        // is precisely that an unchanged placement is never re-checked.
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        ElementalAreasExtension::reset();
+
+        $reparented = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestElement',
+                    'id' => $elementId,
+                    'fields' => ['ParentID' => (int) $targetArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $reparented['data']['results'][0]['status']);
+        $this->assertSame('ELEMENT_NOT_ALLOWED_ON_PAGE', $reparented['data']['results'][0]['error']['code']);
+        $this->assertSame(
+            (int) $sourceArea->ID,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'a rejected re-parent must leave the element in its original area'
+        );
+    }
+
+    /**
+     * Creates an ApiTestBlockPage with a genuinely persisted ElementalArea.
+     * Elemental only auto-creates the area during a write that happens in
+     * the DRAFT reading stage (`ElementalAreasExtension::
+     * allowAlteringElementalArea()`) — the same staging every write in this
+     * module already runs under via `Versioned::withVersionedMode()` (see
+     * `BatchProcessor::run()`) — so a bare `$page->write()` at the test's
+     * own top level, outside that stage, would silently leave the area
+     * relation at ID 0.
+     */
+    private function createBlockPageWithArea(string $title): ElementalArea
+    {
+        return Versioned::withVersionedMode(function () use ($title) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            $page = ApiTestBlockPage::create(['Title' => $title]);
+            $page->write();
+
+            return $page->ElementalArea();
+        });
     }
 }

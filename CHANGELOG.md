@@ -6,6 +6,33 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
+  enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
+  `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is
+  rejected with the new `ELEMENT_NOT_ALLOWED_ON_PAGE` (422) error, listing the page's actual
+  allowed types. New `Dynamic\ContentApi\Registry\ElementPlacementPolicy` delegates entirely to
+  `ElementalAreasExtension::getElementalTypes()` (the CMS's own canonical check) rather than
+  reading the config directly, so `stop_element_inheritance`, per-element `canCreate()`, and the
+  `updateAvailableTypesForClass` hook all keep working exactly as they do in the CMS. Enforced
+  once, in `RecordWriter::write()`, since composition and batch/upsert/update all funnel through
+  it — and only when placement actually changes, so a plain content edit to an already-existing
+  element never gets caught out by a later config change (this module's own re-POST idempotency
+  guarantee depends on that). Any `ElementalArea`-type has_one FK is no longer directly
+  client-writable at all — enforced in `WriteApplicator::isFieldWritable()`, the module's single
+  shared writability decision (colymba `/api`, batch, compositions, and `SchemaService`'s
+  advertised writability all read it), not just in the composition/batch write path — except a
+  `BaseElement`'s own `Parent` relation, the one FK `ElementPlacementPolicy` is built to check,
+  not to block. Closes the side door this check would otherwise have left open: repointing a
+  restricted page's area onto a different, already-populated area without any of *that* area's
+  elements passing through the new check, on any write surface.
+  **Known gaps, not covered by this change** (tracked as follow-up issues): the colymba `/api`
+  surface can still create/attach an element via its own `ParentID` — a `BaseElement`'s FK is
+  exempt from the guard above by design, and that surface never routes through `RecordWriter`'s
+  placement check at all; attaching an *existing* element via `ElementalArea.Elements`
+  `api_writable_relations` (`WriteApplicator::applyRelations()`) is the same. Neither is a
+  regression introduced here, both are pre-existing gaps in how those surfaces relate to this
+  module's write pipeline. See [docs/en/12_error-codes.md](docs/en/12_error-codes.md) and
+  [docs/en/08_page-compositions.md](docs/en/08_page-compositions.md).
 - **(#76)** `Dynamic\ContentApi\Security\ContentApiGrantExtension`: grants record-level
   `canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any Member holding
   `CONTENT_API_ACCESS`, so a service account can create/move/reparent/publish/archive records
@@ -57,6 +84,18 @@ All notable changes to this project are documented here. Format loosely follows
   upgrade message instead of falling through. Writes previously (incorrectly) accepted on an
   affected site now return 422.
 
+### Changed
+- **(#65)** `MintApiTokenTask`/`SetupServiceAccountTask` business logic extracted to
+  branch-neutral services (`Tasks/Support/ApiTokenMinter`, `ServiceAccountProvisioner`) so a
+  future `ss5` port can share it instead of duplicating ~180 lines per branch. Two small
+  wording changes as a result: `MintContentApiToken`'s missing-option message now reads
+  `Missing required option: --email` (matching `SetupContentApiServiceAccount`'s existing
+  `--group cannot be empty.` convention, was `Missing required option: email`);
+  `SetupContentApiServiceAccount`'s success output states the account still needs a token
+  minted without embedding the exact command inline (the command itself — `sake
+  tasks:MintContentApiToken --email=<member-email>` — is now a separate line the task prints
+  after, unchanged from before).
+
 ### Docs
 - **(#76)** `docs/en/04_security-model.md`'s "Class-level gate" section claimed the gate was
   "deny-by-default...checked against the record's concrete class, so a subclass may narrow
@@ -67,6 +106,33 @@ All notable changes to this project are documented here. Format loosely follows
   any mapped *ancestor* ref, not something the gate narrows to.
 
 ### Fixed
+- **(#72)** `SetupServiceAccountTaskTest` had no fixture file and no `$usesDatabase = true`, so
+  it never got an isolated temp DB or per-test transaction rollback — every local run wrote
+  real `Group`/`Permission` rows into the host project's live dev DB, colliding with the next
+  run's data. The new `Tasks/Support` tests inherit the fix.
+- **(#70)** A non-`Throwable` PHP diagnostic mid-request — most notably a deprecation notice
+  from application code this module doesn't control (e.g. a third-party DataObject's
+  `onBeforeWrite()`) — never reached `ContentApiController`'s own exception handling, because
+  it doesn't throw. In dev/test environments SilverStripe's default error handler `echo`s an
+  HTML debug block directly to output for exactly this case, bypassing the controller's
+  `HTTPResponse` entirely; left unbuffered, that HTML got sent ahead of (and concatenated
+  with) the endpoint's own well-formed JSON body, corrupting the response into something
+  neither valid JSON nor an accurate reflection of the real outcome — confirmed against a real
+  HTTP request, where the underlying write had actually succeeded. `withEnvelope()` now
+  buffers all output from the endpoint callable (drained down to the level it opened, so an
+  unbalanced buffer left open by application code doesn't slip past it); any stray output is
+  logged (not silently discarded) rather than allowed to reach the response. Known gap this
+  can't close: SilverStripe's own `Deprecation::notice()` defers its output to request
+  shutdown, after the response is already sent, so it can't be buffered here — and a true PHP
+  fatal (not a `Throwable`) never returns control to drain the buffer at all. Separately,
+  `BatchProcessor` no longer trusts that an atomic batch's caught-exception rollback path means
+  the SQL `ROLLBACK` actually took effect — every operation reported `created` is now
+  re-checked by id against the database (using an uncached, non-deprecated lookup) before the
+  response claims `rolledBack: true`; if any is still there, or the check itself fails for an
+  unrelated reason, the response reports the new `500 ROLLBACK_UNVERIFIED` instead, carrying
+  the same full results array so every `created` entry can be checked by hand. `updated`
+  results still aren't independently verified — no pre-image is retained to compare against.
+  `deleted` results are now verified too (#75, below). See `docs/en/12_error-codes.md`.
 - **(#71)** Unpublishing (or archiving) a `Hierarchy` record with any live tree children used
   to silently cascade-delete every one of them too, recursively — not just the target record —
   confirmed live during a real IA restructure. Root cause: `SiteTree::onBeforeDelete()`
@@ -90,6 +156,18 @@ All notable changes to this project are documented here. Format loosely follows
   ("publish the subtree to its new parent first") was otherwise unreachable from that endpoint.
   See
   `docs/en/10_publishing-and-stages.md#unpublishing-or-archiving-a-hierarchy-record-the-descendant-cascade-guard`.
+- **(#75)** `BatchProcessor::verifyRollback()` (#70) only re-checked `created` results after a
+  claimed atomic rollback — a `deleted` op's id was retained in the results array too, but its
+  verifiability depends on the delete mode, so it was left unverified rather than half-checked.
+  Now verified when the check is actually meaningful: `mode: "archive"`, or any mode at all on
+  an unversioned class (every mode converges on a real `delete()` there) — both reach the draft
+  row, so a genuine rollback restores it and its continued absence means the delete committed
+  for real despite the claim. `mode: "unpublish"` on a versioned class is still correctly
+  skipped: it only ever touches the live stage, so checking draft would read as falsely "fine"
+  regardless of the real outcome. Also swapped `BatchProcessor::fetch()`'s deprecated
+  `DataObject::get_by_id()` for `DataObject::get($className)->byID(...)`, matching
+  `verifyRollback()`'s own style (spotted while touching this file; unrelated deprecated call
+  sites elsewhere in `src/` are out of scope here). Spec bumped to `v1.6`.
 
 ## [Unreleased] — ss5
 
@@ -150,6 +228,14 @@ the two branches.
   - **Deviation from branch policy, again**: cherry-picked rather than `git merge origin/1`, for
     the reasons in the #76 note above (a real merge would drag in #65 and #70, unrelated to this
     fix). See the follow-up merge-sync issue this entry links to on GitHub.
+- **(#96)** Real `git merge origin/1` landed — the sync both entries above deferred. Brings #65
+  (task-service extraction), #70 (rollback verification, output buffering), and #75 (archive-mode
+  rollback verification) onto this branch for the first time, plus a fresh #64 (Elemental
+  element-placement enforcement) that landed on branch `1` after #81. `ErrorCode.php`,
+  `schema/endpoints.json` (now `v1.7`), `Registry/ElementPlacementPolicy.php`,
+  `RecordWriter.php`'s placement check, and `WriteApplicator.php`'s `ElementalArea` FK guard all
+  merged in verbatim — no SS5-specific divergence found in any of them. Closes the "still needed"
+  real-merge caveat both the #76 and #81 entries above left open.
 
 ### Changed
 - Tasks invoke via SS5's legacy `sake dev/tasks/<Segment> key=value` syntax, not branch `1`'s SS6
@@ -158,6 +244,21 @@ the two branches.
   maintained fork of silverstripeltd's `feature/v5` branch fixing 4 calls to methods removed in
   SilverStripe 4+ (`Member::login()`/`logout()`, `DataObject::stat()`). See
   [docs/en/upstream-issues.md](docs/en/upstream-issues.md).
+- **(#96)** `MintApiTokenTask`/`SetupServiceAccountTask` now delegate to the same branch-neutral
+  `Tasks/Support/ApiTokenMinter`/`ServiceAccountProvisioner` services branch `1` uses (#65 above),
+  kept as thin `run($request)` adapters instead of ~180 lines of duplicated inline logic each.
+  `TaskResultRenderer` (branch `1`'s Symfony `Command`/`PolyOutput` rendering glue) is SS6-only and
+  not present here — these adapters `echo` `TaskResult::$lines` directly instead. The two wording
+  changes #65's shared entry above describes now apply on this branch too, with one further
+  translation on top: `ApiTokenMinter`/`ServiceAccountProvisioner`'s own message text names
+  branch `1`'s SS6 `--flag` syntax (`--email`, `--group`) since the two services are shared —
+  each adapter here rewrites that to this branch's `key=value` syntax before it reaches the
+  operator, so a `sake dev/tasks/` user is never told to pass a flag this branch's
+  `run($request)` entry point doesn't accept. Their previously monolithic tests split the same
+  way branch `1`'s did: behavioral coverage (group creation, idempotence, healing,
+  duplicate-title refusal, validation) moved to the branch-neutral
+  `tests/Tasks/Support/ServiceAccountProvisionerTest.php`; `tests/Tasks/*TaskTest.php` now cover
+  only the `run($request)` adapter's own request-var parsing, syntax translation, and output.
 
 ### Docs
 - **(#76)** Ported the `04_security-model.md` class-level-gate correction above, plus one
@@ -171,7 +272,20 @@ the two branches.
 - **(#81)** See the shared `[Unreleased]` → `### Fixed` entry above for #71's descendant-cascade
   guard — identical on this branch, no divergence found (see the `### Added` entry above for the
   verification detail). `#72` (test DB isolation) and `#70` (output buffering, rollback
-  verification) are separate, still-unported branch-`1` fixes not included in this port.
+  verification) were separate, still-unported branch-`1` fixes not included in this port — both
+  landed via #96 below.
+- **(#96)** Resolved a silent, no-conflict-marker doc duplication the merge itself produced in
+  `docs/en/04_security-model.md`: both branches had independently added a grant-extension section
+  at slightly different offsets, so a plain `git merge` appended both rather than conflicting.
+  Kept this branch's SS5-correct `Versioned::canDelete()` note, dropped branch `1`'s duplicate
+  (which asserts the opposite behavior). Also expanded the README's "Branch policy" list of what's
+  allowed to permanently differ — it previously covered only composer constraints, task
+  entry-point signatures, and requirement statements; now also names PHP-floor-dependent type
+  declarations (`?bool` here vs `true|null` on branch `1`, since standalone `true` as a type needs
+  PHP 8.2+) and SS6-only task-rendering glue (`TaskResultRenderer`) being absent here. Also
+  corrected `Tasks/Support/ApiTokenMinter`/`ServiceAccountProvisioner`'s class docblocks, which
+  still described `ss5`'s adapters as carrying inline logic "pending a follow-up port" — stale as
+  of this merge; the same correction is needed on branch `1`'s copies, tracked as a follow-up.
 
 ## [1.4.0] - 2026-07-17
 

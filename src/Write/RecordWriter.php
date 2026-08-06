@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
+use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
@@ -29,6 +30,7 @@ class RecordWriter
         'publisher' => '%$' . PublishOrchestrator::class,
         'externalIds' => '%$' . ExternalIdResolver::class,
         'policy' => '%$' . PermissionPolicy::class,
+        'elementPlacement' => '%$' . ElementPlacementPolicy::class,
     ];
 
     public ?WriteApplicator $applicator = null;
@@ -38,6 +40,8 @@ class RecordWriter
     public ?ExternalIdResolver $externalIds = null;
 
     public ?PermissionPolicy $policy = null;
+
+    public ?ElementPlacementPolicy $elementPlacement = null;
 
     /**
      * Create a record, or upsert by external id when mode is `upsert`.
@@ -185,7 +189,14 @@ class RecordWriter
 
         $requestedUrlSegment = $fields['URLSegment'] ?? null;
 
+        // Captured before applyFields() so assertElementPlacementAllowed()
+        // can tell "this write is placing/re-placing the element" apart
+        // from "this write only touches unrelated fields" — see that
+        // method's docblock for why the distinction matters.
+        $priorParentID = $record->isInDB() ? (int) $record->getField('ParentID') : 0;
+
         $this->applicator->applyFields($record, $fields, $internalFields);
+        $this->assertElementPlacementAllowed($record, $priorParentID);
 
         // The DB write and any relation writes it enables (has_one FK
         // repoints, has_many/many_many attaches) must land or fail together —
@@ -225,5 +236,90 @@ class RecordWriter
             'operation' => $operation,
             'warnings' => $warnings,
         ];
+    }
+
+    /**
+     * #64: an element being newly placed (or re-placed) onto an
+     * `ElementalArea` must be a type the area's owning page actually
+     * allows — checked here, the one FK-based placement choke point
+     * composition and batch/upsert/update already share once `ParentID`
+     * has been applied, rather than duplicated in each caller.
+     * Deliberately after `applyFields()` (so the FK just written is what's
+     * actually checked) and before the DB write below (so a disallowed
+     * placement never lands, not even inside a transaction that would
+     * otherwise roll back).
+     *
+     * Only fires when `ParentID` actually changed. Elemental's own
+     * `getElementalTypes()` gate (the CMS "add element" picker, `moveTo()`)
+     * only ever governs a NEW placement — it has no equivalent for "keep
+     * editing an element already on the page" — so re-running this check
+     * against every sparse field-only update would reject edits to
+     * legitimately-existing content the moment a page's config narrows
+     * (breaking this module's own re-POST idempotency guarantee and
+     * `content_page_convert`). Also a no-op for anything that isn't a
+     * `BaseElement`, isn't attached to an area at all (a detach, or a
+     * still-unattached new record), or where the area's owning page can't
+     * be resolved (e.g. a brand new area with no page pointing at it yet)
+     * — this policy has nothing to say about those cases either.
+     *
+     * NOTE — known gap, not covered by this method: a client can still
+     * relink a whole already-populated `ElementalArea` onto a different
+     * page by writing that OTHER page's own `ElementalArea`-type has_one
+     * FK directly, without any of the area's existing elements passing
+     * through this check. `WriteApplicator::applyFields()` closes that
+     * specific FK off from client writes entirely (see its own comment)
+     * rather than trying to re-validate every element in a reassigned
+     * area here. A second, undisclosed gap — attaching an existing element
+     * via `ElementalArea.Elements` `api_writable_relations` has_many
+     * add/set — is NOT closed (that goes through `WriteApplicator::
+     * applyRelations()`, which never calls back into `RecordWriter::write()`
+     * for the related record) and is deliberately deferred; see the
+     * CHANGELOG and #64 follow-up issues.
+     *
+     * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE
+     */
+    protected function assertElementPlacementAllowed(DataObject $record, int $priorParentID = 0): void
+    {
+        if (
+            !class_exists('DNADesign\\Elemental\\Models\\BaseElement')
+            || !is_a($record, 'DNADesign\\Elemental\\Models\\BaseElement')
+        ) {
+            return;
+        }
+
+        $parentID = (int) $record->ParentID;
+
+        if ($parentID === 0 || $parentID === $priorParentID) {
+            return;
+        }
+
+        $area = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID($parentID);
+
+        if (!$area || !$area->hasMethod('getOwnerPage')) {
+            return;
+        }
+
+        $page = $area->getOwnerPage();
+
+        if (!$page) {
+            return;
+        }
+
+        $elementClass = get_class($record);
+
+        if ($this->elementPlacement->isAllowedOnPage($elementClass, $page)) {
+            return;
+        }
+
+        throw new ApiError(
+            ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE,
+            sprintf(
+                '"%s" is not an allowed element type on %s (#%d) — allowed types: %s.',
+                $elementClass,
+                get_class($page),
+                (int) $page->ID,
+                implode(', ', array_keys($page->getElementalTypes()))
+            )
+        );
     }
 }

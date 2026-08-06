@@ -414,6 +414,42 @@ class WriteApplicator
             return false;
         }
 
+        // An `ElementalArea`-type has_one FK is never directly
+        // client-writable — the framework auto-provisions it
+        // (`ElementalAreasExtension::onBeforeWrite()`), and repointing it
+        // onto a different, already-populated area would relink that
+        // area's whole existing element tree onto this record without any
+        // of those elements passing `RecordWriter::
+        // assertElementPlacementAllowed()` (#64), which only ever inspects
+        // the record actually being written. An absolute floor like
+        // `protected_fields` above — not gated on `$trusted`, since no
+        // in-process caller needs this either (`CompositionService::
+        // resolveArea()` sets this FK via `setField()` directly, bypassing
+        // this method entirely). This is `isFieldWritable()`'s own
+        // docblock's "single source of truth... colymba /api, batch,
+        // compositions" — putting the rule here, not in `applyFields()`
+        // alone, is what makes it actually apply to all three, plus
+        // `SchemaService`'s advertised writability.
+        //
+        // The one exemption is a `BaseElement`'s own `Parent` relation to
+        // its area — that FK is exactly the placement this module's #64
+        // enforcement is built to check, not to block outright. A SECOND
+        // `ElementalArea`-typed has_one on an element subclass (e.g. a
+        // nested-area pattern) is deliberately NOT exempt — only the one
+        // relation `assertElementPlacementAllowed()` actually inspects.
+        if (
+            $relationName !== null
+            && !($relationName === 'Parent' && is_a($className, 'DNADesign\\Elemental\\Models\\BaseElement', true))
+            && class_exists('DNADesign\\Elemental\\Models\\ElementalArea')
+            && is_a(
+                (string) DataObject::getSchema()->hasOneComponent($className, $relationName),
+                'DNADesign\\Elemental\\Models\\ElementalArea',
+                true
+            )
+        ) {
+            return false;
+        }
+
         if ($trusted) {
             return true;
         }

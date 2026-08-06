@@ -281,19 +281,53 @@ class ContentApiController extends Controller
     /**
      * Run an endpoint callable and wrap its result in the JSON envelope.
      * The callable returns ['data' => ..., 'meta' => [...], 'status' => int].
+     *
+     * Buffers all output the callable produces: a PHP diagnostic that isn't
+     * a `Throwable` — most notably a deprecation notice from application
+     * code this module doesn't control (e.g. a third-party DataObject's
+     * `onBeforeWrite()`) — never reaches `withEnvelope()`'s own try/catch,
+     * because it doesn't throw. In dev/test environments SilverStripe's
+     * default error handler `echo`s an HTML debug block directly to output
+     * for exactly this case, bypassing this controller's `HTTPResponse`
+     * entirely. Left unbuffered, that HTML gets sent ahead of (and
+     * concatenated with) this method's own well-formed JSON body — the
+     * client receives a response that's neither valid JSON nor an accurate
+     * reflection of the real outcome, even though the underlying operation
+     * may have completed exactly as intended (confirmed empirically: #70).
+     * Any captured stray output is logged, not silently discarded, so the
+     * underlying diagnostic is still visible to whoever reads the logs.
+     *
+     * Drains down to the buffer level this method itself opened, not just
+     * one `ob_get_clean()` call — if application code inside `$endpoint()`
+     * opens its own unbalanced output buffer (starts one and never closes
+     * it), a single `ob_get_clean()` would pop that orphaned buffer
+     * instead, leaving this method's own buffer open to flush unbuffered
+     * at request shutdown: #70's exact symptom, reintroduced by the very
+     * code meant to fix it. Known gap this can't close: SilverStripe's own
+     * `Deprecation::notice()` defers its output via
+     * `register_shutdown_function()` (see framework source) specifically
+     * so it fires after headers/response are already sent — that output
+     * happens after this method has already returned and can't be
+     * buffered here at all. Same for a true PHP fatal (not a `Throwable`):
+     * execution never returns to drain the buffer, and PHP's shutdown
+     * sequence flushes whatever was buffered raw and unlabeled. Both are
+     * pre-existing limitations, not introduced by this method.
      */
     protected function withEnvelope(callable $endpoint): HTTPResponse
     {
+        $bufferLevel = ob_get_level();
+        ob_start();
+
         try {
             $result = $endpoint();
 
-            return $this->jsonResponse(
+            $response = $this->jsonResponse(
                 $result['data'] ?? null,
                 $result['meta'] ?? [],
                 $result['status'] ?? 200
             );
         } catch (ApiError $error) {
-            return $this->errorResponse($error);
+            $response = $this->errorResponse($error);
         } catch (Throwable $exception) {
             Injector::inst()->get(LoggerInterface::class)->error(
                 'Content API server error: ' . $exception->getMessage(),
@@ -306,8 +340,49 @@ class ContentApiController extends Controller
                 ? sprintf('%s: %s', get_class($exception), $exception->getMessage())
                 : 'Internal server error.';
 
-            return $this->errorResponse(new ApiError(ErrorCode::SERVER_ERROR, $message));
+            $response = $this->errorResponse(new ApiError(ErrorCode::SERVER_ERROR, $message));
+        } finally {
+            // If application code inside $endpoint() closed this method's
+            // own buffer itself (an unbalanced ob_end_clean()/
+            // ob_end_flush()/ob_get_clean() call), whatever it contained is
+            // already gone by the time we regain control — flushed
+            // straight to the real output stream if it was ob_end_flush(),
+            // discarded if it was ob_end_clean(). Nothing here can recover
+            // that content, but the imbalance itself is worth its own
+            // distinct warning rather than reading as a silent "nothing to
+            // report". This check must run before the drain loop below —
+            // once confirmed balanced, that loop safely drains everything
+            // still open above our own level, including any additional
+            // buffer $endpoint() opened and left open (a well-intentioned
+            // library that ob_start()s and forgets to close).
+            $imbalanced = ob_get_level() <= $bufferLevel;
+            $strayOutput = '';
+
+            if (!$imbalanced) {
+                while (ob_get_level() > $bufferLevel) {
+                    $strayOutput = ob_get_clean() . $strayOutput;
+                }
+            }
         }
+
+        if ($imbalanced) {
+            Injector::inst()->get(LoggerInterface::class)->warning(
+                'Content API endpoint left an output buffer imbalanced (application code '
+                    . 'closed a buffer level this controller never opened) — some stray output '
+                    . 'may have already reached the raw response uncaught. Find and fix the '
+                    . 'unbalanced ob_end_clean()/ob_end_flush()/ob_get_clean() call.'
+            );
+        } elseif (trim($strayOutput) !== '') {
+            Injector::inst()->get(LoggerInterface::class)->warning(
+                'Content API endpoint produced stray output outside the JSON envelope '
+                    . '(suppressed from the response; likely a PHP notice/deprecation from '
+                    . 'application code) — the response itself is still accurate, but check '
+                    . 'the source below for a bug worth fixing.',
+                ['strayOutput' => substr($strayOutput, 0, 4000)]
+            );
+        }
+
+        return $response;
     }
 
     protected function jsonResponse(mixed $data, array $meta = [], int $status = 200): HTTPResponse
