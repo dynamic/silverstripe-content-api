@@ -50,13 +50,19 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
   `mode: "archive"` always does, and any mode on an unversioned class does (every delete mode
   converges on a real `delete()` there); `mode: "unpublish"` on a versioned class only touches
   the live stage, so it's correctly skipped rather than checked against a draft row it never
-  touched. `updated` results still aren't independently verified — no pre-image is retained to
-  compare against. If any checked `created`/`deleted` record's presence contradicts the claimed
-  rollback — confirmed possible when a non-`Throwable` PHP diagnostic (e.g. a deprecation
-  notice from application code this module doesn't control) fires mid-write — the response
-  reports `500 ROLLBACK_UNVERIFIED` instead. That response does **not** narrow down which
-  record(s) are still present; it carries the same full `error.details` block as a normal
-  rollback failure, so re-check every `created`/`deleted` result in it by hand before retrying.
+  touched. `updated` results are checked too: the declared `fields` keys are snapshotted before
+  the write, and the row is re-read afterward to confirm they're genuinely back at their prior
+  values — **but only the declared `fields` keys**. An `update` whose payload carries only
+  `relations` (no `fields` at all) has nothing to snapshot, so it can't be verified and the
+  batch reports `ROLLBACK_UNVERIFIED` rather than a false `rolledBack: true`; relation changes
+  themselves are never covered by this check, on any `update`. Verification also only reads
+  DRAFT — an `update` with `publish` set also wrote LIVE, which isn't independently re-checked.
+  If any checked `created`/`deleted`/`updated` record's state contradicts the claimed rollback
+  — confirmed possible when a non-`Throwable` PHP diagnostic (e.g. a deprecation notice from
+  application code this module doesn't control) fires mid-write — the response reports
+  `500 ROLLBACK_UNVERIFIED` instead. That response does **not** narrow down which record(s) are
+  still present; it carries the same full `error.details` block as a normal rollback failure,
+  so re-check every `created`/`deleted`/`updated` result in it by hand before retrying.
   See `docs/en/12_error-codes.md`.
 
 ## Response shape

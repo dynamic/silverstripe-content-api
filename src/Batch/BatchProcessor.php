@@ -60,19 +60,28 @@ class BatchProcessor
         $atomic = !empty($payload['atomic']);
         $defaultPublish = (string) ($payload['defaultPublish'] ?? 'none');
 
+        // Populated by run()/runOperation() as 'updated' results are
+        // produced — pre-images for verifyRollback() (#127). Declared here,
+        // outside the atomic/non-atomic branch, so both paths share one
+        // variable; only the atomic path ever reads it back, but a plain
+        // by-reference array threaded through the call stack (rather than
+        // instance state on this shared/injected service) keeps concurrent
+        // or re-entrant process() calls from stepping on each other.
+        $preImages = [];
+
         if (!$atomic) {
-            return $this->run($operations, $defaultPublish, $member, false);
+            return $this->run($operations, $defaultPublish, $member, false, $preImages);
         }
 
         $outcome = null;
 
         try {
-            DbTransaction::run(function () use ($operations, $defaultPublish, $member, &$outcome) {
-                $outcome = $this->run($operations, $defaultPublish, $member, true);
+            DbTransaction::run(function () use ($operations, $defaultPublish, $member, &$outcome, &$preImages) {
+                $outcome = $this->run($operations, $defaultPublish, $member, true, $preImages);
             });
         } catch (BatchAbortException $aborted) {
             $result = $aborted->partialOutcome;
-            $verified = $this->verifyRollback($operations, $result['results']);
+            $verified = $this->verifyRollback($operations, $result['results'], $preImages);
             $result['rolledBack'] = $verified;
 
             if ($verified) {
@@ -121,13 +130,26 @@ class BatchProcessor
      * applies once the transaction has unwound), reading the same DRAFT
      * stage every write in this batch targeted.
      *
-     * An 'updated' op's pre-image isn't retained anywhere to compare
-     * against, so those are still skipped entirely. A 'deleted' op's id
-     * IS retained, and is verified — but only when the delete could
-     * actually have touched DRAFT: an 'unpublish'-mode delete on a
-     * versioned class only removes the LIVE row, leaving DRAFT untouched
-     * either way, so checking for its presence there would read as
-     * falsely "fine" regardless of what really happened (#75). 'archive'
+     * An 'updated' op is now verified too (#127): `runOperation()` captures
+     * a pre-image of the declared field keys (via `RecordWriter::write()`)
+     * before the write happens, threaded down from `process()` as
+     * `$preImages`. If a result claims 'updated' but no pre-image was
+     * captured for its index — an update whose payload declared no
+     * `fields` at all, e.g. a relations-only change — there is nothing to
+     * compare against, and this fails closed (unverified) rather than
+     * silently treating "nothing to check" as "fine". Relation changes
+     * themselves are never covered by this pre-image, only field values;
+     * an atomic batch that only ever touches relations on its `update`
+     * ops gets no rollback coverage from this method, same as before #127.
+     * Verification also only ever reads DRAFT — an `update` with
+     * `publish: "single"`/`"recursive"`/`"subtree"` also wrote LIVE, which
+     * this method has no way to check.
+     *
+     * A 'deleted' op's id IS retained, and is verified — but only when the
+     * delete could actually have touched DRAFT: an 'unpublish'-mode delete
+     * on a versioned class only removes the LIVE row, leaving DRAFT
+     * untouched either way, so checking for its presence there would read
+     * as falsely "fine" regardless of what really happened (#75). 'archive'
      * mode, and any mode at all on an unversioned class (every delete
      * mode converges on a real delete() there — see
      * PublishOrchestrator::delete()), do reach DRAFT and are verified the
@@ -142,19 +164,22 @@ class BatchProcessor
      * Throwable here fails toward "can't verify" (false) rather than
      * propagating and replacing the whole response with a bare
      * SERVER_ERROR that drops $results entirely.
+     *
+     * @param array<int, array<string, mixed>> $preImages keyed by operation
+     *   index, only present for 'updated' results — see `RecordWriter::write()`
      */
-    protected function verifyRollback(array $operations, array $results): bool
+    protected function verifyRollback(array $operations, array $results, array $preImages = []): bool
     {
         $operations = array_values($operations);
 
         try {
-            return Versioned::withVersionedMode(function () use ($operations, $results) {
+            return Versioned::withVersionedMode(function () use ($operations, $results, $preImages) {
                 Versioned::set_stage(Versioned::DRAFT);
 
                 foreach ($results as $result) {
                     $status = $result['status'] ?? '';
 
-                    if (!in_array($status, ['created', 'deleted'], true) || !isset($result['id'])) {
+                    if (!in_array($status, ['created', 'deleted', 'updated'], true) || !isset($result['id'])) {
                         continue;
                     }
 
@@ -187,6 +212,36 @@ class BatchProcessor
                         continue;
                     }
 
+                    if ($status === 'updated') {
+                        $preImage = $preImages[$result['index']] ?? null;
+
+                        if (!is_array($preImage) || $preImage === []) {
+                            // No fields were snapshotted for this result —
+                            // nothing to diff. Fail closed rather than
+                            // implicitly reporting "verified" for a check
+                            // that never actually ran.
+                            return false;
+                        }
+
+                        $record = DataObject::get($className)->byID((int) $result['id']);
+
+                        if (!$record) {
+                            // A claimed "rolled back" update can't leave the
+                            // record itself missing — something else (not
+                            // this update) destroyed it; can't confirm the
+                            // rollback either way.
+                            return false;
+                        }
+
+                        foreach ($preImage as $field => $originalValue) {
+                            if ((string) $record->getField($field) !== (string) $originalValue) {
+                                return false;
+                            }
+                        }
+
+                        continue;
+                    }
+
                     if (DataObject::get($className)->byID((int) $result['id'])) {
                         return false;
                     }
@@ -200,19 +255,28 @@ class BatchProcessor
     }
 
     /**
+     * @param array<int, array<string, mixed>> $preImages written into by
+     *   reference as 'updated' results are produced — see verifyRollback()
      * @throws BatchAbortException when atomic and an op fails
      */
-    protected function run(array $operations, string $defaultPublish, Member $member, bool $abortOnError): array
-    {
+    protected function run(
+        array $operations,
+        string $defaultPublish,
+        Member $member,
+        bool $abortOnError,
+        array &$preImages
+    ): array {
         $results = [];
         $summary = ['created' => 0, 'updated' => 0, 'deleted' => 0, 'skipped' => 0, 'errors' => 0];
 
         foreach (array_values($operations) as $index => $operation) {
-            $result = Versioned::withVersionedMode(function () use ($operation, $defaultPublish, $member, $index) {
-                Versioned::set_stage(Versioned::DRAFT);
+            $result = Versioned::withVersionedMode(
+                function () use ($operation, $defaultPublish, $member, $index, &$preImages) {
+                    Versioned::set_stage(Versioned::DRAFT);
 
-                return $this->runOperation((array) $operation, $defaultPublish, $member, $index);
-            });
+                    return $this->runOperation((array) $operation, $defaultPublish, $member, $index, $preImages);
+                }
+            );
 
             $results[] = $result;
 
@@ -230,8 +294,17 @@ class BatchProcessor
         return ['results' => $results, 'summary' => $summary];
     }
 
-    protected function runOperation(array $operation, string $defaultPublish, Member $member, int $index): array
-    {
+    /**
+     * @param array<int, array<string, mixed>> $preImages written into by
+     *   reference when this operation produces an 'updated' result
+     */
+    protected function runOperation(
+        array $operation,
+        string $defaultPublish,
+        Member $member,
+        int $index,
+        array &$preImages
+    ): array {
         try {
             $op = (string) ($operation['op'] ?? '');
             $className = $this->registry->resolve((string) ($operation['class'] ?? ''));
@@ -270,6 +343,13 @@ class BatchProcessor
                         ErrorCode::PAYLOAD_INVALID,
                         sprintf('Unknown op "%s" — use create, upsert, update or delete.', $op)
                     );
+            }
+
+            // #127: carried out of the public $out below — a rollback
+            // pre-image is verifyRollback()'s internal bookkeeping, never
+            // part of the API response.
+            if (($result['preImage'] ?? null) !== null) {
+                $preImages[$index] = $result['preImage'];
             }
 
             $serialized = $this->serializer->serialize($result['record']);

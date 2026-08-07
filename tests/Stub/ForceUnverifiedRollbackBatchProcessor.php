@@ -15,7 +15,7 @@ use Dynamic\ContentApi\Batch\BatchProcessor;
  */
 class ForceUnverifiedRollbackBatchProcessor extends BatchProcessor
 {
-    protected function verifyRollback(array $operations, array $results): bool
+    protected function verifyRollback(array $operations, array $results, array $preImages = []): bool
     {
         return false;
     }
