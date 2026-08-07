@@ -13,6 +13,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentSubclassObject;
@@ -22,6 +23,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
+use Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
@@ -57,8 +59,10 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestOwnedParentObject::class,
         ApiTestOwnedParentSubclassObject::class,
         ApiTestOwnedChildObject::class,
+        ApiTestOwnedChildSubclassObject::class,
         ApiTestOwnedGrandchildObject::class,
         ApiTestOwnsCycleObject::class,
+        ApiTestUnversionedOwnedWrapperObject::class,
     ];
 
     protected function setUp(): void
@@ -102,6 +106,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestOwnedParentObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedParentSubclassObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestOwnedChildSubclassObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedGrandchildObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);
     }
