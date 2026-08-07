@@ -64,18 +64,14 @@ class SchemaService
             ];
         }
 
-        $populationAllowed = true;
-
-        try {
-            $this->environmentGate->checkPopulationAllowed();
-        } catch (\Dynamic\ContentApi\Errors\ApiError) {
-            $populationAllowed = false;
-        }
-
         return [
             'api' => 'silverstripe-content-api/v1',
             'environment' => Director::get_environment_type(),
-            'populationEnabled' => $populationAllowed,
+            // isPopulationAllowed() — not checkPopulationAllowed() — this is
+            // a read-only status probe, not an attempted write, and must
+            // never trigger checkPopulationAllowed()'s own "population
+            // blocked" warning log on every GET (#126 review follow-up).
+            'populationEnabled' => $this->environmentGate->isPopulationAllowed(),
             'crud' => $this->crudSurface(),
             'integrations' => $this->detectIntegrations(),
             'classes' => $classes,

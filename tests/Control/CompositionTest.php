@@ -724,6 +724,50 @@ class CompositionTest extends ContentApiTestCase
     }
 
     /**
+     * #115/#118: `ExposureScaffolder` (the `sake tasks:GenerateContentApiExposure`
+     * generator) deliberately puts every class it scaffolds into ALLOWLIST
+     * mode (a non-empty `api_writable_fields`) and just as deliberately
+     * never includes `Parent`/`ParentID` in that list — see its own
+     * docblock. `testComposingADisallowedElementIsRejected` above proves
+     * placement enforcement under this fixture's *default* `guarded`
+     * policy; this proves the same guard still fires once the class is
+     * reconfigured into the exact allowlist shape the generator would
+     * actually produce, so a future refactor can't accidentally make
+     * `RecordWriter::assertElementPlacementAllowed()` conditional on write
+     * policy without a test catching it. `ParentID` is deliberately absent
+     * from the temporary allowlist below — composition sets it via the
+     * trusted internal channel regardless, matching how the generator's
+     * own output is meant to be used.
+     */
+    public function testComposingADisallowedElementIsRejectedUnderAGeneratorShapedAllowlist(): void
+    {
+        $page = $this->blockPage();
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        Config::modify()->set(ApiTestElement::class, 'api_writable_fields', [
+            'Title', 'ShowTitle', 'Sort', 'ExtraClass', 'Style', 'Intro', 'Photo', 'Cta',
+        ]);
+        static::resetElementalTypesCache();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'disallowed-allowlist-1',
+                    'fields' => ['Title' => 'Should still be rejected'],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'ELEMENT_NOT_ALLOWED_ON_PAGE', 422);
+        $this->assertNull(
+            ApiTestElement::get()->filter('FixtureIdentifier', 'disallowed-allowlist-1')->first(),
+            'a rejected element must not be persisted, allowlist mode or not'
+        );
+    }
+
+    /**
      * The enforcement is per page-class-and-element-class, not a global
      * kill switch — disallowing ApiTestElement on this page type must not
      * also block a different, still-allowed element type.

@@ -2,10 +2,15 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
 
 class SchemaTest extends ContentApiTestCase
@@ -38,6 +43,21 @@ class SchemaTest extends ContentApiTestCase
         $this->assertTrue($body['data']['integrations']['linkfield']);
         $this->assertTrue($body['data']['integrations']['restfulapi']);
         $this->assertArrayHasKey('populationEnabled', $body['data']);
+
+        // #126 review follow-up: reading this flag is a status probe, not
+        // an attempted write — it must never trigger EnvironmentGate's
+        // "population blocked" warning log, or every GET schema call on a
+        // live-type target would falsely log one.
+        $logHandler = new TestHandler();
+        Injector::inst()->registerService(new Logger('test', [$logHandler]), LoggerInterface::class);
+        Config::modify()->set(EnvironmentGate::class, 'population_enabled_environments', []);
+
+        $this->decode($this->apiGet('schema', $this->token));
+
+        $this->assertEmpty(
+            $logHandler->getRecords(),
+            'reading populationEnabled must never itself log a "population blocked" warning'
+        );
 
         // Generic CRUD pointer: the colymba surface.
         $crud = $body['data']['crud'];

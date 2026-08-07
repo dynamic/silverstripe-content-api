@@ -5,9 +5,55 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#115, #118)** New `sake tasks:GenerateContentApiExposure` (`GenerateContentApiExposureTask`/
+  `ExposureScaffolder`), introspecting one or more `--root` FQCNs (repeatable) and every concrete
+  subclass into starting-point `api_access`/`api_writable_fields`/`api_writable_relations`/
+  `extensions` YAML — printed to stdout by default, or written wholesale to a dedicated
+  AUTO-GENERATED file via `--write`. Model-agnostic by construction: it reflects on whatever
+  classes a project names (a private Essentials class, a third-party package, a `has_many`-off-
+  `SiteTree` model) rather than the module shipping an opinion about any specific package's field
+  set — an earlier `elemental.yml`/`flexslider.yml` exposure-pack approach was rejected during
+  design for exactly that reason, plus the risk of silently reconfiguring every project with
+  elemental installed on upgrade. A class that's a strict ancestor of another class in the same
+  output (e.g. `--root=BaseElement` alongside its own concrete subclasses) never gets its own
+  `api_writable_fields` block — hoisting one onto a shared ancestor would silently allowlist every
+  field on every subclass too, the same #27 mistake this module already fixed once — generalized
+  rather than hardcoded to any one class. `ClassRegistry::discoveryDenylist()` widened from
+  `protected` to `public` so the scaffolder reuses it rather than re-deriving a second denylist
+  that could drift from the first. Also documents the legacy-element (no external id) addressing
+  and `prune` gotcha in `docs/en/08_page-compositions.md`, and adds a regression test proving
+  `RecordWriter::assertElementPlacementAllowed()` still fires under the exact allowlist shape this
+  generator produces, not just the fixture suite's default `guarded` policy.
+- **(#126)** `EnvironmentGate::checkPopulationAllowed()` now logs a warning (via the injected
+  `LoggerInterface`, not the wire response — the `403 ENV_FORBIDDEN` error itself already said
+  what to do) the moment it blocks a call, worded around the gap the issue described: a `dev`/
+  `test` rehearsal never reaches this gate at all, so a clean, repeated local rehearsal gives no
+  signal that a real `live`-type target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. Docs
+  (`01_quickstart.md`, `02_configuration.md#environmentgate`) now call this out explicitly before
+  a first production write. The wire error code stays `ENV_FORBIDDEN` — it was already dedicated
+  to this one check (not a generic/shared code), so changing it would be a breaking change to
+  every existing consumer's error handling for a discoverability gap the issue itself locates
+  entirely upfront, before the error is ever hit. A new `EnvironmentGate::isPopulationAllowed()`
+  silent probe (no throw, no log) was split out for `SchemaService`'s read-only
+  `populationEnabled` flag, so checking that flag on `GET schema/site` can never itself trigger
+  the "population blocked" warning meant for an actual blocked write.
+
 ## [2.1.0] - 2026-08-07
 
 ### Added
+- **(#106)** Merged branch `1` up to this branch (32 commits) — the first merge-up since the
+  branch rename flipped the sync direction (this branch now receives from branch `1`, not the
+  reverse; see the Branch policy section of the README). Brings two features that now land here
+  for the first time, ported to this branch's own conventions where the two branches'
+  entry-point shapes differ: **(#90, #102)** `PublishOrchestrator`'s `subtree` mode now
+  authorization-checks every descendant before publishing any of it, and accepts `liveOnly`
+  (skip already-unpublished descendant branches) and `dryRun` (report the would-publish set
+  without writing) options — see `docs/en/10_publishing-and-stages.md#publish-modes`. **(#103)**
+  A new diagnostic task, `sake tasks:CheckGrantExtensionReachability`
+  (`CheckGrantExtensionReachabilityTask`/`GrantExtensionReachabilityChecker`), flags any class
+  carrying `ContentApiGrantExtension` whose own `can*()` override never calls `extendedCan()` —
+  see `docs/en/04_security-model.md#the-extendedcan-contract-this-extension-depends-on`.
 - **(#131)** `GET fingerprint`: a deterministic, path-keyed snapshot of the site's content for
   diffing across gates (before/after a batch, same environment) or across environments (a local
   rehearsal vs. production ahead of a replay), via new `Dynamic\ContentApi\Verify\
