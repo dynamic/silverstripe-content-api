@@ -38,8 +38,19 @@ All notable changes to this project are documented here. Format loosely follows
   `RecordsHandler::readList()` filters a list — caught and fixed in review before this endpoint
   ever shipped without it, since a first draft applied only a coarse "does this token have
   `CONTENT_API_ACCESS` at all" gate and would otherwise have disclosed every draft-only/restricted
-  page's path, class, and live status to any holder of that one permission code. Spec bumped to
-  `v1.11`. See [docs/en/16_verification.md](docs/en/16_verification.md).
+  page's path, class, and live status to any holder of that one permission code. A second review
+  round on that ACL fix itself caught: `totals` was still computed over the unfiltered internal
+  state (leaking exactly how many hidden records exist, and disagreeing with the row counts a
+  restricted caller could actually see) — now counted only over what the caller can view, matching
+  `RecordsHandler::readList()`'s own #20 precedent; `unresolvedIds` could leak a record's id even
+  when that record itself was invisible to the caller (the ACL check ran after, not before, the
+  unresolved-owner branch); `violations` was silently suppressed by `classes=` excluding a
+  section's OUTPUT, when a reachability problem must be reported regardless of which sections were
+  requested — the identical "a check that only runs when asked for reads as false 'no drift'"
+  reasoning that already made an unknown `classes=` ref a hard rejection. Also pre-populates
+  `Versioned`'s per-record version-number cache before the per-row ACL check, avoiding an
+  otherwise-unbounded per-page query count across a whole-site scan. Spec bumped to `v1.11`. See
+  [docs/en/16_verification.md](docs/en/16_verification.md).
 - **(#120)** `GET records/$ClassRef/$ID/parity`: does this record, and everything it `$owns`,
   match between draft and live, and where do they differ. Compares a configurable set of the
   root's own fields (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/`URLSegment`/`Sort` by default,
