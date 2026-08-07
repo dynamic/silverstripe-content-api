@@ -5,8 +5,6 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
-## [2.1.0] - 2026-08-07
-
 ### Fixed
 - **(#105)** This branch (`2`, SS6) had never been swept for stale self-references after the
   2026-08 branch rename (`1`->`2` SS6, `ss5`->`1` SS5 — #106): several docblocks and one doc table
@@ -33,6 +31,10 @@ All notable changes to this project are documented here. Format loosely follows
   (`CheckGrantExtensionReachabilityTask`/`GrantExtensionReachabilityChecker`), flags any class
   carrying `ContentApiGrantExtension` whose own `can*()` override never calls `extendedCan()` —
   see `docs/en/04_security-model.md#the-extendedcan-contract-this-extension-depends-on`.
+
+## [2.1.0] - 2026-08-07
+
+### Added
 - **(#131)** `GET fingerprint`: a deterministic, path-keyed snapshot of the site's content for
   diffing across gates (before/after a batch, same environment) or across environments (a local
   rehearsal vs. production ahead of a replay), via new `Dynamic\ContentApi\Verify\
@@ -156,6 +158,10 @@ All notable changes to this project are documented here. Format loosely follows
   field — matching what a genuine rollback actually restores it to, even when different ops
   touched different fields on the same record. See
   [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md).
+
+## [2.0.0] - 2026-08-07
+
+### Added
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
   enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
   `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is
@@ -599,6 +605,8 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[2.1.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.0.0...2.1.0
+[2.0.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.4.0...2.0.0
 [1.4.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.3.0...1.4.0
 [1.3.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.1.0...1.2.0
