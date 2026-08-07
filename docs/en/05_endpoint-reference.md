@@ -28,6 +28,7 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 | `GET` | `records/$ClassRef` | List records, with filtering/sorting/pagination/stage |
 | `GET` | `records/$ClassRef/$ID` | Read one record — numeric id or `ext:<external-id>` |
 | `GET` | `records/$ClassRef/$ID/parity` | Draft/live field diff for a record and its owned tree |
+| `GET` | `fingerprint` | Deterministic, path-keyed content snapshot + reachability check |
 | `POST` | `records/$ClassRef/$ID/publish\|unpublish\|archive` | Stage actions (`{"recursive": true}` on publish) |
 | `POST` | `batch` | Ordered `create\|upsert\|update\|delete` operations |
 | `POST` | `compositions/page` | Atomic full-page composition |
@@ -80,6 +81,17 @@ PAYLOAD_INVALID` for a non-Versioned class (nothing to compare); `404 NOT_FOUND`
 unresolvable id. Query params: `include=none` skips the owned-tree walk (default: walked);
 `depth=N` caps how far it recurses. Full reference:
 [Publishing & stages](10_publishing-and-stages.md#draftlive-parity).
+
+## `GET fingerprint`
+
+A deterministic, path-keyed snapshot of the site's content, meant to be diffed — the same
+environment before/after a batch, or two different environments ahead of a replay. Pages are
+keyed by URL path rather than id (ids churn across a rebuild/sync/environment boundary; paths
+don't) and `violations` asserts the reachability invariant a plain snapshot can't: a live page (or
+live related record) whose path runs through a non-live ancestor. Query params: `classes=` (comma
+list of section refs — `pages` plus any project-configured `related` ref — restricting the
+response; omit for everything), `includeIds=true` (adds ids back in, off by default). Full
+reference: [Verification](16_verification.md#fingerprint).
 
 ## `POST records/$ClassRef/$ID/{action}`
 

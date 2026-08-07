@@ -6,6 +6,29 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#131)** `GET fingerprint`: a deterministic, path-keyed snapshot of the site's content for
+  diffing across gates (before/after a batch, same environment) or across environments (a local
+  rehearsal vs. production ahead of a replay), via new `Dynamic\ContentApi\Verify\
+  FingerprintService`. Pages are keyed by URL path, not id — ids churn across a rebuild/re-seed/
+  environment boundary, paths don't; the path is an in-memory `ParentID` walk forced to `DRAFT`
+  explicitly regardless of the ambient reading mode (a plain unstaged query would otherwise
+  silently drop every draft-only page from the enumeration entirely whenever the ambient mode
+  happened to be Live, not merely report it as not-live). Also asserts the reachability
+  invariant the issue is named for: `violations` lists every live page (or live `related` record,
+  one hop out through its own owner's ancestor chain) whose path runs through a non-live
+  ancestor — `SiteTree::get_by_link()` 404s on the first non-live path segment regardless of the
+  target row's own live status, and the real-world prototype's own fingerprint output already
+  contained both contradicting lines with nothing checking them against each other. `related`
+  sections are project-configured (a class plus its direct owner-page FK column, e.g.
+  `'HeroSlide' => 'PageID'`); an owner id that doesn't resolve to a known page is counted in
+  `unresolved`, never leaked as a raw id (the prototype's own known weakness) unless
+  `includeIds=true` is set. `classes=` restricts which sections appear in the response without
+  affecting internal owner-path resolution — narrowing to a `related` ref without `pages` still
+  resolves through the same index a full scan would use. Every collection is sorted and ids are
+  excluded from `data` by default, so two fingerprints (or the same one twice) diff as plain
+  text/structure; `meta.skipped` reports classes this token can't read separately from `data`, so
+  a diff between callers with different permissions doesn't read as false-clean. Spec bumped to
+  `v1.11`. See [docs/en/16_verification.md](docs/en/16_verification.md).
 - **(#120)** `GET records/$ClassRef/$ID/parity`: does this record, and everything it `$owns`,
   match between draft and live, and where do they differ. Compares a configurable set of the
   root's own fields (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/`URLSegment`/`Sort` by default,

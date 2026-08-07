@@ -10,6 +10,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
+use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
@@ -63,6 +64,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestOwnedGrandchildObject::class,
         ApiTestOwnsCycleObject::class,
         ApiTestUnversionedOwnedWrapperObject::class,
+        ApiTestFingerprintRelatedObject::class,
     ];
 
     protected function setUp(): void
@@ -85,6 +87,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestOwnedParentSubclass' => ApiTestOwnedParentSubclassObject::class,
             'ApiTestOwnedChild' => ApiTestOwnedChildObject::class,
             'ApiTestOwnedGrandchild' => ApiTestOwnedGrandchildObject::class,
+            'ApiTestFingerprintRelated' => ApiTestFingerprintRelatedObject::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
@@ -109,6 +112,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestOwnedChildSubclassObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedGrandchildObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestFingerprintRelatedObject::class, 'api_access', true);
     }
 
     /**

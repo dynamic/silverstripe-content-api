@@ -8,6 +8,7 @@ use Dynamic\ContentApi\Control\Handlers\AssetHandler;
 use Dynamic\ContentApi\Control\Handlers\AuthHandler;
 use Dynamic\ContentApi\Control\Handlers\BatchHandler;
 use Dynamic\ContentApi\Control\Handlers\CompositionHandler;
+use Dynamic\ContentApi\Control\Handlers\FingerprintHandler;
 use Dynamic\ContentApi\Control\Handlers\PageHandler;
 use Dynamic\ContentApi\Control\Handlers\ParityHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordActionsHandler;
@@ -59,6 +60,7 @@ class ContentApiController extends Controller
         'POST compositions/page' => 'handleComposition',
         'GET schema/$ClassRef' => 'handleSchema',
         'GET schema' => 'handleSchema',
+        'GET fingerprint' => 'handleFingerprint',
         '' => 'handleIndex',
     ];
 
@@ -74,6 +76,7 @@ class ContentApiController extends Controller
         'handleBatch',
         'handleComposition',
         'handleSchema',
+        'handleFingerprint',
         'handleIndex',
     ];
 
@@ -88,6 +91,7 @@ class ContentApiController extends Controller
         'batchHandler' => '%$' . BatchHandler::class,
         'compositionHandler' => '%$' . CompositionHandler::class,
         'schemaHandler' => '%$' . SchemaHandler::class,
+        'fingerprintHandler' => '%$' . FingerprintHandler::class,
     ];
 
     public ?ColymbaTokenAuthenticator $authenticator = null;
@@ -109,6 +113,8 @@ class ContentApiController extends Controller
     public ?CompositionHandler $compositionHandler = null;
 
     public ?SchemaHandler $schemaHandler = null;
+
+    public ?FingerprintHandler $fingerprintHandler = null;
 
     protected ?AuthContext $authContext = null;
 
@@ -208,6 +214,15 @@ class ContentApiController extends Controller
             $this->requireAuth($request);
 
             return $this->schemaHandler->handle($request, $this->authContext);
+        });
+    }
+
+    public function handleFingerprint(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->fingerprintHandler->handle($request, $this->authContext);
         });
     }
 

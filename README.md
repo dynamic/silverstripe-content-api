@@ -188,6 +188,7 @@ Full reference lives in [docs/en/](docs/en/index.md):
 | [Migrating from fixtures](docs/en/13_migrating-from-fixtures.md) | Populate-YAML → content API |
 | [Architecture](docs/en/14_architecture.md) | Request lifecycle, service map, the two write surfaces |
 | [Testing & contributing](docs/en/15_testing-and-contributing.md) | Test setup, running the suite, spec-sync |
+| [Verification](docs/en/16_verification.md) | Fingerprint → dry-run → apply → parity → reachability, as one workflow |
 | [Upstream issues](docs/en/upstream-issues.md) | The colymba/silverstripe-restfulapi support workstream |
 
 `schema/endpoints.json` describes this module's endpoints as MCP-style tool definitions;
