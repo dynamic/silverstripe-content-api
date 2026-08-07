@@ -184,40 +184,64 @@ class BatchProcessor
             });
 
             // DbTransaction::run() never returns normally from the closure
-            // above — it always throws DryRunCompleteException. Reaching
-            // this line at all would mean that guarantee broke somehow;
-            // treat it the same as a failed verification rather than
-            // silently reporting an empty dry run as successful.
+            // above — it always throws DryRunCompleteException, and
+            // withTransaction() itself only ever returns without invoking
+            // the callback at all (transactions unsupported) by throwing
+            // BadMethodCallException first. Reaching this line would mean
+            // neither of those held — the closure never ran, so nothing
+            // was written; SERVER_ERROR is the honest signal, not
+            // ROLLBACK_UNVERIFIED (which specifically means "something MAY
+            // have been written and we can't tell").
             throw new ApiError(
-                ErrorCode::ROLLBACK_UNVERIFIED,
-                'Dry run did not complete as expected — treat as unverified.'
+                ErrorCode::SERVER_ERROR,
+                'Dry run did not complete as expected.'
             );
         } catch (DryRunCompleteException $complete) {
             $outcome = $complete->outcome;
             $failedIndex = $complete->failedIndex;
         }
 
-        $verified = $this->verifyRollback($operations, $outcome['results'], $preImages);
+        // Non-strict (#127's $strict = false): a relations-only `update` —
+        // the module's normal element-attach shape, see
+        // docs/en/06_write-payloads.md#relations-has_many--many_many — has
+        // no pre-image to check, same as it does on a real run. In strict
+        // mode (the real-atomic-failure caller below) that's deliberately
+        // treated as "can't confirm, fail closed"; here, where nothing
+        // failed and the whole batch is guaranteed rolled back regardless,
+        // treating an uncheckable field set as proof of a BROKEN rollback
+        // would make dry-run unusable for the single most common op shape.
+        // "Nothing to check" and "checked and wrong" are different things —
+        // only the latter should ever produce ROLLBACK_UNVERIFIED here.
+        $verified = $this->verifyRollback($operations, $outcome['results'], $preImages, false);
 
         if (!$verified) {
             throw new ApiError(
                 ErrorCode::ROLLBACK_UNVERIFIED,
                 'Dry run could not be verified as having made zero persistent changes '
                     . '— check the affected records directly before trusting this preflight.',
-                [$outcome]
+                [$outcome + ['dryRun' => true]]
             );
         }
 
         if ($failedIndex !== null) {
             // Predict exactly what a real atomic run would report for the
-            // same failure — the only difference is `rolledBack` is
+            // same failure — mapped through the same would* vocabulary as
+            // the success path below, so a caller parsing this error's
+            // `details[0].results[].status` never sees a real-run status
+            // for a batch that was guaranteed rolled back. The only
+            // difference from a real failed atomic run: `rolledBack` is
             // unconditionally true here (just proven above), where a real
-            // failed run's rollback still has to be independently verified
+            // run's rollback still has to be independently verified
             // per-request.
             throw new ApiError(
                 ErrorCode::VALIDATION_FAILED,
                 sprintf('Dry run: atomic batch would fail at operation %d.', $failedIndex),
-                [$outcome + ['rolledBack' => true]]
+                [[
+                    'results' => $this->toDryRunResults($outcome['results']),
+                    'summary' => $this->toDryRunSummary($outcome['summary']),
+                    'rolledBack' => true,
+                    'dryRun' => true,
+                ]]
             );
         }
 
@@ -241,7 +265,18 @@ class BatchProcessor
         $map = ['created' => 'wouldCreate', 'updated' => 'wouldUpdate', 'deleted' => 'wouldDelete'];
 
         return array_map(static function (array $result) use ($map) {
-            $result['status'] = $map[$result['status']] ?? $result['status'];
+            $originalStatus = $result['status'];
+            $result['status'] = $map[$originalStatus] ?? $originalStatus;
+
+            // RecordWriter::delete()'s result carries a literal
+            // "deleted": true — accurate on a real run, actively
+            // misleading on a dry run (the record still exists). Every
+            // other passed-through key (id/className/externalId/mode) is
+            // still accurate regardless of whether the write actually
+            // happened.
+            if ($originalStatus === 'deleted') {
+                $result['deleted'] = false;
+            }
 
             return $result;
         }, $results);
@@ -249,13 +284,19 @@ class BatchProcessor
 
     protected function toDryRunSummary(array $summary): array
     {
-        return [
-            'wouldCreate' => $summary['created'] ?? 0,
-            'wouldUpdate' => $summary['updated'] ?? 0,
-            'wouldDelete' => $summary['deleted'] ?? 0,
-            'skipped' => $summary['skipped'] ?? 0,
-            'errors' => $summary['errors'] ?? 0,
-        ];
+        $map = ['created' => 'wouldCreate', 'updated' => 'wouldUpdate', 'deleted' => 'wouldDelete'];
+        $out = [];
+
+        // Same map as toDryRunResults(), applied key-wise instead of
+        // hardcoded — a future write-verb bucket run() ever adds shows up
+        // here automatically (passed through unmapped) instead of
+        // silently vanishing from the dry-run summary the way a fixed
+        // key list would drop it.
+        foreach ($summary as $key => $count) {
+            $out[$map[$key] ?? $key] = $count;
+        }
+
+        return $out;
     }
 
     /**
@@ -334,9 +375,25 @@ class BatchProcessor
      * @param array<string, array<string, mixed>> $preImages keyed by
      *   "ClassName:id", only present for 'updated' results — see
      *   `RecordWriter::write()` and `runOperation()`
+     * @param bool $strict When true (the real-atomic-failure caller, i.e.
+     *   `process()`), an 'updated' result with no captured pre-image
+     *   (relations-only payload — this pre-image mechanism never covers
+     *   relations) fails closed: a genuine failure justifies not claiming
+     *   confidence this method doesn't actually have. When false (the
+     *   dry-run caller, `runDryRun()`, where nothing failed and the whole
+     *   batch is guaranteed rolled back regardless), the same situation is
+     *   skipped instead — "nothing was captured to check" is not evidence
+     *   the rollback was broken, and treating it as such would make a dry
+     *   run of the module's normal element-attach shape (an `update` whose
+     *   payload is `relations` only) permanently report a false
+     *   `ROLLBACK_UNVERIFIED`.
      */
-    protected function verifyRollback(array $operations, array $results, array $preImages = []): bool
-    {
+    protected function verifyRollback(
+        array $operations,
+        array $results,
+        array $preImages = [],
+        bool $strict = true
+    ): bool {
         $operations = array_values($operations);
 
         try {
@@ -368,7 +425,7 @@ class BatchProcessor
                 }
             }
 
-            return Versioned::withVersionedMode(function () use ($operations, $results, $preImages, $createdKeys) {
+            $verify = function () use ($operations, $results, $preImages, $createdKeys, $strict) {
                 Versioned::set_stage(Versioned::DRAFT);
 
                 foreach ($results as $result) {
@@ -426,10 +483,20 @@ class BatchProcessor
 
                         if (!is_array($preImage) || $preImage === []) {
                             // No fields were snapshotted for this result —
-                            // nothing to diff. Fail closed rather than
+                            // nothing to diff. In strict mode (a real
+                            // atomic failure), fail closed rather than
                             // implicitly reporting "verified" for a check
-                            // that never actually ran.
-                            return false;
+                            // that never actually ran. In non-strict mode
+                            // (a dry run, where the batch is guaranteed
+                            // rolled back regardless of this check),
+                            // "nothing to check" isn't evidence of
+                            // anything wrong — skip it and let the rest of
+                            // the batch's checks decide.
+                            if ($strict) {
+                                return false;
+                            }
+
+                            continue;
                         }
 
                         $record = DataObject::get($className)->byID((int) $result['id']);
@@ -476,7 +543,9 @@ class BatchProcessor
                 }
 
                 return true;
-            });
+            };
+
+            return Versioned::withVersionedMode($verify);
         } catch (Throwable) {
             return false;
         }

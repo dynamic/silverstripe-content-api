@@ -1511,6 +1511,44 @@ class BatchTest extends ContentApiTestCase
             ApiTestObject::get()->byID($toDelete->ID),
             'a dry-run delete must not touch the row'
         );
+        $this->assertFalse(
+            $body['data']['results'][1]['deleted'],
+            'a wouldDelete result must not claim "deleted": true — the record still exists'
+        );
+    }
+
+    /**
+     * Code-review regression test: the module's normal element-attach
+     * shape — an `update` op whose payload declares only `relations`, no
+     * `fields` — has nothing for the rollback pre-image mechanism to
+     * snapshot. On a REAL atomic failure that's deliberately
+     * ROLLBACK_UNVERIFIED (see the #127 test of the same shape). On a dry
+     * run nothing failed and the whole batch is guaranteed rolled back
+     * regardless, so this must still succeed — treating "nothing to
+     * check" as "verification failed" would make dry-run unusable for
+     * the single most common batch shape.
+     */
+    public function testDryRunWithARelationsOnlyUpdateStillSucceeds(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+
+        $record = ApiTestObject::create(['Title' => 'Unrelated to the relation change']);
+        $record->write();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Children' => ['mode' => 'set', 'items' => []]],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['wouldUpdate'], array_column($body['data']['results'], 'status'));
     }
 
     /**
@@ -1539,6 +1577,15 @@ class BatchTest extends ContentApiTestCase
      * unconditionally true here (the whole batch was wrapped in a
      * transaction that never had a chance to commit), not independently
      * re-derived per request the way a real failed atomic run's is.
+     *
+     * Code-review regression coverage: the first version of this only
+     * asserted `rolledBack`/the error code, which passed even when
+     * `error.details[0].results[].status` still reported real-run verbs
+     * (`created`, not `wouldCreate`) for a batch that never committed —
+     * this now pins the mapped vocabulary and the `dryRun` marker too,
+     * since `meta` is always `{}` on an error response (module-wide
+     * convention — see `ContentApiController::errorResponse()`) and can't
+     * carry that signal instead.
      */
     public function testAtomicDryRunPredictsTheSameValidationFailureAndLeavesNothingBehind(): void
     {
@@ -1557,7 +1604,15 @@ class BatchTest extends ContentApiTestCase
         ], $this->adminToken));
 
         $this->assertSame('VALIDATION_FAILED', $body['error']['code']);
-        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $detail = $body['error']['details'][0];
+        $this->assertTrue($detail['rolledBack']);
+        $this->assertTrue($detail['dryRun']);
+        $this->assertSame(
+            ['wouldCreate', 'error'],
+            array_column($detail['results'], 'status'),
+            'the error envelope must use the same would* vocabulary as a successful dry run'
+        );
+        $this->assertSame(1, $detail['summary']['wouldCreate']);
         $this->assertNull(ApiTestObject::get()->filter('FixtureIdentifier', 'atomic-dry-1')->first());
     }
 
