@@ -3,6 +3,8 @@
 namespace Dynamic\ContentApi\Control\Handlers;
 
 use Dynamic\ContentApi\Auth\AuthContext;
+use Dynamic\ContentApi\Errors\ApiError;
+use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Verify\FingerprintService;
 use SilverStripe\Control\HTTPRequest;
@@ -51,6 +53,15 @@ class FingerprintHandler
                 array_map('trim', explode(',', $classesParam)),
                 static fn (string $ref): bool => $ref !== ''
             ));
+
+            // "?classes=," (or any value that's all commas/whitespace)
+            // isn't "no filter" — it's malformed. Left as $classRefs = []
+            // it would silently exclude every section from the response
+            // with no error at all, the exact "false no-drift reading"
+            // failure mode an unknown ref is already rejected to avoid.
+            if ($classRefs === []) {
+                throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'classes must name at least one section.');
+            }
         }
 
         $includeIds = filter_var($request->getVar('includeIds'), FILTER_VALIDATE_BOOLEAN);

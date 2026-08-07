@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedDeniedSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRestrictedRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
@@ -893,5 +894,175 @@ class FingerprintTest extends ContentApiTestCase
             static fn (array $v) => $v['className'] === ApiTestFingerprintRelatedObject::class
         ));
         $this->assertNotFalse($violation, 'the related-class violation must still be reported');
+    }
+
+    /**
+     * Third-review-round regression test (silent-failure-hunter): the
+     * per-row class-level check `isPageVisible()` applies for `pages` was
+     * never extended to `buildRelated()` — `build()`'s related-class loop
+     * only checked `accessVerbs()` once against the CONFIGURED class, not
+     * each row's own actual (possibly more specific, possibly explicitly
+     * denied) subclass. `DataObject::get($className)` instantiates each
+     * row polymorphically, so a subclass with its own
+     * `content_api_access: false` was fully disclosed anyway as long as
+     * its parent class was exposed.
+     */
+    public function testARelatedSubclassWithExplicitlyDeniedAccessIsExcludedEvenWhenItsParentIsExposed(): void
+    {
+        $page = $this->createPage('fp-related-subclass-owner');
+
+        $this->inDraft(function () use ($page) {
+            $visible = ApiTestFingerprintRelatedObject::create(['Title' => 'Visible', 'PageID' => $page->ID]);
+            $visible->write();
+            $visible->publishSingle();
+
+            $denied = ApiTestFingerprintRelatedDeniedSubclassObject::create([
+                'Title' => 'Denied',
+                'PageID' => $page->ID,
+            ]);
+            $denied->write();
+            $denied->publishSingle();
+        });
+
+        $body = $this->fingerprint();
+
+        $this->assertCount(
+            1,
+            $body['data']['related']['ApiTestFingerprintRelated']['records'],
+            'only the parent-class record should be visible; the denied subclass must be excluded'
+        );
+        $this->assertSame(
+            ApiTestFingerprintRelatedObject::class,
+            $body['data']['related']['ApiTestFingerprintRelated']['records'][0]['className']
+        );
+    }
+
+    /**
+     * Third-review-round regression test (pr-test-analyzer): `pageViolations()`'s
+     * `!isset($visible[$id])` guard exists specifically so a violation
+     * entry never discloses a live page's path/class to a caller who
+     * can't otherwise view it. This is the one scenario that actually
+     * exercises that guard — every other "hidden ancestor" test makes the
+     * DESCENDANT visible and the ancestor hidden; this makes the
+     * would-be-violating page itself invisible.
+     */
+    public function testALiveButInvisiblePageDoesNotAppearInViolations(): void
+    {
+        $parent = $this->createPage('fp-invisible-violation-parent', 0, publish: false);
+
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', false);
+
+        $this->inDraft(function () use ($parent) {
+            $page = ApiTestBlockPage::create([
+                'Title' => 'Hidden',
+                'URLSegment' => 'fp-invisible-violation-child',
+                'ParentID' => $parent->ID,
+            ]);
+            $page->write();
+            $page->publishSingle();
+        });
+
+        $plainToken = $this->mintTokenFor('apiUser');
+        $body = $this->decode($this->apiGet('fingerprint', $plainToken));
+
+        $this->assertNull($this->pageEntry($body, '/fp-invisible-violation-parent/fp-invisible-violation-child'));
+
+        $leaked = array_filter(
+            $body['data']['violations'],
+            static fn (array $v) => str_starts_with($v['path'], '/fp-invisible-violation-parent')
+        );
+        $this->assertCount(0, $leaked, 'a live page this caller cannot view must not appear in violations either');
+    }
+
+    /**
+     * Third-review-round regression test (pr-test-analyzer): `max_path_depth`
+     * bounds `pathFor()`'s `ParentID` walk "independent of whether a
+     * cycle is actually possible" — a genuine `ParentID` cycle can't
+     * actually be constructed here (`Hierarchy::validate()` rejects one
+     * at write time, confirmed live: attempting one throws
+     * `ValidationException: Infinite loop found within the hierarchy`),
+     * unlike an arbitrary `$owns` graph (`OwnedTreeWalker`'s own cycle
+     * guard, which genuinely has no such built-in protection). The
+     * guard here is defense-in-depth for a chain deeper than configured,
+     * not a cycle — this proves that half: a chain deeper than
+     * `max_path_depth` truncates the path rather than growing past the
+     * cap.
+     */
+    public function testPathTruncatesAtTheConfiguredMaxDepth(): void
+    {
+        Config::modify()->set(FingerprintService::class, 'max_path_depth', 3);
+
+        $parentId = 0;
+        $lastSegment = '';
+
+        foreach (['fp-depth-1', 'fp-depth-2', 'fp-depth-3', 'fp-depth-4', 'fp-depth-5'] as $segment) {
+            $page = $this->createPage($segment, $parentId);
+            $parentId = $page->ID;
+            $lastSegment = $segment;
+        }
+
+        $body = $this->fingerprint();
+
+        $deepest = current(array_filter(
+            $body['data']['pages'],
+            static fn (array $p) => str_ends_with($p['path'], '/' . $lastSegment)
+        ));
+
+        $this->assertNotFalse($deepest);
+        $this->assertLessThanOrEqual(
+            3,
+            substr_count($deepest['path'], '/'),
+            'a chain deeper than max_path_depth must truncate, not keep growing past the cap'
+        );
+    }
+
+    /**
+     * Third-review-round regression test (pr-test-analyzer /
+     * comment-analyzer): `totals` for a `related` section includes
+     * records this caller can see but whose owner didn't resolve
+     * (reported separately via `unresolved`) — unlike `pages`, where
+     * `totals.draft` always equals `pages.length`, a `related` section's
+     * `totals.draft` can exceed `records.length`. Nothing previously
+     * asserted this for `related` at all.
+     */
+    public function testRelatedTotalsIncludeUnresolvedRecordsUnlikePagesTotals(): void
+    {
+        $page = $this->createPage('fp-related-totals-owner');
+
+        $this->inDraft(function () use ($page) {
+            $resolved = ApiTestFingerprintRelatedObject::create(['Title' => 'Resolved', 'PageID' => $page->ID]);
+            $resolved->write();
+            $resolved->publishSingle();
+
+            $orphan = ApiTestFingerprintRelatedObject::create(['Title' => 'Orphan', 'PageID' => 999999999]);
+            $orphan->write();
+            $orphan->publishSingle();
+        });
+
+        $body = $this->fingerprint();
+
+        $section = $body['data']['related']['ApiTestFingerprintRelated'];
+
+        $this->assertCount(1, $section['records']);
+        $this->assertSame(1, $section['unresolved']);
+        $this->assertSame(
+            count($section['records']) + $section['unresolved'],
+            $body['data']['totals']['ApiTestFingerprintRelated']['draft']
+        );
+    }
+
+    /**
+     * Third-review-round regression test (pr-test-analyzer): `?classes=,`
+     * (or any value that's all commas/whitespace after trimming) is not
+     * "no filter" — left unrejected it silently produces `$classRefs = []`,
+     * which excludes every section from the response with no error at
+     * all. The same "false no-drift reading" failure mode already makes
+     * an unknown ref a hard rejection.
+     */
+    public function testClassesParamThatIsEntirelyEmptyAfterFilteringIsRejected(): void
+    {
+        $response = $this->apiGet('fingerprint?classes=,', $this->adminToken);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }
 }
