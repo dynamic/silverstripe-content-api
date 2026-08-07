@@ -14,7 +14,6 @@ use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataList;
 use SilverStripe\ORM\DataObject;
-use SilverStripe\Versioned\Versioned;
 
 /**
  * Read endpoints: GET records/$ClassRef and GET records/$ClassRef/$ID.
@@ -30,6 +29,7 @@ class RecordsHandler
 {
     use Configurable;
     use Injectable;
+    use StageAwareTrait;
 
     private static int $default_limit = 50;
 
@@ -210,23 +210,6 @@ class RecordsHandler
         $limit = (int) ($request->getVar('limit') ?: $default);
 
         return max(1, min($limit, $max));
-    }
-
-    /**
-     * Run a callable in the requested Versioned stage; no-op wrapper for
-     * unversioned classes.
-     */
-    private function withStage(string $className, string $stage, callable $callback): mixed
-    {
-        if (!DataObject::singleton($className)->hasExtension(Versioned::class)) {
-            return $callback();
-        }
-
-        return Versioned::withVersionedMode(function () use ($stage, $callback) {
-            Versioned::set_stage($stage === 'live' ? Versioned::LIVE : Versioned::DRAFT);
-
-            return $callback();
-        });
     }
 
     private function applyFilters(DataList $list, string $className, HTTPRequest $request): DataList

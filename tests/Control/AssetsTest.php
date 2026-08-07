@@ -49,6 +49,23 @@ class AssetsTest extends ContentApiTestCase
         return [$response, $this->decode($response)];
     }
 
+    /**
+     * #130: dryRun is a `POST batch` feature only — rejected outright on
+     * asset upload rather than silently ignored, same convention as
+     * #102's dryRun/liveOnly rejection on non-subtree publish modes.
+     */
+    public function testUploadRejectsDryRunNotSilentlyIgnoringIt(): void
+    {
+        [$response, $body] = $this->uploadPixel(['dryRun' => true]);
+
+        $this->assertSame('PAYLOAD_INVALID', $body['error']['code'], (string) $response->getBody());
+        $this->assertSame(400, $response->getStatusCode());
+        $this->assertNull(
+            File::get()->filter('Name', 'pixel.png')->first(),
+            'nothing should have run — no File record must have been created'
+        );
+    }
+
     public function testUploadCreatesImage(): void
     {
         [$response, $body] = $this->uploadPixel();

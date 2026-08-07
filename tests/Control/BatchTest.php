@@ -1012,6 +1012,151 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #127, end to end: an atomic batch containing an `update` op that
+     * genuinely rolls back must report `rolledBack: true`, with the field
+     * actually back at its pre-write value — not just a claim.
+     */
+    public function testAtomicBatchWithAnUpdateRollsBackAndVerifiesTheRevertedField(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Would-be new title'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertSame(
+            'Original title',
+            ApiTestObject::get()->byID($record->ID)->Title,
+            'the update must have been genuinely rolled back, not just reported as rolled back'
+        );
+    }
+
+    /**
+     * #127's documented residual gap, end to end: an `update` op whose
+     * payload declares only `relations` (no `fields`) has no pre-image to
+     * verify against. That must surface as ROLLBACK_UNVERIFIED, not a
+     * false-positive `rolledBack: true` for a check that never ran.
+     */
+    public function testAtomicBatchWithARelationsOnlyUpdateCannotVerifyRollback(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+
+        $record = ApiTestObject::create(['Title' => 'Unrelated to the relation change']);
+        $record->write();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Children' => ['mode' => 'set', 'items' => []]],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'ROLLBACK_UNVERIFIED', 500);
+    }
+
+    /**
+     * Code-review regression test for #127: an `upsert` op that resolves
+     * to a record CREATED earlier in the same atomic batch (same external
+     * id, still uncommitted) reports 'updated', not 'created'. After a
+     * genuine rollback that record is correctly gone entirely — the
+     * 'updated' branch must not independently re-fail on "the record is
+     * missing"; the 'created' branch already asserts that's the correct
+     * state. Before the fix this reported ROLLBACK_UNVERIFIED for a batch
+     * that had, in fact, rolled back cleanly.
+     */
+    public function testAtomicBatchWithAnUpsertCreateThenUpsertUpdateOfTheSameRecordRollsBackCleanly(): void
+    {
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTest',
+                    'externalId' => 'created-then-updated',
+                    'fields' => ['Title' => 'First write'],
+                ],
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTest',
+                    'externalId' => 'created-then-updated',
+                    'fields' => ['Title' => 'Second write, same record'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue(
+            $body['error']['details'][0]['rolledBack'],
+            'a record created and then updated within the same rolled-back batch must not report ROLLBACK_UNVERIFIED'
+        );
+        $this->assertNull(ApiTestObject::get()->filter('FixtureIdentifier', 'created-then-updated')->first());
+    }
+
+    /**
+     * Code-review regression test for #127: two `update` ops touching the
+     * SAME record in one atomic batch must be checked against the record's
+     * state before the EARLIEST of the two writes, not against each op's
+     * own local snapshot — a genuine rollback restores the record all the
+     * way back to before the first write, which necessarily contradicts
+     * the second op's own (later) pre-image. Before the fix this reported
+     * ROLLBACK_UNVERIFIED for a batch that had, in fact, rolled back
+     * cleanly (confirmed by the Title assertion below).
+     */
+    public function testAtomicBatchWithTwoUpdatesToTheSameRecordRollsBackToTheEarliestState(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Second title'],
+                ],
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Third title'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue(
+            $body['error']['details'][0]['rolledBack'],
+            'two updates to the same record within one rolled-back batch must not report ROLLBACK_UNVERIFIED'
+        );
+        $this->assertSame('Original title', ApiTestObject::get()->byID($record->ID)->Title);
+    }
+
+    /**
      * Companion to the test above: an unpublish-mode delete on a Hierarchy
      * class must still report a genuinely-verified rollback — adding
      * delete verification must not turn every unpublish-mode delete into a
@@ -1292,6 +1437,251 @@ class BatchTest extends ContentApiTestCase
             (int) ApiTestElement::get()->byID($elementId)->ParentID,
             'a rejected re-parent must leave the element in its original area'
         );
+    }
+
+    /**
+     * #130: a dry-run create must leave no record behind and the response
+     * must use the `would*` vocabulary, not the real-run one — a caller
+     * inspecting `status` must never be able to mistake this for a
+     * confirmed write.
+     */
+    public function testDryRunCreateLeavesNoRecordAndReportsWouldCreate(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'dry-run-create',
+                    'fields' => ['Title' => 'Would be created'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['operation' => 'batchDryRun', 'atomic' => false], $body['meta']);
+        $this->assertSame(['wouldCreate'], array_column($body['data']['results'], 'status'));
+        $this->assertSame(1, $body['data']['summary']['wouldCreate']);
+        $this->assertNull(
+            ApiTestObject::get()->filter('FixtureIdentifier', 'dry-run-create')->first(),
+            'a dry run must never leave a real record behind'
+        );
+    }
+
+    /**
+     * #130's whole reason for existing: the exact "create + archive against
+     * production" probe pattern the prod-replay retrospective had to fall
+     * back to, now provable in one preflight call. update and delete both
+     * covered in the same batch.
+     */
+    public function testDryRunUpdateAndDeleteLeaveNoTraceAndReportWouldVerbs(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+        $toDelete = ApiTestObject::create(['Title' => 'Would be archived']);
+        $toDelete->write();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Would be updated'],
+                ],
+                [
+                    'op' => 'delete',
+                    'class' => 'ApiTest',
+                    'id' => (int) $toDelete->ID,
+                    'mode' => 'archive',
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['wouldUpdate', 'wouldDelete'], array_column($body['data']['results'], 'status'));
+        $this->assertSame(
+            'Original title',
+            ApiTestObject::get()->byID($record->ID)->Title,
+            'a dry-run update must not touch the row'
+        );
+        $this->assertNotNull(
+            ApiTestObject::get()->byID($toDelete->ID),
+            'a dry-run delete must not touch the row'
+        );
+        $this->assertFalse(
+            $body['data']['results'][1]['deleted'],
+            'a wouldDelete result must not claim "deleted": true — the record still exists'
+        );
+    }
+
+    /**
+     * Code-review regression test: the module's normal element-attach
+     * shape — an `update` op whose payload declares only `relations`, no
+     * `fields` — has nothing for the rollback pre-image mechanism to
+     * snapshot. On a REAL atomic failure that's deliberately
+     * ROLLBACK_UNVERIFIED (see the #127 test of the same shape). On a dry
+     * run nothing failed and the whole batch is guaranteed rolled back
+     * regardless, so this must still succeed — treating "nothing to
+     * check" as "verification failed" would make dry-run unusable for
+     * the single most common batch shape.
+     */
+    public function testDryRunWithARelationsOnlyUpdateStillSucceeds(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+
+        $record = ApiTestObject::create(['Title' => 'Unrelated to the relation change']);
+        $record->write();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Children' => ['mode' => 'set', 'items' => []]],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['wouldUpdate'], array_column($body['data']['results'], 'status'));
+    }
+
+    /**
+     * A dry run authorizes exactly like a real run — the whole point is to
+     * predict what a real run would do, including its failures.
+     */
+    public function testDryRunStillReportsPerOpErrors(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('UNKNOWN_FIELD', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
+     * Atomic + dryRun: a real op failure must predict the exact same
+     * VALIDATION_FAILED envelope a real atomic run would report — a dry run
+     * predicts what a real run would do, it doesn't change the shape of
+     * the failure response. The one difference: `rolledBack` is
+     * unconditionally true here (the whole batch was wrapped in a
+     * transaction that never had a chance to commit), not independently
+     * re-derived per request the way a real failed atomic run's is.
+     *
+     * Code-review regression coverage: the first version of this only
+     * asserted `rolledBack`/the error code, which passed even when
+     * `error.details[0].results[].status` still reported real-run verbs
+     * (`created`, not `wouldCreate`) for a batch that never committed —
+     * this now pins the mapped vocabulary and the `dryRun` marker too,
+     * since `meta` is always `{}` on an error response (module-wide
+     * convention — see `ContentApiController::errorResponse()`) and can't
+     * carry that signal instead.
+     */
+    public function testAtomicDryRunPredictsTheSameValidationFailureAndLeavesNothingBehind(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'atomic' => true,
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'atomic-dry-1',
+                    'fields' => ['Title' => 'First'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('VALIDATION_FAILED', $body['error']['code']);
+        $detail = $body['error']['details'][0];
+        $this->assertTrue($detail['rolledBack']);
+        $this->assertTrue($detail['dryRun']);
+        $this->assertSame(
+            ['wouldCreate', 'error'],
+            array_column($detail['results'], 'status'),
+            'the error envelope must use the same would* vocabulary as a successful dry run'
+        );
+        $this->assertSame(1, $detail['summary']['wouldCreate']);
+        $this->assertNull(ApiTestObject::get()->filter('FixtureIdentifier', 'atomic-dry-1')->first());
+    }
+
+    /**
+     * End-to-end coverage of runDryRun()'s own ROLLBACK_UNVERIFIED path —
+     * "the loudest possible failure" the whole dry-run safety guarantee
+     * rests on, previously exercised only for the real-atomic-failure
+     * path (testUnverifiedRollbackReportsDistinctlyFromAVerifiedOne
+     * above). Same forcing mechanism: the framework's real rollback
+     * works correctly under normal conditions, so nothing in a real
+     * request can force a genuine failed-verification outcome;
+     * ForceUnverifiedRollbackBatchProcessor swaps in to force it. Also
+     * pins that this specific response path deliberately does NOT map
+     * through the would* vocabulary (real verbs are the honest signal
+     * once the caller genuinely can't tell whether something committed)
+     * and carries the `dryRun: true` marker `error.details` needs since
+     * `meta` is always `{}` on any error response.
+     */
+    public function testDryRunUnverifiedRollbackReportsWithRealVerbsAndDryRunMarker(): void
+    {
+        Injector::inst()->registerService(
+            ForceUnverifiedRollbackBatchProcessor::create(),
+            BatchProcessor::class
+        );
+
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'dry-unverified-1',
+                    'fields' => ['Title' => 'First'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('ROLLBACK_UNVERIFIED', $body['error']['code']);
+        $this->assertSame(500, $body['error']['status']);
+
+        $detail = $body['error']['details'][0];
+        $this->assertTrue($detail['dryRun']);
+        $this->assertSame(
+            ['created'],
+            array_column($detail['results'], 'status'),
+            'ROLLBACK_UNVERIFIED must use real verbs, not would* — the caller genuinely doesn\'t know '
+                . 'whether this committed'
+        );
+        $this->assertNull(ApiTestObject::get()->filter('FixtureIdentifier', 'dry-unverified-1')->first());
+    }
+
+    /**
+     * The environment gate and CONTENT_API_POPULATE check must still apply
+     * to a dry run — validate-only still authorizes and resolves everything
+     * a real run would, which alone leaks schema/permission information a
+     * caller shouldn't get for free just by adding "dryRun": true.
+     */
+    public function testDryRunIsStillEnvironmentGated(): void
+    {
+        Config::modify()->set(EnvironmentGate::class, 'population_enabled_environments', []);
+
+        $response = $this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Title' => 'Should not resolve']],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'ENV_FORBIDDEN', 403);
     }
 
     /**

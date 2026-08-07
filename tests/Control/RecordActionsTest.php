@@ -37,6 +37,45 @@ class RecordActionsTest extends ContentApiTestCase
         $this->assertErrorCode($miss, 'NOT_FOUND', 404);
     }
 
+    /**
+     * #130 code-review regression: `dryRun` only ever means anything for
+     * `publish` mode "subtree" — unpublish/archive have no dry-run
+     * support at all and must reject the flag outright rather than
+     * silently performing the real, irreversible action.
+     */
+    public function testUnpublishAndArchiveRejectDryRunNotSilentlyIgnoringIt(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $unpublishTarget = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+        $unpublishTarget->publishRecursive();
+
+        $unpublishResponse = $this->apiPost(
+            "records/ApiTestVersioned/{$unpublishTarget->ID}/unpublish",
+            ['dryRun' => true],
+            $token
+        );
+        $this->assertErrorCode($unpublishResponse, 'PAYLOAD_INVALID', 400);
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestVersionedObject::class, Versioned::LIVE)
+                ->filter('ID', $unpublishTarget->ID)->exists(),
+            'nothing should have run — the record must still be live'
+        );
+
+        $archiveTarget = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $archiveResponse = $this->apiPost(
+            "records/ApiTestVersioned/{$archiveTarget->ID}/archive",
+            ['dryRun' => true],
+            $token
+        );
+        $this->assertErrorCode($archiveResponse, 'PAYLOAD_INVALID', 400);
+        $this->assertNotNull(
+            ApiTestVersionedObject::get()->byID($archiveTarget->ID),
+            'nothing should have run — the record must not have been archived'
+        );
+    }
+
     public function testUnknownRecordActionIs404(): void
     {
         $token = $this->mintTokenFor('apiUser');

@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use ReflectionMethod;
+use SilverStripe\Security\Member;
 
 /**
  * Direct coverage for #70's `BatchProcessor::verifyRollback()` — the
@@ -51,18 +52,159 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         );
     }
 
-    public function testUpdateResultsAreSkipped(): void
+    /**
+     * #127: an 'updated' result whose declared field(s) genuinely reverted
+     * to the pre-image passes.
+     */
+    public function testAnUpdateWhoseFieldsGenuinelyRevertedPassesVerification(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'fields' => ['Title' => 'Would-be new title']],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
+        ];
+        $preImages = [ApiTestObject::class . ':' . $record->ID => ['Title' => 'Original title']];
+
+        $this->assertTrue($this->verifyRollback($operations, $results, $preImages));
+    }
+
+    /**
+     * The exact failure mode #127 exists to catch: the response claims the
+     * update rolled back, but the new value is still on the row.
+     */
+    public function testAnUpdateWhoseNewValueSurvivedFailsVerification(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Would-be new title']);
+        $record->write();
+
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'fields' => ['Title' => 'Would-be new title']],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
+        ];
+        $preImages = [ApiTestObject::class . ':' . $record->ID => ['Title' => 'Original title']];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, $preImages),
+            'a claimed rollback whose new value is still on the row must never be reported as verified'
+        );
+    }
+
+    public function testAnUpdatedRecordThatHasVanishedFailsVerification(): void
     {
         $operations = [
-            ['op' => 'update', 'class' => 'ApiTest'],
+            ['op' => 'update', 'class' => 'ApiTest', 'fields' => ['Title' => 'New title']],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => 999999999],
+        ];
+        $preImages = [ApiTestObject::class . ':999999999' => ['Title' => 'Original title']];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, $preImages),
+            'a claimed rollback cannot leave the updated record itself missing'
+        );
+    }
+
+    /**
+     * No pre-image was captured for this result's index at all — e.g. the
+     * update's payload declared no `fields` (a relations-only change).
+     * There is nothing to diff, so this fails closed rather than silently
+     * reporting "verified" for a check that never ran.
+     */
+    public function testAnUpdateWithNoCapturedPreImageFailsClosed(): void
+    {
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'relations' => ['Tags' => ['set' => []]]],
         ];
         $results = [
             ['index' => 0, 'status' => 'updated', 'id' => 1],
         ];
 
-        $this->assertTrue(
-            $this->verifyRollback($operations, $results),
-            'an updated op has no pre-image to compare against, so it is never checked'
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, []),
+            'an update result with no captured pre-image cannot be verified'
+        );
+    }
+
+    /**
+     * Multiple declared fields must ALL match the pre-image — one reverted
+     * field can't mask another that's still carrying the new value.
+     */
+    public function testAnUpdateWithOneOfSeveralFieldsStillWrongFailsVerification(): void
+    {
+        // Title genuinely reverted; Rank did not (still carries the
+        // would-be new value) — one clean field must not mask the other.
+        $record = ApiTestObject::create(['Title' => 'Original title', 'Rank' => 99]);
+        $record->write();
+
+        $operations = [
+            [
+                'op' => 'update',
+                'class' => 'ApiTest',
+                'fields' => ['Title' => 'Would-be new title', 'Rank' => 99],
+            ],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
+        ];
+        $preImages = [
+            ApiTestObject::class . ':' . $record->ID => ['Title' => 'Original title', 'Rank' => 5],
+        ];
+
+        $this->assertFalse($this->verifyRollback($operations, $results, $preImages));
+    }
+
+    /**
+     * Code-review regression test for #127: this drives `runOperation()`
+     * itself (via reflection, sharing one `$preImages` array by reference
+     * across two calls) rather than feeding `verifyRollback()` an
+     * already-correct array — the merge bug lived in `runOperation()`'s
+     * capture step, not in `verifyRollback()`'s comparison, so only a test
+     * that exercises the real capture path can catch a regression there.
+     * Two `update` ops on the same record touch DISJOINT fields; a bug
+     * that keeps only the first op's pre-image array wholesale (rather
+     * than merging per column) would silently drop `Rank` from
+     * `$preImages` entirely, and this asserts both columns survive.
+     */
+    public function testTwoUpdatesToTheSameRecordWithDisjointFieldsBothContributeToThePreImage(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title', 'Rank' => 5]);
+        $record->write();
+
+        $processor = BatchProcessor::create();
+        $method = new ReflectionMethod(BatchProcessor::class, 'runOperation');
+        $method->setAccessible(true);
+        $member = $this->objFromFixture(Member::class, 'apiUser');
+
+        $preImages = [];
+
+        $method->invokeArgs($processor, [
+            ['op' => 'update', 'class' => 'ApiTest', 'id' => (int) $record->ID, 'fields' => ['Title' => 'New title']],
+            'none',
+            $member,
+            0,
+            &$preImages,
+        ]);
+        $method->invokeArgs($processor, [
+            ['op' => 'update', 'class' => 'ApiTest', 'id' => (int) $record->ID, 'fields' => ['Rank' => 42]],
+            'none',
+            $member,
+            1,
+            &$preImages,
+        ]);
+
+        $key = ApiTestObject::class . ':' . $record->ID;
+
+        $this->assertSame(
+            ['Title' => 'Original title', 'Rank' => 5],
+            $preImages[$key] ?? null,
+            'a field only ever touched by the second op must still end up in the merged pre-image'
         );
     }
 
@@ -285,12 +427,41 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $this->assertFalse($this->verifyRollback($operations, $results));
     }
 
-    private function verifyRollback(array $operations, array $results): bool
+    /**
+     * #130 code-review regression: `$strict` distinguishes the
+     * real-atomic-failure caller (`process()`, always strict — no
+     * captured pre-image for an 'updated' result fails closed) from the
+     * dry-run caller (`runDryRun()`, non-strict — the same "nothing
+     * captured" state is skipped instead, since nothing failed and the
+     * whole batch is guaranteed rolled back regardless). Strict mode is
+     * every other test in this file's default and is unchanged by this
+     * addition; this test pins the non-strict behavior specifically.
+     */
+    public function testNonStrictModeSkipsAnUpdateWithNoPreImageInsteadOfFailingClosed(): void
+    {
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'relations' => ['Children' => ['mode' => 'set', 'items' => []]]],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => 1],
+        ];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, [], true),
+            'strict mode (the default, used for a real atomic failure) must still fail closed'
+        );
+        $this->assertTrue(
+            $this->verifyRollback($operations, $results, [], false),
+            'non-strict mode (dry-run) must skip a result with nothing captured, not fail the whole check'
+        );
+    }
+
+    private function verifyRollback(array $operations, array $results, array $preImages = [], bool $strict = true): bool
     {
         $processor = BatchProcessor::create();
         $method = new ReflectionMethod(BatchProcessor::class, 'verifyRollback');
         $method->setAccessible(true);
 
-        return $method->invoke($processor, $operations, $results);
+        return $method->invoke($processor, $operations, $results, $preImages, $strict);
     }
 }
