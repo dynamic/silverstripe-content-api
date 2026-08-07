@@ -38,18 +38,35 @@ Two independent checks, both against the same draft read:
   legitimate state (a placeholder, or a page never published), never treated as a failure by
   itself.
 - **Owned tree** (`?include=owned`, the default — `?include=none` skips it; `?depth=N` caps how
-  far it recurses) — every record this one `$owns`, recursively, via the new
+  far it recurses, and rejects a non-numeric value rather than silently disabling the whole walk)
+  — every record this one `$owns`, recursively, via the new
   `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the module's first `$owns` walker; no class in
   `src/` declares `$owns` anywhere else — Elemental's own publish cascade is hand-rolled, not
   `$owns`-driven, per the section above). Reports each owned descendant's live/draft status and
-  depth, **not** a field-level diff of each one (only the root gets that).
+  depth, **not** a field-level diff of each one (only the root gets that). Walks *through* an
+  unversioned intermediate record without reporting it (it has no draft/live state of its own),
+  matching `RecursivePublishable`'s real recursion behavior rather than pruning the whole branch
+  there; a record reachable via more than one owned path (a diamond — the same shared `File`
+  owned both directly by a page and by one of its elements is a realistic shape) is reported at
+  its shallowest reachable depth.
 
-A draft-only owned descendant is only a genuine mismatch (`ok: false`) when the **root itself is
-live** — a draft-only piece under an unpublished (or never-published) root is simply consistent,
-not a problem. This is exactly the invariant behind the bug class this endpoint exists to catch:
-a live page 404ing because something it owns, several levels down, never got published — caught
-in a real production restructure only because a hand-rolled fingerprint task happened to print
-the two contradicting lines adjacent to each other and a human happened to read them together.
+An owned descendant's live status disagreeing with the root's own is a genuine mismatch
+(`ok: false`) — root live + descendant draft-only is the exact bug class this endpoint primarily
+exists to catch (a live page 404ing because something it owns, several levels down, never got
+published — caught in a real production restructure only because a hand-rolled fingerprint task
+happened to print the two contradicting lines adjacent to each other and a human happened to read
+them together); root NOT live + descendant live is the mirror image — stranded content the root's
+own publish history should have carried, or never published in the first place. Root and
+descendant agreeing, live or not, is always consistent — an owned tree that's uniformly draft
+because the whole branch was never published is not a problem.
+
+Both the root and every owned record are read by their **true base class**, not the requested (or
+concrete, for an owned record) class — a record converted to a different class on draft only
+(`POST pages/$ID/convert` with `publish: "none"`) has a live row whose `ClassName` is still the
+old one, and querying through the new class's own (narrower) subclass set would otherwise
+silently fail to find it — a subclass's own subclass set never includes its ancestor. That would
+report a genuinely-live, genuinely-divergent record as `liveExists: false` / `ok: true`; the
+actual class difference now surfaces correctly as an ordinary `ClassName` field mismatch instead.
 
 Response carries both a machine-readable structure (`fields`, `owned`, `liveExists`, `ok`) and a
 flat `report: [{label, ok, message}]` list, so a project can drop its own version of

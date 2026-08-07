@@ -14,16 +14,28 @@ All notable changes to this project are documented here. Format loosely follows
   the record's `$owns` tree recursively via new `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the
   module's first `$owns` walker — no class in `src/` declared one before this; `?include=none`
   skips the walk, `?depth=N` caps it), reporting each owned descendant's live/draft status and
-  depth, not a field-level diff (only the root gets that). A draft-only owned descendant is only
-  a mismatch (`ok: false`) when the root itself is live — under an unpublished root, draft
-  everywhere is consistent, not a problem. `OwnedTreeWalker` adds a cycle guard and a depth cap
-  neither the `DraftLiveParityTask`/`GoLivePublishTask` prototypes this generalizes had.
-  Authorization checks every owned class/record before any part of the response is built — a
-  forbidden branch fails the whole request rather than silently disappearing from the report.
-  `400 PAYLOAD_INVALID` for a non-Versioned class. Response carries both a machine-readable
-  structure (`fields`/`owned`/`liveExists`/`ok`) and a flat `report: [{label, ok, message}]`
-  list, so a project can drop its own copy of `DraftLiveParityTask::report()`. Spec bumped to
-  `v1.10`. See
+  depth, not a field-level diff (only the root gets that). An owned descendant's live status
+  disagreeing with the root's own is a mismatch (`ok: false`) either direction — root live +
+  descendant draft-only (the primary bug class this endpoint targets) or root not-live +
+  descendant live (stranded content); root and descendant agreeing, live or not, is consistent.
+  Both the root and every owned record are queried by their true base class, not the
+  (potentially narrower) requested/concrete class — a record converted to a different class on
+  draft only has a live row whose `ClassName` differs, and querying through the narrower class's
+  own subclass set would otherwise silently miss it (a subclass's own subclass set never
+  includes its ancestor), reporting a genuinely-live, genuinely-divergent record as
+  `liveExists: false` / `ok: true`. `OwnedTreeWalker` adds a cycle guard and a depth cap neither
+  the `DraftLiveParityTask`/`GoLivePublishTask` prototypes this generalizes had, walks THROUGH
+  (without reporting) an unversioned intermediate record rather than pruning its whole branch —
+  matching `RecursivePublishable`'s own real recursion behavior — and resolves a diamond (the
+  same owned record reachable via two different paths at different depths) to its shallowest
+  depth rather than whichever path happened to reach it first. `?depth=` rejects a non-numeric
+  value rather than silently coercing to `0` (which would disable the whole owned walk);
+  `?include=` rejects anything other than `owned`/`none`. Authorization checks every owned
+  class/record before any part of the response is built — a forbidden branch fails the whole
+  request rather than silently disappearing from the report. `400 PAYLOAD_INVALID` for a
+  non-Versioned class. Response carries both a machine-readable structure
+  (`fields`/`owned`/`liveExists`/`ok`) and a flat `report: [{label, ok, message}]` list, so a
+  project can drop its own copy of `DraftLiveParityTask::report()`. Spec bumped to `v1.10`. See
   [docs/en/10_publishing-and-stages.md#draftlive-parity](docs/en/10_publishing-and-stages.md#draftlive-parity).
 - **(#130)** `"dryRun": true` on `POST batch`: runs the batch exactly as a real request would
   (same authorization, class/externalId/relation resolution, payload validation, and model
