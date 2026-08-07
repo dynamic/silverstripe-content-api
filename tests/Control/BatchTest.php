@@ -1617,6 +1617,54 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * End-to-end coverage of runDryRun()'s own ROLLBACK_UNVERIFIED path —
+     * "the loudest possible failure" the whole dry-run safety guarantee
+     * rests on, previously exercised only for the real-atomic-failure
+     * path (testUnverifiedRollbackReportsDistinctlyFromAVerifiedOne
+     * above). Same forcing mechanism: the framework's real rollback
+     * works correctly under normal conditions, so nothing in a real
+     * request can force a genuine failed-verification outcome;
+     * ForceUnverifiedRollbackBatchProcessor swaps in to force it. Also
+     * pins that this specific response path deliberately does NOT map
+     * through the would* vocabulary (real verbs are the honest signal
+     * once the caller genuinely can't tell whether something committed)
+     * and carries the `dryRun: true` marker `error.details` needs since
+     * `meta` is always `{}` on any error response.
+     */
+    public function testDryRunUnverifiedRollbackReportsWithRealVerbsAndDryRunMarker(): void
+    {
+        Injector::inst()->registerService(
+            ForceUnverifiedRollbackBatchProcessor::create(),
+            BatchProcessor::class
+        );
+
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'dry-unverified-1',
+                    'fields' => ['Title' => 'First'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('ROLLBACK_UNVERIFIED', $body['error']['code']);
+        $this->assertSame(500, $body['error']['status']);
+
+        $detail = $body['error']['details'][0];
+        $this->assertTrue($detail['dryRun']);
+        $this->assertSame(
+            ['created'],
+            array_column($detail['results'], 'status'),
+            'ROLLBACK_UNVERIFIED must use real verbs, not would* — the caller genuinely doesn\'t know '
+                . 'whether this committed'
+        );
+        $this->assertNull(ApiTestObject::get()->filter('FixtureIdentifier', 'dry-unverified-1')->first());
+    }
+
+    /**
      * The environment gate and CONTENT_API_POPULATE check must still apply
      * to a dry run — validate-only still authorizes and resolves everything
      * a real run would, which alone leaks schema/permission information a
