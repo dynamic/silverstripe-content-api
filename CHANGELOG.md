@@ -19,7 +19,10 @@ All notable changes to this project are documented here. Format loosely follows
   `verifyRollback()`) — "wrapped in a transaction that gets rolled back" is exactly the mechanism
   #70 proved isn't trustworthy on its own; a dry run that fails verification reports
   `500 ROLLBACK_UNVERIFIED`, the loudest possible failure, never folded into the normal dry-run
-  response. Verification is deliberately lenient here where the real-atomic-failure caller is
+  response — and, deliberately, **not** mapped through the `would*` vocabulary: that path uses
+  real verbs (and a real delete's `deleted: true`), since at that point the caller genuinely
+  doesn't know whether the write committed for real. Verification is deliberately lenient here
+  (on the success/mapped path) where the real-atomic-failure caller is
   strict: an `update` op whose payload is `relations` only (the module's normal element-attach
   shape) has nothing for the pre-image mechanism to check either way — nothing failed and the
   batch is rolled back regardless, so that's treated as "nothing to check," not "verification
