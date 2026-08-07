@@ -139,10 +139,17 @@ class RecordWriterTest extends ContentApiTestCase
         // reflect THAT state; an eager, per-sub-column snapshot reflects
         // the state before it, captured the instant before the mutation
         // happened.
-        $this->assertEqualsCanonicalizing(
+        // assertEquals, not assertEqualsCanonicalizing: the latter's array
+        // comparison sorts VALUES and discards keys entirely, so it would
+        // pass even if the pre-image were wrongly keyed (e.g.
+        // "AmountPrice"/"CurrencyPrice") as long as the same two values
+        // showed up somewhere. assertEquals is key-aware but order-
+        // insensitive (assertSame would fail on key order alone —
+        // DBMoney::$composite_db declares Currency before Amount).
+        $this->assertEquals(
             ['PriceAmount' => 10.0, 'PriceCurrency' => 'USD'],
             $result['preImage'],
-            'a composite field must expand to its real sub-columns, never the DBComposite object itself'
+            'a composite field must expand to its real, correctly-named sub-columns, never the DBComposite object'
         );
     }
 
