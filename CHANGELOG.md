@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-07
+
 ### Fixed
 - **(#105)** This branch (`2`, SS6) had never been swept for stale self-references after the
   2026-08 branch rename (`1`->`2` SS6, `ss5`->`1` SS5 — #106): several docblocks and one doc table
