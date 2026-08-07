@@ -128,6 +128,31 @@ hand-authored CMS content (no external id) is invisible to prune and never touch
 "all"` also considers external-id-less elements. Kept elements are anything in the payload's
 `elements[]` list by `externalId`; everything else in the area matching the scope is pruned.
 
+### Legacy elements (no external id)
+
+An element that predates this module's involvement — created directly in the CMS, or migrated
+by some other process — has no `FixtureIdentifier` (the column `ExternalIdentifierExtension`
+adds; see [Configuration](02_configuration.md#externalidentifierextension)) until something sets
+one. Two consequences follow directly from `elements[]` requiring `externalId` (above) and
+`prune`'s scope rule (just above):
+
+- **It can't appear in a composition's `elements[]` at all** — a payload entry always needs an
+  `externalId`, and there's nothing to put there yet. Read or update it via the plain
+  `records/$ClassRef/$ID` endpoint by numeric id instead (see [Endpoint
+  reference](05_endpoint-reference.md)) — that addressing works regardless of external id.
+- **`prune: {"scope": "all"}` will archive it** the first time a composition targets that page,
+  since a legacy element can never be represented in `elements[]` to be "kept." `scope: "managed"`
+  (the default) is safe against this — it never even considers an external-id-less element — but
+  means composing against that page can't prune anything else that also lacks one.
+
+There's no built-in backfill helper — `FixtureIdentifier` is a plain, ordinary field once the
+extension is applied, so assigning one to existing rows is an ordinary one-off write (a `sake`
+task, or a `records/$ClassRef/$ID` batch update by numeric id setting a stable, project-chosen
+value). Do that before relying on `elements[]` addressing or `prune: {"scope": "all"}` against a
+page with pre-existing content; until then, either stay on `scope: "managed"` (or `prune`
+disabled entirely) or manage that page's legacy elements through the numeric-id endpoints instead
+of composition.
+
 ## `publish`
 
 Top-level, accepts only `"none"` or `"recursive"` — **not** `"single"`. A composition is

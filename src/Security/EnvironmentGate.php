@@ -4,10 +4,12 @@ namespace Dynamic\ContentApi\Security;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 
 /**
  * Environment gating for population-domain endpoints (batch, compositions,
@@ -37,6 +39,23 @@ class EnvironmentGate
         $allowed = (array) static::config()->get('population_enabled_environments');
 
         if (!in_array($environment, $allowed, true)) {
+            // #126: a `dev`/`test` rehearsal against this same gate never
+            // fires it at all (this environment wouldn't reach this branch),
+            // so the FIRST time a project ever sees this is typically the
+            // first real write against a `live`/`uat`-type target — often
+            // the one moment nobody's watching the response body closely.
+            // The wire error (below) already says exactly what to do; this
+            // log line exists so the same signal also reaches whatever
+            // server-side log a deploy/ops process actually monitors,
+            // deliberately worded to name the gap the issue described
+            // rather than just repeating the exception message.
+            Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+                'Content API population blocked in the "%s" environment (SS_CONTENT_API_ALLOW_POPULATE '
+                    . 'not set). A clean dev/test rehearsal never exercises this gate, so passing rehearsals '
+                    . 'give no warning before a real write hits it here.',
+                $environment
+            ));
+
             throw new ApiError(
                 ErrorCode::ENV_FORBIDDEN,
                 sprintf(
