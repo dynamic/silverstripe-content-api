@@ -1074,6 +1074,89 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * Code-review regression test for #127: an `upsert` op that resolves
+     * to a record CREATED earlier in the same atomic batch (same external
+     * id, still uncommitted) reports 'updated', not 'created'. After a
+     * genuine rollback that record is correctly gone entirely — the
+     * 'updated' branch must not independently re-fail on "the record is
+     * missing"; the 'created' branch already asserts that's the correct
+     * state. Before the fix this reported ROLLBACK_UNVERIFIED for a batch
+     * that had, in fact, rolled back cleanly.
+     */
+    public function testAtomicBatchWithAnUpsertCreateThenUpsertUpdateOfTheSameRecordRollsBackCleanly(): void
+    {
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTest',
+                    'externalId' => 'created-then-updated',
+                    'fields' => ['Title' => 'First write'],
+                ],
+                [
+                    'op' => 'upsert',
+                    'class' => 'ApiTest',
+                    'externalId' => 'created-then-updated',
+                    'fields' => ['Title' => 'Second write, same record'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue(
+            $body['error']['details'][0]['rolledBack'],
+            'a record created and then updated within the same rolled-back batch must not report ROLLBACK_UNVERIFIED'
+        );
+        $this->assertNull(ApiTestObject::get()->filter('FixtureIdentifier', 'created-then-updated')->first());
+    }
+
+    /**
+     * Code-review regression test for #127: two `update` ops touching the
+     * SAME record in one atomic batch must be checked against the record's
+     * state before the EARLIEST of the two writes, not against each op's
+     * own local snapshot — a genuine rollback restores the record all the
+     * way back to before the first write, which necessarily contradicts
+     * the second op's own (later) pre-image. Before the fix this reported
+     * ROLLBACK_UNVERIFIED for a batch that had, in fact, rolled back
+     * cleanly (confirmed by the Title assertion below).
+     */
+    public function testAtomicBatchWithTwoUpdatesToTheSameRecordRollsBackToTheEarliestState(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Second title'],
+                ],
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Third title'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue(
+            $body['error']['details'][0]['rolledBack'],
+            'two updates to the same record within one rolled-back batch must not report ROLLBACK_UNVERIFIED'
+        );
+        $this->assertSame('Original title', ApiTestObject::get()->byID($record->ID)->Title);
+    }
+
+    /**
      * Companion to the test above: an unpublish-mode delete on a Hierarchy
      * class must still report a genuinely-verified rollback — adding
      * delete verification must not turn every unpublish-mode delete into a

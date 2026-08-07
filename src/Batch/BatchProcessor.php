@@ -133,17 +133,40 @@ class BatchProcessor
      * An 'updated' op is now verified too (#127): `runOperation()` captures
      * a pre-image of the declared field keys (via `RecordWriter::write()`)
      * before the write happens, threaded down from `process()` as
-     * `$preImages`. If a result claims 'updated' but no pre-image was
-     * captured for its index — an update whose payload declared no
-     * `fields` at all, e.g. a relations-only change — there is nothing to
-     * compare against, and this fails closed (unverified) rather than
-     * silently treating "nothing to check" as "fine". Relation changes
-     * themselves are never covered by this pre-image, only field values;
-     * an atomic batch that only ever touches relations on its `update`
-     * ops gets no rollback coverage from this method, same as before #127.
-     * Verification also only ever reads DRAFT — an `update` with
+     * `$preImages` — keyed by "ClassName:id", not by operation index, and
+     * never overwritten once set. Two consequences of that keying, both
+     * required for correctness, not just tidiness:
+     * - If the same record is written more than once in one batch (e.g.
+     *   two `update` ops on the same id, or an `upsert` that resolves to a
+     *   row an earlier op in this same batch just created), every
+     *   'updated' result for it is checked against the FIRST snapshot
+     *   taken — a genuine rollback restores the record to its state
+     *   before the earliest write that touched it, not before whichever
+     *   one happened to run last.
+     * - An 'updated' result whose id was ALSO reported 'created' earlier
+     *   in this same batch is skipped entirely, not compared against a
+     *   pre-image at all: the create branch below already asserts the
+     *   correct post-rollback state for that id (must be absent), and a
+     *   field-level check on top of that would either be redundant (both
+     *   pass) or actively contradict it (the record IS gone, which the
+     *   'updated' branch would otherwise misreport as "can't confirm").
+     *
+     * If a result claims 'updated' but no pre-image was captured for its
+     * key — an update whose payload declared no `fields` at all, e.g. a
+     * relations-only change — there is nothing to compare against, and
+     * this fails closed (unverified) rather than silently treating
+     * "nothing to check" as "fine". Relation changes themselves are never
+     * covered by this pre-image, only field values; an atomic batch that
+     * only ever touches relations on its `update` ops gets no rollback
+     * coverage from this method, same as before #127. Verification also
+     * only ever reads DRAFT — an `update` with
      * `publish: "single"`/`"recursive"`/`"subtree"` also wrote LIVE, which
-     * this method has no way to check.
+     * this method has no way to check. A has_one field's pre-image is the
+     * raw FK id column, not the related record — comparing the related
+     * DataObject itself (or its string cast, which is only ever its class
+     * name) would report "verified" regardless of which record is
+     * actually linked. A polymorphic has_one's companion `{Name}Class`
+     * column is not independently checked.
      *
      * A 'deleted' op's id IS retained, and is verified — but only when the
      * delete could actually have touched DRAFT: an 'unpublish'-mode delete
@@ -165,15 +188,44 @@ class BatchProcessor
      * propagating and replacing the whole response with a bare
      * SERVER_ERROR that drops $results entirely.
      *
-     * @param array<int, array<string, mixed>> $preImages keyed by operation
-     *   index, only present for 'updated' results — see `RecordWriter::write()`
+     * @param array<string, array<string, mixed>> $preImages keyed by
+     *   "ClassName:id", only present for 'updated' results — see
+     *   `RecordWriter::write()` and `runOperation()`
      */
     protected function verifyRollback(array $operations, array $results, array $preImages = []): bool
     {
         $operations = array_values($operations);
 
         try {
-            return Versioned::withVersionedMode(function () use ($operations, $results, $preImages) {
+            // A record this same batch also reported 'created' can
+            // legitimately be MISSING after a genuine rollback — that's the
+            // create's own check (below) passing, not a sign anything is
+            // wrong. An 'updated' result for that same id (an upsert that
+            // resolved to an existing row created earlier in this very
+            // batch, still uncommitted) must not independently re-fail on
+            // "the record is gone": the create branch already asserts the
+            // correct post-rollback state for it. Built as its own pass so
+            // it doesn't depend on 'created' results appearing before the
+            // 'updated' ones that reference them. Inside the same try/catch
+            // as everything below — an unresolvable class here must fail
+            // closed exactly like an unresolvable class anywhere else in
+            // this method, not escape as an uncaught ApiError.
+            $createdKeys = [];
+
+            foreach ($results as $result) {
+                if (($result['status'] ?? '') !== 'created' || !isset($result['id'], $result['index'])) {
+                    continue;
+                }
+
+                $operation = $operations[$result['index']] ?? null;
+
+                if (is_array($operation)) {
+                    $createdClass = $this->registry->resolve((string) ($operation['class'] ?? ''));
+                    $createdKeys[$createdClass . ':' . $result['id']] = true;
+                }
+            }
+
+            return Versioned::withVersionedMode(function () use ($operations, $results, $preImages, $createdKeys) {
                 Versioned::set_stage(Versioned::DRAFT);
 
                 foreach ($results as $result) {
@@ -213,7 +265,21 @@ class BatchProcessor
                     }
 
                     if ($status === 'updated') {
-                        $preImage = $preImages[$result['index']] ?? null;
+                        $preImageKey = $className . ':' . $result['id'];
+
+                        if (isset($createdKeys[$preImageKey])) {
+                            // This id was also 'created' earlier in this
+                            // same batch (an upsert that resolved to it) —
+                            // the create branch above already asserts the
+                            // correct post-rollback state for it. Checking
+                            // it again here, against a snapshot taken
+                            // AFTER a create that itself needs to unwind,
+                            // would contradict that check rather than
+                            // confirm anything.
+                            continue;
+                        }
+
+                        $preImage = $preImages[$preImageKey] ?? null;
 
                         if (!is_array($preImage) || $preImage === []) {
                             // No fields were snapshotted for this result —
@@ -233,8 +299,11 @@ class BatchProcessor
                             return false;
                         }
 
-                        foreach ($preImage as $field => $originalValue) {
-                            if ((string) $record->getField($field) !== (string) $originalValue) {
+                        foreach ($preImage as $column => $originalValue) {
+                            $currentValue = $record->getField($column);
+                            $currentValue = is_object($currentValue) ? (string) $currentValue : $currentValue;
+
+                            if ((string) $currentValue !== (string) $originalValue) {
                                 return false;
                             }
                         }
@@ -255,8 +324,9 @@ class BatchProcessor
     }
 
     /**
-     * @param array<int, array<string, mixed>> $preImages written into by
-     *   reference as 'updated' results are produced — see verifyRollback()
+     * @param array<string, array<string, mixed>> $preImages keyed by
+     *   "ClassName:id", written into by reference as 'updated' results are
+     *   produced — see verifyRollback()
      * @throws BatchAbortException when atomic and an op fails
      */
     protected function run(
@@ -295,8 +365,9 @@ class BatchProcessor
     }
 
     /**
-     * @param array<int, array<string, mixed>> $preImages written into by
-     *   reference when this operation produces an 'updated' result
+     * @param array<string, array<string, mixed>> $preImages keyed by
+     *   "ClassName:id", written into by reference when this operation
+     *   produces an 'updated' result
      */
     protected function runOperation(
         array $operation,
@@ -345,14 +416,24 @@ class BatchProcessor
                     );
             }
 
+            $serialized = $this->serializer->serialize($result['record']);
+
             // #127: carried out of the public $out below — a rollback
             // pre-image is verifyRollback()'s internal bookkeeping, never
-            // part of the API response.
+            // part of the API response. Keyed by "ClassName:id" — NOT by
+            // operation index — and never overwritten once set: if the
+            // same record is written more than once in one batch (e.g.
+            // two `update` ops on the same id), a genuine rollback
+            // restores it to its state before the EARLIEST of those
+            // writes, not before whichever one happened to run last.
+            // Comparing every one of that record's 'updated' results
+            // against the same first-captured snapshot is what makes
+            // that check correct regardless of how many times the record
+            // was touched.
             if (($result['preImage'] ?? null) !== null) {
-                $preImages[$index] = $result['preImage'];
+                $preImageKey = $className . ':' . $serialized['id'];
+                $preImages[$preImageKey] ??= $result['preImage'];
             }
-
-            $serialized = $this->serializer->serialize($result['record']);
 
             $out = [
                 'index' => $index,

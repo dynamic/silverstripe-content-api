@@ -58,7 +58,8 @@ class RecordWriter
      *
      * @param array{fields?: array, relations?: array, externalId?: string,
      *   publish?: string} $payload
-     * @return array{record: DataObject, operation: string, warnings: array}
+     * @return array{record: DataObject, operation: string, warnings: array,
+     *   preImage?: array<string, mixed>}
      * @throws ApiError
      */
     public function upsert(
@@ -126,7 +127,8 @@ class RecordWriter
      * Sparse update of an already-fetched record. See `upsert()` for why
      * `$internalFields` is a dedicated parameter rather than a `$payload` key.
      *
-     * @return array{record: DataObject, operation: string, warnings: array}
+     * @return array{record: DataObject, operation: string, warnings: array,
+     *   preImage?: array<string, mixed>}
      * @throws ApiError
      */
     public function update(DataObject $record, array $payload, Member $member, array $internalFields = []): array
@@ -208,16 +210,45 @@ class RecordWriter
         // the new value is still there" without retaining a full record
         // snapshot. Captured here, once, regardless of whether this write
         // arrived via update() or upsert()-routing-to-an-existing-record, so
-        // both callers get identical coverage for free. Read with
-        // getField() — same convention as everywhere else in this module
-        // that needs the raw DB value ahead of any getter override.
+        // both callers get identical coverage for free. Keyed by the
+        // resolved DB column, not the client's payload key — see below.
         $preImage = null;
 
         if ($operation === 'updated') {
             $preImage = [];
+            $hasOne = (array) $record->hasOne();
 
             foreach (array_keys($fields) as $field) {
-                $preImage[$field] = $record->getField($field);
+                // A has_one relation name (or its own FK-suffixed key)
+                // both resolve to the same "{Relation}ID" column
+                // WriteApplicator actually writes — snapshot THAT raw FK
+                // id, never getField() on the relation name itself.
+                // getField() resolves a has_one *name* to the related
+                // DataObject via getComponent(), and DataObject's
+                // __toString() returns its class name, not any per-record
+                // identity — comparing those (or their string casts)
+                // would report "verified" for ANY two records of the same
+                // class regardless of which one is actually linked, a
+                // silent false negative in exactly the case #127 exists
+                // to catch.
+                $column = match (true) {
+                    isset($hasOne[$field]) => $field . 'ID',
+                    str_ends_with($field, 'ID') && isset($hasOne[substr($field, 0, -2)]) => $field,
+                    default => $field,
+                };
+
+                $value = $record->getField($column);
+
+                // Force eager evaluation now, before applyFields() mutates
+                // $record below — a composite DBField (e.g. Money)
+                // returned by getField() stays live-bound to this exact
+                // $record instance (DBComposite::bindTo()), so reading it
+                // again later — after the mutation — would silently
+                // return the POST-write value instead of the pre-image,
+                // making the whole check vacuous. Casting to string
+                // immediately, while the old data is still in place,
+                // freezes the value instead of deferring evaluation.
+                $preImage[$column] = is_object($value) ? (string) $value : $value;
             }
         }
 
