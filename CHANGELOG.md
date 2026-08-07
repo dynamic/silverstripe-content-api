@@ -18,16 +18,27 @@ All notable changes to this project are documented here. Format loosely follows
   one hop out through its own owner's ancestor chain) whose path runs through a non-live
   ancestor — `SiteTree::get_by_link()` 404s on the first non-live path segment regardless of the
   target row's own live status, and the real-world prototype's own fingerprint output already
-  contained both contradicting lines with nothing checking them against each other. `related`
-  sections are project-configured (a class plus its direct owner-page FK column, e.g.
-  `'HeroSlide' => 'PageID'`); an owner id that doesn't resolve to a known page is counted in
-  `unresolved`, never leaked as a raw id (the prototype's own known weakness) unless
-  `includeIds=true` is set. `classes=` restricts which sections appear in the response without
-  affecting internal owner-path resolution — narrowing to a `related` ref without `pages` still
-  resolves through the same index a full scan would use. Every collection is sorted and ids are
-  excluded from `data` by default, so two fingerprints (or the same one twice) diff as plain
-  text/structure; `meta.skipped` reports classes this token can't read separately from `data`, so
-  a diff between callers with different permissions doesn't read as false-clean. Spec bumped to
+  contained both contradicting lines with nothing checking them against each other. Duplicate
+  violation entries describing one shared blocked owner page collapse to one. `related` sections
+  are project-configured (a class plus its direct owner-page FK column, e.g. `'HeroSlide' =>
+  'PageID'`); an owner id that doesn't resolve to a known page is counted in `unresolved`, never
+  leaked as a raw id in `records` (the prototype's own known weakness) — `includeIds=true` instead
+  surfaces a separate `unresolvedIds` list for tracking down a broken owner FK. `classes=`
+  restricts which sections appear in the response without affecting internal owner-path
+  resolution — narrowing to a `related` ref without `pages` still resolves through the same index
+  a full scan would use, and `pages` is reported in `meta.skipped` whenever the index genuinely
+  couldn't be built even if `classes=` never asked for it. Every collection is sorted (`related`
+  rows sharing one owner path tiebreak on external id) and ids are excluded from `data` by
+  default, so two fingerprints (or the same one twice) diff as plain text/structure. Applies the
+  same class- and record-level ACL as every other read endpoint, per row — a class not exposed to
+  the content API at all is reported in `meta.skipped` (site config, not per-caller); a class that
+  IS exposed but a specific row this caller can't view (a draft-only page without
+  `VIEW_DRAFT_CONTENT`, an explicit per-subclass `content_api_access: false` override, or a class
+  exposed for write but not `read`) is simply absent from the response, the same way
+  `RecordsHandler::readList()` filters a list — caught and fixed in review before this endpoint
+  ever shipped without it, since a first draft applied only a coarse "does this token have
+  `CONTENT_API_ACCESS` at all" gate and would otherwise have disclosed every draft-only/restricted
+  page's path, class, and live status to any holder of that one permission code. Spec bumped to
   `v1.11`. See [docs/en/16_verification.md](docs/en/16_verification.md).
 - **(#120)** `GET records/$ClassRef/$ID/parity`: does this record, and everything it `$owns`,
   match between draft and live, and where do they differ. Compares a configurable set of the

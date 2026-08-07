@@ -35,9 +35,10 @@ deterministic, path-keyed snapshot of the site's content via
   `'HeroSlide' => 'PageID'` for a hero-image relation keyed by its owning page's direct FK column)
   — a single direct-FK hop, not a multi-level relation walk. A related record whose owner id
   doesn't resolve to a known page is counted in `unresolved`, never individually identified by a
-  raw id (unless `includeIds=true`) — the prototype this generalizes leaked exactly that id into
-  its own output, reintroducing the environment-dependent value the whole snapshot exists to
-  avoid.
+  raw id in `records` (the prototype this generalizes leaked exactly that id into its own output,
+  reintroducing the environment-dependent value the whole snapshot exists to avoid) — `includeIds`
+  instead surfaces a separate `unresolvedIds` list, for tracking down a broken owner FK without
+  reintroducing ids into the diffable `records` rows themselves.
 - **`violations`** is the reachability invariant this issue is named for: every live page (or live
   related record) whose path runs through a non-live ancestor. `SiteTree::get_by_link()` resolves
   a URL one path segment at a time in the current stage, so a single draft-only ancestor 404s
@@ -46,11 +47,18 @@ deterministic, path-keyed snapshot of the site's content via
   draft-only parent) that caused a real production 404; nothing ever checked them against each
   other. `violations` computes exactly that check, walking each candidate's full ancestor chain
   (not just its immediate parent), so a live related record under a live owner page whose *own*
-  parent is draft-only is caught too.
-- **Determinism is the whole point.** Every collection is sorted (by path); ids are excluded from
-  `data` unless `includeIds=true`; `meta.skipped` (classes unreadable by this token, or a section
-  that doesn't apply — e.g. no `SiteTree` at all) is separate from `data` so two callers with
-  different permissions still produce a like-for-like diff over what they can both see.
+  parent is draft-only is caught too. Duplicate entries describing the same underlying problem
+  (several related records sharing one blocked owner page) collapse to one.
+- **Class- and record-level ACL apply per row**, the same as `GET records/$ClassRef` — a class not
+  exposed to the content API at all (site config) is reported in `meta.skipped`; a class that IS
+  exposed but a *specific row* this caller can't view (a draft-only page without
+  `VIEW_DRAFT_CONTENT`, for instance) is simply absent from `pages`/`related`/`violations`, the
+  same way `RecordsHandler::readList()` filters a list. `skipped` itself is not per-caller — it
+  names classes unreadable by anyone, not by "this token specifically" — the row-level omissions
+  are where per-caller variation actually shows up.
+- **Determinism is the whole point.** Every collection is sorted (by path, or by owner path then
+  external id for `related` rows sharing one owner); ids are excluded from `data` unless
+  `includeIds=true`.
 
 `classes=` restricts which sections appear in the *response* — narrowing it to a `related` ref
 without `pages` still resolves owner paths through the same internal index a full scan would use;

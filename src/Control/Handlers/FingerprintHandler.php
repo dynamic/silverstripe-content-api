@@ -33,18 +33,33 @@ class FingerprintHandler
     {
         // Coarse gate before any class/record-level work — matching
         // AssetHandler::read()'s precedent for an endpoint whose target
-        // classes aren't known until after a lookup. Per-class read
-        // access is then enforced by FingerprintService itself, which
-        // reports an unreadable class in `skipped` rather than failing
-        // the whole call — the endpoint's value is being usable even
-        // when only part of a site's classes are content-api-exposed.
+        // classes aren't known until after a lookup. Class- and
+        // record-level access are then enforced by FingerprintService
+        // itself, per row — a class not exposed to the content API at all
+        // is reported in `skipped` (site config, the same for every
+        // caller); a class that IS exposed but whose specific row this
+        // member can't view (e.g. a draft-only page without
+        // VIEW_DRAFT_CONTENT) is simply excluded from that row's section,
+        // the same way RecordsHandler::readList() filters a list.
         $this->policy->checkAccess($context->member);
 
         $classesParam = trim((string) $request->getVar('classes'));
-        $classRefs = $classesParam !== '' ? array_map('trim', explode(',', $classesParam)) : null;
+        $classRefs = null;
+
+        if ($classesParam !== '') {
+            $classRefs = array_values(array_filter(
+                array_map('trim', explode(',', $classesParam)),
+                static fn (string $ref): bool => $ref !== ''
+            ));
+        }
+
         $includeIds = filter_var($request->getVar('includeIds'), FILTER_VALIDATE_BOOLEAN);
 
-        $result = $this->fingerprint->build($classRefs, $includeIds);
+        // FingerprintService applies class- AND record-level ACL per row
+        // (same as RecordsHandler::readList()) — the coarse gate above is
+        // only "can this token use the endpoint at all", not "can it see
+        // everything the endpoint touches".
+        $result = $this->fingerprint->build($classRefs, $includeIds, $context->member);
 
         return [
             'data' => [
@@ -53,11 +68,13 @@ class FingerprintHandler
                 'totals' => $result['totals'],
                 'violations' => $result['violations'],
             ],
-            // `skipped` in meta, not data — it's about what COULDN'T be
-            // fingerprinted (a class this token can't read, or a section
-            // that doesn't apply), not content itself; keeping it out of
-            // `data` means a diff of two fingerprints from callers with
-            // different permissions still compares like-for-like content.
+            // `skipped` in meta, not data — it names a class not exposed
+            // to the content API at all (site config, not per-caller) or
+            // a section that doesn't apply (no SiteTree installed). It is
+            // NOT where row-level, per-caller visibility differences show
+            // up — those are silent omissions from `pages`/`related`
+            // rows/`violations`, the same as RecordsHandler::readList()'s
+            // own list filtering.
             'meta' => ['skipped' => $result['skipped']],
         ];
     }
