@@ -9,6 +9,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentSubclassObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
@@ -371,6 +372,51 @@ class RecordParityTest extends ContentApiTestCase
         $response = $this->apiGet("records/ApiTestOwnedParent/{$parent->ID}/parity?include=0", $this->adminToken);
 
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
+    /**
+     * The companion case to the test above: `?include=` with an empty
+     * value is treated the same as omitting the param entirely (falls
+     * back to `owned`) — it must NOT be rejected the way a genuinely
+     * malformed value is. Mirrors `testAnEmptyDepthParamFallsBackTo
+     * TheDefaultRatherThanBeingRejected` for the sibling param.
+     */
+    public function testAnEmptyIncludeParamFallsBackToOwnedRatherThanBeingRejected(): void
+    {
+        $parent = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Parent']);
+        $this->createAndPublish(ApiTestOwnedChildObject::class, [
+            'Title' => 'Child',
+            'ParentID' => $parent->ID,
+        ]);
+
+        $body = $this->decode(
+            $this->apiGet("records/ApiTestOwnedParent/{$parent->ID}/parity?include=", $this->adminToken)
+        );
+
+        $this->assertNull($body['error']);
+        $this->assertCount(1, $body['data']['owned']);
+    }
+
+    /**
+     * `compareFields()` filters the configured default field list to
+     * whichever fields the class actually declares — `ApiTestVersionedObject`
+     * (Title/Status only) is missing four of the six defaults
+     * (ParentID/ShowInMenus/URLSegment/Sort), so this is the one fixture in
+     * the suite that can actually exercise the skip-if-absent branch rather
+     * than every default field trivially matching every root class used
+     * elsewhere.
+     */
+    public function testFieldComparisonSkipsFieldsTheClassDoesNotDeclare(): void
+    {
+        $record = $this->createAndPublish(ApiTestVersionedObject::class, ['Title' => 'Sparse fields']);
+
+        $body = $this->decode($this->apiGet("records/ApiTestVersioned/{$record->ID}/parity", $this->adminToken));
+
+        $this->assertArrayHasKey('Title', $body['data']['fields']);
+        $this->assertArrayNotHasKey('ParentID', $body['data']['fields']);
+        $this->assertArrayNotHasKey('ShowInMenus', $body['data']['fields']);
+        $this->assertArrayNotHasKey('URLSegment', $body['data']['fields']);
+        $this->assertArrayNotHasKey('Sort', $body['data']['fields']);
     }
 
     public function testNonVersionedClassIsRejected(): void
