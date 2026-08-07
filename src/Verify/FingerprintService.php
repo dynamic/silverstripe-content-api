@@ -3,11 +3,14 @@
 namespace Dynamic\ContentApi\Verify;
 
 use Dynamic\ContentApi\Errors\ApiError;
+use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Security\PermissionPolicy;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -24,7 +27,7 @@ use SilverStripe\Versioned\Versioned;
  * a replay) is meant to be a plain text/structural diff — see
  * `docs/en/16_verification.md`.
  *
- * Two corrections versus the prototype:
+ * Corrections versus the prototype:
  * - **The reachability invariant is actually asserted.** The prototype's
  *   own fingerprint output already contained the two contradicting lines
  *   (a live page directly below a draft-only ancestor) that caused a real
@@ -39,6 +42,20 @@ use SilverStripe\Versioned\Versioned;
  *   reintroducing exactly the environment-dependent id the whole
  *   fingerprint exists to avoid. Unresolved owners are counted, never
  *   individually identified by id, unless `includeIds` is set.
+ * - **The response respects the same class- and record-level ACL every
+ *   other read endpoint does.** Class-level: a row's own class must
+ *   actually declare `read` (not merely some verb — `content_api_access:
+ *   'create'` on a class must not make it readable here any more than it
+ *   does on `GET records/$ClassRef`), checked per row rather than once for
+ *   the whole `SiteTree` hierarchy — an explicit deny on one subclass
+ *   (`content_api_access: false`) must not be overridden by a broader
+ *   ancestor exposure. Record-level: `PermissionPolicy::canViewRecord()`
+ *   per row, same as `RecordsHandler::readList()` — a draft-only page is
+ *   invisible to a caller without `VIEW_DRAFT_CONTENT` here exactly as it
+ *   is via `GET records/$ClassRef/$ID`. A bare path SEGMENT string
+ *   appearing inside another row's `blockedBy`/`ownerPath` is not treated
+ *   as a disclosure on the same level as a full row — the violation
+ *   wouldn't be actionable without naming which ancestor to publish.
  */
 class FingerprintService
 {
@@ -69,9 +86,12 @@ class FingerprintService
 
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
+        'policy' => '%$' . PermissionPolicy::class,
     ];
 
     public ?ClassRegistry $registry = null;
+
+    public ?PermissionPolicy $policy = null;
 
     /**
      * @param array<int, string>|null $classRefs restrict the OUTPUT to these
@@ -79,17 +99,28 @@ class FingerprintService
      *   includes every section. Narrowing this never affects internal path
      *   resolution: a related ref requested without `'pages'` still
      *   resolves owner paths through the same index a full scan would use,
-     *   it just omits the `pages` section itself from the response.
+     *   it just omits the `pages` section itself from the response. An
+     *   unrecognized ref is rejected (`PAYLOAD_INVALID`) rather than
+     *   silently producing an empty section — a typo'd ref here is the
+     *   worst possible failure for a verification primitive (a false
+     *   "no drift" reading).
+     * @throws ApiError PAYLOAD_INVALID for an unrecognized ref in $classRefs
      * @return array{
      *   pages: array<int, array<string, mixed>>,
-     *   related: array<string, array{records: array<int, array<string, mixed>>, unresolved: int}>,
+     *   related: array<string, array{
+     *     records: array<int, array<string, mixed>>,
+     *     unresolved: int,
+     *     unresolvedIds?: array<int, int>
+     *   }>,
      *   totals: array<string, array{draft: int, live: int}>,
      *   violations: array<int, array<string, mixed>>,
      *   skipped: array<int, string>
      * }
      */
-    public function build(?array $classRefs, bool $includeIds): array
+    public function build(?array $classRefs, bool $includeIds, Member $member): array
     {
+        $this->assertKnownRefs($classRefs);
+
         $skipped = [];
         $totals = [];
         $violations = [];
@@ -99,34 +130,38 @@ class FingerprintService
         $liveIds = [];
         $parents = [];
         $classNames = [];
+        $visiblePageIds = [];
 
         $wantsPages = $classRefs === null || in_array('pages', $classRefs, true);
 
         // The page path index is built whenever SiteTree is readable at
         // all — independent of whether the `pages` SECTION itself is in
-        // the output — because every `related` row resolves its owner
-        // path through this same index. `classes=` narrowing to a related
-        // ref only must shrink the response, not silently break owner
-        // resolution for the sections that WERE requested (an empty index
-        // would report every related row `unresolved`, which is wrong,
-        // not just incomplete).
+        // the output, and independent of `$wantsPages` — because every
+        // `related` row resolves its owner path through this same index,
+        // and `skipped` must report `pages` as unreadable whenever the
+        // index genuinely couldn't be built, even if the caller never
+        // asked for the `pages` section in the first place (otherwise a
+        // `classes=SomeRelatedRef`-only request against a site with no
+        // SiteTree access reports every related row `unresolved` with an
+        // empty `skipped` — indistinguishable from genuinely broken owner
+        // FKs).
         if (!class_exists(SiteTree::class)) {
-            if ($wantsPages) {
-                $skipped[] = 'pages';
-            }
-        } elseif ($this->registry->accessVerbs(SiteTree::class) === [] && !$this->siteTreeSubclassExposed()) {
-            if ($wantsPages) {
-                $skipped[] = 'pages';
-            }
+            $skipped[] = 'pages';
+        } elseif (
+            !in_array('read', $this->registry->accessVerbs(SiteTree::class), true)
+            && !$this->siteTreeSubclassExposed()
+        ) {
+            $skipped[] = 'pages';
         } else {
-            [$builtPages, $paths, $liveIds, $parents, $classNames, $pageTotals] = $this->buildPages($includeIds);
+            [$builtPages, $paths, $liveIds, $parents, $classNames, $pageTotals, $visiblePageIds]
+                = $this->buildPages($includeIds, $member);
 
             if ($wantsPages) {
                 $pages = $builtPages;
                 $totals['pages'] = $pageTotals;
                 $violations = array_merge(
                     $violations,
-                    $this->pageViolations($paths, $liveIds, $parents, $classNames)
+                    $this->pageViolations($paths, $liveIds, $parents, $classNames, $visiblePageIds)
                 );
             }
         }
@@ -140,19 +175,33 @@ class FingerprintService
 
             $className = $this->tryResolve($ref);
 
-            if ($className === null || $this->registry->accessVerbs($className) === []) {
+            if ($className === null || !in_array('read', $this->registry->accessVerbs($className), true)) {
+                $skipped[] = $ref;
+                continue;
+            }
+
+            // A misconfigured owner column (a typo, or the has_one
+            // RELATION name — e.g. "Page" — instead of its real FK column
+            // "PageID") must not proceed silently: getField() on an
+            // unknown field returns null, so a wrong column name makes
+            // every record look like an unresolved owner (indistinguishable
+            // from genuinely broken FKs), and the relation-name mistake
+            // specifically resolves to the owning DataObject itself, whose
+            // (int) cast is 1 — silently mis-attributing every record to
+            // whatever page happens to have id 1.
+            if (DataObject::getSchema()->fieldSpec($className, (string) $ownerColumn) === null) {
                 $skipped[] = $ref;
                 continue;
             }
 
             [$section, $classTotals, $classViolations] = $this->buildRelated(
-                $ref,
                 $className,
                 (string) $ownerColumn,
                 $paths,
                 $liveIds,
                 $parents,
-                $includeIds
+                $includeIds,
+                $member
             );
 
             $related[$ref] = $section;
@@ -166,9 +215,30 @@ class FingerprintService
             'pages' => $pages,
             'related' => $related,
             'totals' => $totals,
-            'violations' => $violations,
+            'violations' => $this->finalizeViolations($violations),
             'skipped' => $skipped,
         ];
+    }
+
+    /**
+     * @param array<int, string>|null $classRefs
+     * @throws ApiError PAYLOAD_INVALID
+     */
+    protected function assertKnownRefs(?array $classRefs): void
+    {
+        if ($classRefs === null) {
+            return;
+        }
+
+        $known = array_merge(['pages'], array_keys((array) static::config()->get('related_classes')));
+        $unknown = array_diff($classRefs, $known);
+
+        if ($unknown !== []) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('Unknown classes ref(s): %s.', implode(', ', $unknown))
+            );
+        }
     }
 
     /**
@@ -177,7 +247,11 @@ class FingerprintService
      * config lookup (see ClassRegistry's own docblock), so a project that
      * only sets access on, say, `Page` (not the `SiteTree` base) still
      * means every SiteTree row is meant to be readable; checking the base
-     * class alone would report the whole pages section as unreadable.
+     * class alone would report the whole pages section as unreadable. This
+     * is only the section-level "is it worth building this at all" fast
+     * path — `buildPages()` still checks each row's OWN class individually,
+     * since this broad check alone can't tell an explicit per-subclass deny
+     * apart from ordinary inheritance.
      */
     protected function siteTreeSubclassExposed(): bool
     {
@@ -200,11 +274,24 @@ class FingerprintService
     }
 
     /**
+     * Class-level (this row's OWN class, not just "some SiteTree subclass
+     * somewhere") plus record-level ACL, matching `RecordsHandler::
+     * readList()`'s per-row `canViewRecord()` filtering — a draft-only
+     * page invisible via `GET records/$ClassRef/$ID` to a caller without
+     * `VIEW_DRAFT_CONTENT` must be equally invisible here.
+     */
+    protected function isPageVisible(SiteTree $page, Member $member): bool
+    {
+        return in_array('read', $this->registry->accessVerbs($page->ClassName), true)
+            && $this->policy->canViewRecord($page, $member);
+    }
+
+    /**
      * @return array{0: array<int, array<string, mixed>>, 1: array<int, string>,
      *   2: array<int, true>, 3: array<int, int>, 4: array<int, string>,
-     *   5: array{draft: int, live: int}}
+     *   5: array{draft: int, live: int}, 6: array<int, true>}
      */
-    protected function buildPages(bool $includeIds): array
+    protected function buildPages(bool $includeIds, Member $member): array
     {
         /** @var array<int, SiteTree> $byId */
         $byId = [];
@@ -225,6 +312,12 @@ class FingerprintService
             }
         });
 
+        // The full, unfiltered Live id set — used for PATH MATH (this
+        // page's own live status, and every ancestor-blocker computation
+        // for a visible descendant) regardless of whether this specific
+        // page ends up in the visible OUTPUT. Filtering this by visibility
+        // would silently corrupt path/violation computation for a VISIBLE
+        // descendant of a page this particular caller can't see.
         $liveIds = array_fill_keys(
             array_map('intval', Versioned::get_by_stage(SiteTree::class, Versioned::LIVE)->column('ID')),
             true
@@ -240,9 +333,16 @@ class FingerprintService
 
         $rows = [];
         $classNames = [];
+        $visible = [];
 
         foreach ($byId as $id => $page) {
             $classNames[$id] = $page->ClassName;
+
+            if (!$this->isPageVisible($page, $member)) {
+                continue;
+            }
+
+            $visible[$id] = true;
 
             $row = [
                 'path' => $paths[$id],
@@ -268,9 +368,19 @@ class FingerprintService
         // environments even when the content itself is identical.
         usort($rows, static fn (array $a, array $b) => $a['path'] <=> $b['path']);
 
-        $totals = ['draft' => count($byId), 'live' => count($liveIds)];
+        $totals = [
+            'draft' => count($byId),
+            // Intersected against the enumerated draft ids rather than a
+            // raw count of the Live table: a page deleted from DRAFT while
+            // still published (`deleteFromStage(DRAFT)` on a Live row) has
+            // no entry in `$byId` — and therefore no path, no row in
+            // `pages` — at all. Counting it here would report a `live`
+            // total higher than anything `pages`/`violations` can ever
+            // account for.
+            'live' => count(array_intersect_key($liveIds, $byId)),
+        ];
 
-        return [$rows, $paths, $liveIds, $parents, $classNames, $totals];
+        return [$rows, $paths, $liveIds, $parents, $classNames, $totals, $visible];
     }
 
     /**
@@ -301,20 +411,28 @@ class FingerprintService
      * segment 404s every live page below it. Only a LIVE page can be
      * "blocked" this way; a draft-only page having a draft-only ancestor
      * is simply consistent, not a violation (same reasoning as #120's
-     * parity endpoint).
+     * parity endpoint). A page this caller can't view at all is skipped
+     * here too — a violation entry would disclose its path/class the same
+     * way a `pages` row would.
      *
      * @param array<int, string> $paths
      * @param array<int, true> $liveIds
      * @param array<int, int> $parents
      * @param array<int, string> $classNames
+     * @param array<int, true> $visible
      * @return array<int, array{className: string, path: string, blockedBy: array<int, string>}>
      */
-    protected function pageViolations(array $paths, array $liveIds, array $parents, array $classNames): array
-    {
+    protected function pageViolations(
+        array $paths,
+        array $liveIds,
+        array $parents,
+        array $classNames,
+        array $visible
+    ): array {
         $violations = [];
 
         foreach ($paths as $id => $path) {
-            if (!isset($liveIds[$id])) {
+            if (!isset($liveIds[$id]) || !isset($visible[$id])) {
                 continue;
             }
 
@@ -333,12 +451,14 @@ class FingerprintService
     }
 
     /**
-     * Every non-live ancestor above `$id`, sorted — shared between
-     * `pageViolations()` (a live page directly checking its own
-     * ancestors) and `buildRelated()` (a live related record's owner
-     * page's ancestors, one hop further up). Independent of whether the
-     * page at `$id` itself is live — the caller decides what "blocked"
-     * means for whatever it's checking.
+     * Every non-live ancestor STRICTLY ABOVE `$id` (never including `$id`
+     * itself), sorted — shared between `pageViolations()` (a live page
+     * checking its own ancestors) and `buildRelated()` (a live related
+     * record's owner page's ancestors, one hop further up — which also
+     * separately folds the owner's OWN non-live status back in when it
+     * applies, since this helper only ever walks upward from it).
+     * Independent of whether the page at `$id` itself is live — the
+     * caller decides what "blocked" means for whatever it's checking.
      *
      * @param array<int, string> $paths
      * @param array<int, true> $liveIds
@@ -369,18 +489,22 @@ class FingerprintService
      * @param array<int, string> $pagePaths
      * @param array<int, true> $pageLiveIds
      * @param array<int, int> $pageParents
-     * @return array{0: array{records: array<int, array<string, mixed>>, unresolved: int},
+     * @return array{0: array{
+     *     records: array<int, array<string, mixed>>,
+     *     unresolved: int,
+     *     unresolvedIds?: array<int, int>
+     *   },
      *   1: array{draft: int, live: int},
      *   2: array<int, array{className: string, path: string, blockedBy: array<int, string>}>}
      */
     protected function buildRelated(
-        string $ref,
         string $className,
         string $ownerColumn,
         array $pagePaths,
         array $pageLiveIds,
         array $pageParents,
-        bool $includeIds
+        bool $includeIds,
+        Member $member
     ): array {
         $isVersioned = DataObject::has_extension($className, Versioned::class);
 
@@ -414,18 +538,40 @@ class FingerprintService
 
         $rows = [];
         $unresolved = 0;
+        $unresolvedIds = [];
         $violations = [];
         $total = 0;
+        $liveTotal = 0;
 
         foreach ($records as $record) {
             $total++;
             $id = (int) $record->ID;
             $ownerId = (int) $record->getField($ownerColumn);
             $ownerPath = $pagePaths[$ownerId] ?? null;
-            $isLive = isset($liveIds[$id]);
+
+            // A non-versioned record has no stage concept at all — it
+            // always exists, so treating it as "live" is correct; its
+            // reachability is governed entirely by its owner page.
+            // Leaving this `false` (the pre-fix behavior) made the
+            // reachability check — the entire point of this endpoint —
+            // never run at all for a non-versioned related class.
+            $isLive = $isVersioned ? isset($liveIds[$id]) : true;
+
+            if ($isLive) {
+                $liveTotal++;
+            }
 
             if ($ownerPath === null) {
                 $unresolved++;
+
+                if ($includeIds) {
+                    $unresolvedIds[] = $id;
+                }
+
+                continue;
+            }
+
+            if (!$this->policy->canViewRecord($record, $member)) {
                 continue;
             }
 
@@ -447,10 +593,16 @@ class FingerprintService
                 // or it is but one of ITS ancestors isn't — a live related
                 // record whose owner page is live but sits under a
                 // draft-only grandparent is unreachable the same way a
-                // page in that position would be.
-                $ownerBlockedBy = isset($pageLiveIds[$ownerId])
-                    ? $this->ancestorBlockers($ownerId, $pagePaths, $pageLiveIds, $pageParents)
-                    : [$ownerPath];
+                // page in that position would be. When the owner itself
+                // isn't live, its own path is folded back in alongside any
+                // non-live ancestors above it — ancestorBlockers() only
+                // ever walks STRICTLY above the id it's given.
+                $ownerBlockedBy = $this->ancestorBlockers($ownerId, $pagePaths, $pageLiveIds, $pageParents);
+
+                if (!isset($pageLiveIds[$ownerId])) {
+                    $ownerBlockedBy[] = $ownerPath;
+                    sort($ownerBlockedBy);
+                }
 
                 if ($ownerBlockedBy !== []) {
                     $violations[] = [
@@ -462,12 +614,58 @@ class FingerprintService
             }
         }
 
-        usort($rows, static fn (array $a, array $b) => $a['ownerPath'] <=> $b['ownerPath']);
+        usort(
+            $rows,
+            static fn (array $a, array $b) => [$a['ownerPath'], (string) ($a['externalId'] ?? '')]
+                <=> [$b['ownerPath'], (string) ($b['externalId'] ?? '')]
+        );
+
+        $section = ['records' => $rows, 'unresolved' => $unresolved];
+
+        if ($includeIds) {
+            sort($unresolvedIds);
+            $section['unresolvedIds'] = $unresolvedIds;
+        }
 
         return [
-            ['records' => $rows, 'unresolved' => $unresolved],
-            ['draft' => $total, 'live' => count($liveIds)],
+            $section,
+            ['draft' => $total, 'live' => $liveTotal],
             $violations,
         ];
+    }
+
+    /**
+     * Multiple related records sharing one blocked owner page produce
+     * identical `{className, path, blockedBy}` triples — the entry
+     * identifies the OWNER page's path, not any individual record, so
+     * duplicates carry no additional information. Deduped and sorted here
+     * once, centrally, rather than in each of `pageViolations()`/
+     * `buildRelated()` — both already produce entries with the same shape.
+     *
+     * @param array<int, array{className: string, path: string, blockedBy: array<int, string>}> $violations
+     * @return array<int, array{className: string, path: string, blockedBy: array<int, string>}>
+     */
+    protected function finalizeViolations(array $violations): array
+    {
+        $seen = [];
+        $deduped = [];
+
+        foreach ($violations as $violation) {
+            $key = $violation['className'] . "\0" . $violation['path'];
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $deduped[] = $violation;
+        }
+
+        usort(
+            $deduped,
+            static fn (array $a, array $b) => [$a['path'], $a['className']] <=> [$b['path'], $b['className']]
+        );
+
+        return $deduped;
     }
 }
