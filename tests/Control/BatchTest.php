@@ -1012,6 +1012,68 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #127, end to end: an atomic batch containing an `update` op that
+     * genuinely rolls back must report `rolledBack: true`, with the field
+     * actually back at its pre-write value — not just a claim.
+     */
+    public function testAtomicBatchWithAnUpdateRollsBackAndVerifiesTheRevertedField(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Would-be new title'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertSame(
+            'Original title',
+            ApiTestObject::get()->byID($record->ID)->Title,
+            'the update must have been genuinely rolled back, not just reported as rolled back'
+        );
+    }
+
+    /**
+     * #127's documented residual gap, end to end: an `update` op whose
+     * payload declares only `relations` (no `fields`) has no pre-image to
+     * verify against. That must surface as ROLLBACK_UNVERIFIED, not a
+     * false-positive `rolledBack: true` for a check that never ran.
+     */
+    public function testAtomicBatchWithARelationsOnlyUpdateCannotVerifyRollback(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+
+        $record = ApiTestObject::create(['Title' => 'Unrelated to the relation change']);
+        $record->write();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Children' => ['mode' => 'set', 'items' => []]],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'ROLLBACK_UNVERIFIED', 500);
+    }
+
+    /**
      * Companion to the test above: an unpublish-mode delete on a Hierarchy
      * class must still report a genuinely-verified rollback — adding
      * delete verification must not turn every unpublish-mode delete into a

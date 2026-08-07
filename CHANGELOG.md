@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#127)** Atomic batch rollback verification now covers `updated` results, not just
+  `created`/`deleted`. `RecordWriter::write()` snapshots the declared `fields` keys before an
+  update writes, and `BatchProcessor::verifyRollback()` re-reads the row afterward to confirm
+  those fields are genuinely back at their prior values — the same "don't just trust the
+  transaction unwound, check" verification `created`/`deleted` already had. Only the declared
+  `fields` are covered: an `update` whose payload carries only `relations` has no pre-image to
+  check against and reports `ROLLBACK_UNVERIFIED` rather than a false `rolledBack: true` for a
+  check that never ran; relation changes on any `update` remain outside this check's scope.
+  Verification also still reads DRAFT only. See
+  [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md).
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
   enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
   `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is

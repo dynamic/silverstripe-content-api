@@ -51,19 +51,110 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         );
     }
 
-    public function testUpdateResultsAreSkipped(): void
+    /**
+     * #127: an 'updated' result whose declared field(s) genuinely reverted
+     * to the pre-image passes.
+     */
+    public function testAnUpdateWhoseFieldsGenuinelyRevertedPassesVerification(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'fields' => ['Title' => 'Would-be new title']],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
+        ];
+        $preImages = [0 => ['Title' => 'Original title']];
+
+        $this->assertTrue($this->verifyRollback($operations, $results, $preImages));
+    }
+
+    /**
+     * The exact failure mode #127 exists to catch: the response claims the
+     * update rolled back, but the new value is still on the row.
+     */
+    public function testAnUpdateWhoseNewValueSurvivedFailsVerification(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Would-be new title']);
+        $record->write();
+
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'fields' => ['Title' => 'Would-be new title']],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
+        ];
+        $preImages = [0 => ['Title' => 'Original title']];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, $preImages),
+            'a claimed rollback whose new value is still on the row must never be reported as verified'
+        );
+    }
+
+    public function testAnUpdatedRecordThatHasVanishedFailsVerification(): void
     {
         $operations = [
-            ['op' => 'update', 'class' => 'ApiTest'],
+            ['op' => 'update', 'class' => 'ApiTest', 'fields' => ['Title' => 'New title']],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => 999999999],
+        ];
+        $preImages = [0 => ['Title' => 'Original title']];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, $preImages),
+            'a claimed rollback cannot leave the updated record itself missing'
+        );
+    }
+
+    /**
+     * No pre-image was captured for this result's index at all — e.g. the
+     * update's payload declared no `fields` (a relations-only change).
+     * There is nothing to diff, so this fails closed rather than silently
+     * reporting "verified" for a check that never ran.
+     */
+    public function testAnUpdateWithNoCapturedPreImageFailsClosed(): void
+    {
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'relations' => ['Tags' => ['set' => []]]],
         ];
         $results = [
             ['index' => 0, 'status' => 'updated', 'id' => 1],
         ];
 
-        $this->assertTrue(
-            $this->verifyRollback($operations, $results),
-            'an updated op has no pre-image to compare against, so it is never checked'
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, []),
+            'an update result with no captured pre-image cannot be verified'
         );
+    }
+
+    /**
+     * Multiple declared fields must ALL match the pre-image — one reverted
+     * field can't mask another that's still carrying the new value.
+     */
+    public function testAnUpdateWithOneOfSeveralFieldsStillWrongFailsVerification(): void
+    {
+        // Title genuinely reverted; Rank did not (still carries the
+        // would-be new value) — one clean field must not mask the other.
+        $record = ApiTestObject::create(['Title' => 'Original title', 'Rank' => 99]);
+        $record->write();
+
+        $operations = [
+            [
+                'op' => 'update',
+                'class' => 'ApiTest',
+                'fields' => ['Title' => 'Would-be new title', 'Rank' => 99],
+            ],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
+        ];
+        $preImages = [0 => ['Title' => 'Original title', 'Rank' => 5]];
+
+        $this->assertFalse($this->verifyRollback($operations, $results, $preImages));
     }
 
     public function testAnArchiveModeDeleteThatIsStillGoneFailsVerification(): void
@@ -285,12 +376,12 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $this->assertFalse($this->verifyRollback($operations, $results));
     }
 
-    private function verifyRollback(array $operations, array $results): bool
+    private function verifyRollback(array $operations, array $results, array $preImages = []): bool
     {
         $processor = BatchProcessor::create();
         $method = new ReflectionMethod(BatchProcessor::class, 'verifyRollback');
         $method->setAccessible(true);
 
-        return $method->invoke($processor, $operations, $results);
+        return $method->invoke($processor, $operations, $results, $preImages);
     }
 }

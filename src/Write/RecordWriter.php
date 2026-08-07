@@ -177,7 +177,8 @@ class RecordWriter
     /**
      * The shared apply → write → relations → publish core.
      *
-     * @return array{record: DataObject, operation: string, warnings: array}
+     * @return array{record: DataObject, operation: string, warnings: array,
+     *   preImage?: array<string, mixed>}
      */
     protected function write(
         DataObject $record,
@@ -199,6 +200,26 @@ class RecordWriter
         // from "this write only touches unrelated fields" — see that
         // method's docblock for why the distinction matters.
         $priorParentID = $record->isInDB() ? (int) $record->getField('ParentID') : 0;
+
+        // Pre-image for rollback verification (#127): only meaningful for an
+        // update (a "created" record has no prior state to compare against),
+        // and only the declared field keys — enough for
+        // BatchProcessor::verifyRollback() to detect "claims rolled back but
+        // the new value is still there" without retaining a full record
+        // snapshot. Captured here, once, regardless of whether this write
+        // arrived via update() or upsert()-routing-to-an-existing-record, so
+        // both callers get identical coverage for free. Read with
+        // getField() — same convention as everywhere else in this module
+        // that needs the raw DB value ahead of any getter override.
+        $preImage = null;
+
+        if ($operation === 'updated') {
+            $preImage = [];
+
+            foreach (array_keys($fields) as $field) {
+                $preImage[$field] = $record->getField($field);
+            }
+        }
 
         $this->applicator->applyFields($record, $fields, $internalFields);
         $this->assertElementPlacementAllowed($record, $priorParentID);
@@ -242,11 +263,17 @@ class RecordWriter
             ];
         }
 
-        return [
+        $out = [
             'record' => $record,
             'operation' => $operation,
             'warnings' => $warnings,
         ];
+
+        if ($preImage !== null) {
+            $out['preImage'] = $preImage;
+        }
+
+        return $out;
     }
 
     /**
