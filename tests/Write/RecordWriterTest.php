@@ -3,7 +3,9 @@
 namespace Dynamic\ContentApi\Tests\Write;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Write\RecordWriter;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Security\Member;
@@ -105,14 +107,21 @@ class RecordWriterTest extends ContentApiTestCase
 
     /**
      * The bug this guards: `DataObject::getField()` on a composite field
-     * (e.g. Money) returns a `DBComposite` that `DBComposite::bindTo()`
-     * keeps live-bound to the exact `$record` instance it was read from.
-     * Storing that object as the pre-image (rather than an eager scalar
-     * snapshot taken immediately) would silently re-read `$record`'s
-     * POST-write state the next time it's stringified — `applyFields()`
-     * mutates the very same object the "pre-image" was captured from.
+     * (e.g. Money) returns a `DBComposite`, and its own value is NOT a
+     * safe general proxy for its content — `DBComposite` never overrides
+     * `DBField::getValue()`, and `DBComposite::setValue()` binds to the
+     * parent record instead of populating the inherited `$value`
+     * property, so the base `getValue()` (and any string cast of it)
+     * reads as empty/null on every composite UNLESS that specific
+     * subclass happens to override `getValue()` itself. A live-bound
+     * object also stays tied to the exact `$record` instance it was read
+     * from, so reading it again after `applyFields()` mutates that record
+     * would silently return the POST-write state. The pre-image must
+     * resolve to the field's real, always-scalar sub-columns instead
+     * (`PriceAmount`/`PriceCurrency`), the same way a has_one resolves to
+     * its raw FK column.
      */
-    public function testPreImageOfACompositeFieldIsAnImmutableSnapshotNotALiveReference(): void
+    public function testPreImageOfACompositeFieldCapturesItsRawSubColumns(): void
     {
         $record = ApiTestObject::create(['Title' => 'Has a price']);
         $record->setField('PriceAmount', 10.0);
@@ -127,11 +136,51 @@ class RecordWriterTest extends ContentApiTestCase
 
         // $record has now been mutated in place by applyFields() as part
         // of the update() call above. A live-bound (buggy) pre-image would
-        // reflect THAT state; an eager snapshot reflects the state before
-        // it, captured the instant before the mutation happened.
-        $this->assertIsString($result['preImage']['Price']);
-        $this->assertStringContainsString('10', $result['preImage']['Price']);
-        $this->assertStringNotContainsString('20', $result['preImage']['Price']);
+        // reflect THAT state; an eager, per-sub-column snapshot reflects
+        // the state before it, captured the instant before the mutation
+        // happened.
+        $this->assertEqualsCanonicalizing(
+            ['PriceAmount' => 10.0, 'PriceCurrency' => 'USD'],
+            $result['preImage'],
+            'a composite field must expand to its real sub-columns, never the DBComposite object itself'
+        );
+    }
+
+    /**
+     * The polymorphic-relation companion to the has_one test above. A
+     * polymorphic has_one ("Owner" => DataObject::class) writes BOTH
+     * "OwnerID" and "OwnerClass" for one payload key
+     * (`WriteApplicator::applyFields()`) — a pre-image that only captures
+     * the FK id would report "verified" even if a rollback left the
+     * relation pointing at the right numeric id in the WRONG class's
+     * table (e.g. reverted "5" but not "ApiTestChild" -> "ApiTest").
+     */
+    public function testPreImageOfAPolymorphicHasOneCapturesBothTheIdAndClassColumns(): void
+    {
+        $originalOwner = ApiTestObject::create(['Title' => 'Original owner']);
+        $originalOwner->write();
+        $newOwner = ApiTestChildObject::create(['Title' => 'New owner, different class']);
+        $newOwner->write();
+
+        $record = ApiTestPolyObject::create(['Title' => 'Has a polymorphic owner']);
+        $record->OwnerID = $originalOwner->ID;
+        $record->OwnerClass = ApiTestObject::class;
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Owner' => ['class' => 'ApiTestChild', 'id' => (int) $newOwner->ID]]],
+            $this->member()
+        );
+
+        $this->assertSame(
+            [
+                'OwnerID' => (int) $originalOwner->ID,
+                'OwnerClass' => ApiTestObject::class,
+            ],
+            $result['preImage'],
+            'both the FK id and the companion class column must be captured for a polymorphic has_one'
+        );
     }
 
     public function testNoPreImageIsCapturedForACreate(): void
