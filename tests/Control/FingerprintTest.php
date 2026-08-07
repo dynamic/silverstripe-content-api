@@ -504,20 +504,33 @@ class FingerprintTest extends ContentApiTestCase
      */
     public function testPagesReportedInSkippedWhenUnreadableEvenIfClassesExcludesIt(): void
     {
-        // Deny every CURRENTLY exposed SiteTree subclass, discovered at
-        // test time rather than hardcoded — the host project's own
-        // app/_config/content-api.yml can expose real SiteTree subclasses
-        // (e.g. `Page`, a project-specific `BlockPage`) that differ
-        // between testbeds/projects and aren't declared by this module's
-        // own test stubs at all. A hardcoded list here is exactly the
-        // kind of fragility that silently passes in one environment and
-        // fails in another the moment a project's own config exposes one
-        // more SiteTree subclass this list didn't anticipate.
+        // Deny SiteTree itself, plus every CURRENTLY exposed SiteTree
+        // subclass discovered at test time rather than hardcoded — the
+        // host project's own app/_config/content-api.yml can expose real
+        // SiteTree subclasses (e.g. `Page`, a project-specific
+        // `BlockPage`) that differ between testbeds/projects and aren't
+        // declared by this module's own test stubs at all. A hardcoded
+        // list here is exactly the kind of fragility that silently
+        // passes in one environment and fails in another the moment a
+        // project's own config exposes one more SiteTree subclass this
+        // list didn't anticipate.
+        //
+        // Uses `content_api_access`, not `api_access` — the latter is
+        // documented (ClassRegistryTest, ClassRegistry's own docblock)
+        // as unable to reliably override discovery or a genuinely
+        // exposed class, since it's indistinguishable from
+        // DataObject's own untouched `api_access: false` default.
+        // `content_api_access` is also inherited, so denying it on
+        // SiteTree itself denies every subclass that doesn't declare
+        // its own key — the `allExposed()` loop below is then a
+        // belt-and-braces pass for subclasses that DO declare one.
+        Config::modify()->set(SiteTree::class, 'content_api_access', false);
+
         $registry = ClassRegistry::singleton();
 
         foreach ($registry->allExposed() as $info) {
             if (is_a($info['class'], SiteTree::class, true)) {
-                Config::modify()->set($info['class'], 'api_access', false);
+                Config::modify()->set($info['class'], 'content_api_access', false);
             }
         }
 
