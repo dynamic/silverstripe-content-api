@@ -50,14 +50,77 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
   `mode: "archive"` always does, and any mode on an unversioned class does (every delete mode
   converges on a real `delete()` there); `mode: "unpublish"` on a versioned class only touches
   the live stage, so it's correctly skipped rather than checked against a draft row it never
-  touched. `updated` results still aren't independently verified — no pre-image is retained to
-  compare against. If any checked `created`/`deleted` record's presence contradicts the claimed
-  rollback — confirmed possible when a non-`Throwable` PHP diagnostic (e.g. a deprecation
-  notice from application code this module doesn't control) fires mid-write — the response
-  reports `500 ROLLBACK_UNVERIFIED` instead. That response does **not** narrow down which
-  record(s) are still present; it carries the same full `error.details` block as a normal
-  rollback failure, so re-check every `created`/`deleted` result in it by hand before retrying.
+  touched. `updated` results are checked too: the declared `fields` keys are snapshotted before
+  the write, and the row is re-read afterward to confirm they're genuinely back at their prior
+  values — **but only the declared `fields` keys**. An `update` whose payload carries only
+  `relations` (no `fields` at all) has nothing to snapshot, so it can't be verified and the
+  batch reports `ROLLBACK_UNVERIFIED` rather than a false `rolledBack: true`; relation changes
+  themselves are never covered by this check, on any `update`. Verification also only reads
+  DRAFT — an `update` with `publish` set also wrote LIVE, which isn't independently re-checked.
+  If any checked `created`/`deleted`/`updated` record's state contradicts the claimed rollback
+  — confirmed possible when a non-`Throwable` PHP diagnostic (e.g. a deprecation notice from
+  application code this module doesn't control) fires mid-write — the response reports
+  `500 ROLLBACK_UNVERIFIED` instead. That response does **not** narrow down which record(s) are
+  still present; it carries the same full `error.details` block as a normal rollback failure,
+  so re-check every `created`/`deleted`/`updated` result in it by hand before retrying.
   See `docs/en/12_error-codes.md`.
+
+## Dry run
+
+`"dryRun": true` runs the batch exactly as a real request would — the same authorization,
+class/externalId/relation resolution, payload validation and model `validate()` (none of that
+surfaces except by actually attempting the write) — inside a transaction that is
+**unconditionally rolled back afterward**, regardless of `atomic` or whether every op succeeded.
+Subsumes the "create a scratch record, then delete it" pattern sometimes used to prove a token
+is writable ahead of a real batch: `dryRun` gives the same answer without ever touching the
+database for real.
+
+```json
+{
+  "dryRun": true,
+  "operations": [
+    { "op": "create", "class": "ElementContent", "fields": { "Title": "Preview" } }
+  ]
+}
+```
+
+- Still requires `CONTENT_API_POPULATE` and passes environment gating — validate-only still
+  authorizes and resolves everything a real run would, which alone leaks schema/permission
+  information a caller shouldn't get for free.
+- The response **replaces** the normal envelope rather than augmenting it: every `status` value
+  is prefixed `would` — `created`/`updated`/`deleted` become `wouldCreate`/`wouldUpdate`/
+  `wouldDelete` (`error` is unchanged) — in both `results[].status` and `summary`, so a caller
+  inspecting `status` can never mistake this for a confirmed write. `meta` carries
+  `{"operation": "batchDryRun", "atomic": <bool>}`.
+- Non-atomic (`"atomic": false`, the default) still reports per-op errors independently, same as
+  a real non-atomic run — a dry run predicts exactly what a real run would report, it doesn't
+  change the reporting shape. `atomic: true` still aborts on the first op failure and reports the
+  same `422 VALIDATION_FAILED` envelope a real atomic failure would, with `rolledBack` always
+  `true` (the whole batch was wrapped in a transaction that never had a chance to commit).
+- Rollback is verified the same way an atomic failure's is (see "Atomicity" above) — "wrapped in
+  a transaction that gets rolled back" is exactly the mechanism proven unreliable on its own by
+  #70. A dry run that fails verification is the loudest possible failure: it means this "safe
+  preflight" call may have just written real data, reported as `500 ROLLBACK_UNVERIFIED`, never
+  folded into the normal dry-run response — and, deliberately, **not** mapped through the `would*`
+  vocabulary: `error.details[0].results[]` uses real verbs (`created`/`updated`/`deleted`) and a
+  real delete's `deleted: true`, because at that point the caller genuinely doesn't know whether
+  the write committed for real, and real verbs are the honest signal for that state. Verification
+  is **lenient** about an `update` op that
+  declared only `relations` (no `fields`) — there's nothing to check for it either way, so a dry
+  run doesn't fail the whole batch over it the way a real atomic failure's stricter check does;
+  it's simply not part of what got verified. Verification also only ever reads DRAFT, same as a
+  real atomic failure's — a dry run whose ops carry `publish` also wrote LIVE inside the
+  transaction, and that side isn't independently re-checked before reporting "verified".
+- **Ids in a dry-run response are ephemeral** — a rolled-back insert still consumes an
+  `AUTO_INCREMENT` value, so don't treat a `wouldCreate` result's `id` as reusable or as evidence
+  of what a real run's id will be. A `wouldDelete` result's `deleted` field is always `false` (the
+  record still exists) even though the same field is `true` on a real delete's response.
+- `dryRun` is a `POST batch` feature only — every other write endpoint (`compositions/page`,
+  `pages/$ID/convert`/`apply-template`, `records/$ClassRef/$ID/unpublish`/`archive`, `assets`)
+  rejects it outright (`400 PAYLOAD_INVALID`) rather than silently ignoring it.
+  `records/$ClassRef/$ID/publish` is the one exception — `dryRun` there means
+  [subtree-publish dry-run](10_publishing-and-stages.md#publish-modes), a different, older (#102)
+  feature with its own `wouldPublish` response shape, not this one.
 
 ## Response shape
 

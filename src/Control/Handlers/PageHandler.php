@@ -261,6 +261,15 @@ class PageHandler
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'Request body is not valid JSON.');
         }
 
+        // #130: dryRun is a `POST batch` feature only — both page actions
+        // funnel through here, so checked once. Reject rather than
+        // silently ignore, same convention as #102's dryRun/liveOnly
+        // rejection on non-subtree publish modes: a caller who set
+        // "dryRun": true reasonably believes nothing will be written.
+        if (!empty($decoded['dryRun'])) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, '"dryRun" is only supported on "POST batch".');
+        }
+
         return $decoded;
     }
 }

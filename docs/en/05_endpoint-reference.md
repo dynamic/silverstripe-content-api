@@ -27,6 +27,8 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 | `GET` | `auth/session` | Token introspection: member, held permission codes, expiry |
 | `GET` | `records/$ClassRef` | List records, with filtering/sorting/pagination/stage |
 | `GET` | `records/$ClassRef/$ID` | Read one record — numeric id or `ext:<external-id>` |
+| `GET` | `records/$ClassRef/$ID/parity` | Draft/live field diff for a record and its owned tree |
+| `GET` | `fingerprint` | Deterministic, path-keyed content snapshot + reachability check |
 | `POST` | `records/$ClassRef/$ID/publish\|unpublish\|archive` | Stage actions (`{"recursive": true}` on publish) |
 | `POST` | `batch` | Ordered `create\|upsert\|update\|delete` operations |
 | `POST` | `compositions/page` | Atomic full-page composition |
@@ -71,6 +73,30 @@ Response `meta`: `total`, `limit`, `offset`, `stage`.
 `$ID` is a numeric id or `ext:<external-id>` (looked up via
 [`ExternalIdResolver`](06_write-payloads.md#external-ids)). Same `_stage` param as list reads.
 `400 PAYLOAD_INVALID` for a malformed id; `404 NOT_FOUND` if it doesn't resolve.
+
+## `GET records/$ClassRef/$ID/parity`
+
+"Does this record, and everything it `$owns`, match between draft and live." `400
+PAYLOAD_INVALID` for a non-Versioned class (nothing to compare); `404 NOT_FOUND` for an
+unresolvable id. Query params: `include=none` skips the owned-tree walk (default: walked);
+`depth=N` caps how far it recurses. Full reference:
+[Publishing & stages](10_publishing-and-stages.md#draftlive-parity).
+
+## `GET fingerprint`
+
+A deterministic, path-keyed snapshot of the site's content, meant to be diffed — the same
+environment before/after a batch, or two different environments ahead of a replay. Pages are
+keyed by URL path rather than id (ids churn across a rebuild/sync/environment boundary; paths
+don't) and `violations` asserts the reachability invariant a plain snapshot can't: a live page (or
+live related record) whose path runs through a non-live ancestor — always computed regardless of
+`classes=`, which only restricts which SECTIONS appear in the response, never which reachability
+problems get reported. Query params: `classes=` (comma list of section refs — `pages` plus any
+project-configured `related` ref — restricting the response; an unrecognized ref is rejected,
+`400 PAYLOAD_INVALID`; omit for everything), `includeIds=true` (adds ids back in, off by default).
+Applies the same class- and record-level access control as every other read endpoint, per row — a
+class not exposed to the content API at all appears in `meta.skipped`; a specific row this token
+can't view (e.g. a draft-only page without `VIEW_DRAFT_CONTENT`) is simply absent from the
+response. Full reference: [Verification](16_verification.md#fingerprint).
 
 ## `POST records/$ClassRef/$ID/{action}`
 

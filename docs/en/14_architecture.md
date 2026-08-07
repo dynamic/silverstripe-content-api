@@ -24,7 +24,8 @@ Each route maps to one handler method (`$url_handlers` in `ContentApiController`
 | Route | Handler |
 |---|---|
 | `GET auth/session` | `AuthHandler::session()` |
-| `GET/POST records/*` | `RecordsHandler` (reads), `RecordActionsHandler` (stage actions) |
+| `GET/POST records/*` | `RecordsHandler` (reads), `RecordActionsHandler` (stage actions), `ParityHandler` (draft/live parity, #120) |
+| `GET fingerprint` | `FingerprintHandler` → `FingerprintService` (path-keyed content snapshot + reachability check, #131) |
 | `POST pages/$ID/*` | `PageHandler::handle()` |
 | `POST/GET assets*` | `AssetHandler` |
 | `POST batch` | `BatchHandler` → `BatchProcessor` |
@@ -55,11 +56,13 @@ class+message in dev/test, an opaque message in production).
 | `Assets/` | `AssetService` | Asset ingestion, conflict resolution, hash-skip |
 | `Serialize/` | `RecordSerializer` | DataObject → API record shape |
 | `Schema/` | `SchemaService` | Site/class introspection |
+| `Verify/` | `OwnedTreeWalker` | Recursive `$owns` tree walk with cycle guard + depth cap (#120) |
+| `Verify/` | `FingerprintService` | Deterministic, path-keyed content snapshot + ancestor-reachability check (#131) |
 | `Auth/` | `AuthContext` | Resolved-auth value object for one request |
 | `Errors/` | `ErrorCode`, `ApiError` | Machine-readable codes + the throwable that carries them |
-| `Control/`, `Control/Handlers/` | `ContentApiController` + 8 handlers | Routing, envelope, per-endpoint logic |
-| `Tasks/` | `MintApiTokenTask`, `SetupServiceAccountTask` | `sake tasks:MintContentApiToken`, `sake tasks:SetupContentApiServiceAccount` — thin SS6 adapters (branch `2`, this branch), translate Symfony Console input/output only |
-| `Tasks/Support/` | `ApiTokenMinter`, `ServiceAccountProvisioner`, `TaskResult`, `TaskStatus`, `TaskResultRenderer` | Branch-neutral business logic behind the two tasks above (#65/#96) — written so branch `1`'s parallel `run($request)`-based adapters can call the same services instead of duplicating ~180 lines per branch. `TaskResult`/`TaskStatus` are dependency-free (no `symfony/console`, which branch `1` doesn't require); `TaskResultRenderer` is the one piece of SS6-specific glue, deliberately kept separate |
+| `Control/`, `Control/Handlers/` | `ContentApiController` + 10 handlers | Routing, envelope, per-endpoint logic |
+| `Tasks/` | `MintApiTokenTask`, `SetupServiceAccountTask`, `CheckGrantExtensionReachabilityTask` | `sake tasks:MintContentApiToken`, `sake tasks:SetupContentApiServiceAccount`, `sake tasks:CheckGrantExtensionReachability` — thin SS6 adapters (branch `2`, this branch), translate Symfony Console input/output only |
+| `Tasks/Support/` | `ApiTokenMinter`, `ServiceAccountProvisioner`, `TaskResult`, `TaskStatus`, `TaskResultRenderer`, `GrantExtensionReachabilityChecker` | Branch-neutral business logic behind the tasks above (#65/#96/#103) — written so branch `1`'s parallel `run($request)`-based adapters can call the same services instead of duplicating ~180 lines per branch. `TaskResult`/`TaskStatus` are dependency-free (no `symfony/console`, which branch `1` doesn't require); `TaskResultRenderer` is the one piece of SS6-specific glue, deliberately kept separate — `GrantExtensionReachabilityChecker` doesn't use it, returning raw structured findings directly instead of a `TaskResult` |
 
 ## The two write surfaces
 

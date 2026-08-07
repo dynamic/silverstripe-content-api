@@ -31,6 +31,129 @@ All notable changes to this project are documented here. Format loosely follows
   (`CheckGrantExtensionReachabilityTask`/`GrantExtensionReachabilityChecker`), flags any class
   carrying `ContentApiGrantExtension` whose own `can*()` override never calls `extendedCan()` —
   see `docs/en/04_security-model.md#the-extendedcan-contract-this-extension-depends-on`.
+- **(#131)** `GET fingerprint`: a deterministic, path-keyed snapshot of the site's content for
+  diffing across gates (before/after a batch, same environment) or across environments (a local
+  rehearsal vs. production ahead of a replay), via new `Dynamic\ContentApi\Verify\
+  FingerprintService`. Pages are keyed by URL path, not id — ids churn across a rebuild/re-seed/
+  environment boundary, paths don't; the path is an in-memory `ParentID` walk forced to `DRAFT`
+  explicitly regardless of the ambient reading mode (a plain unstaged query would otherwise
+  silently drop every draft-only page from the enumeration entirely whenever the ambient mode
+  happened to be Live, not merely report it as not-live). Also asserts the reachability
+  invariant the issue is named for: `violations` lists every live page (or live `related` record,
+  one hop out through its own owner's ancestor chain) whose path runs through a non-live
+  ancestor — `SiteTree::get_by_link()` 404s on the first non-live path segment regardless of the
+  target row's own live status, and the real-world prototype's own fingerprint output already
+  contained both contradicting lines with nothing checking them against each other. Duplicate
+  violation entries describing one shared blocked owner page collapse to one. `related` sections
+  are project-configured (a class plus its direct owner-page FK column, e.g. `'HeroSlide' =>
+  'PageID'`); an owner id that doesn't resolve to a known page is counted in `unresolved`, never
+  leaked as a raw id in `records` (the prototype's own known weakness) — `includeIds=true` instead
+  surfaces a separate `unresolvedIds` list for tracking down a broken owner FK. `classes=`
+  restricts which sections appear in the response without affecting internal owner-path
+  resolution — narrowing to a `related` ref without `pages` still resolves through the same index
+  a full scan would use, and `pages` is reported in `meta.skipped` whenever the index genuinely
+  couldn't be built even if `classes=` never asked for it. Every collection is sorted (`related`
+  rows sharing one owner path tiebreak on external id) and ids are excluded from `data` by
+  default, so two fingerprints (or the same one twice) diff as plain text/structure. Applies the
+  same class- and record-level ACL as every other read endpoint, per row — a class not exposed to
+  the content API at all is reported in `meta.skipped` (site config, not per-caller); a class that
+  IS exposed but a specific row this caller can't view (a draft-only page without
+  `VIEW_DRAFT_CONTENT`, an explicit per-subclass `content_api_access: false` override, or a class
+  exposed for write but not `read`) is simply absent from the response, the same way
+  `RecordsHandler::readList()` filters a list — caught and fixed in review before this endpoint
+  ever shipped without it, since a first draft applied only a coarse "does this token have
+  `CONTENT_API_ACCESS` at all" gate and would otherwise have disclosed every draft-only/restricted
+  page's path, class, and live status to any holder of that one permission code. A second review
+  round on that ACL fix itself caught: `totals` was still computed over the unfiltered internal
+  state (leaking exactly how many hidden records exist, and disagreeing with the row counts a
+  restricted caller could actually see) — now counted only over what the caller can view, matching
+  `RecordsHandler::readList()`'s own #20 precedent; `unresolvedIds` could leak a record's id even
+  when that record itself was invisible to the caller (the ACL check ran after, not before, the
+  unresolved-owner branch); `violations` was silently suppressed by `classes=` excluding a
+  section's OUTPUT, when a reachability problem must be reported regardless of which sections were
+  requested — the identical "a check that only runs when asked for reads as false 'no drift'"
+  reasoning that already made an unknown `classes=` ref a hard rejection. Also pre-populates
+  `Versioned`'s per-record version-number cache before the per-row ACL check, avoiding an
+  otherwise-unbounded per-page query count across a whole-site scan. Spec bumped to `v1.11`. See
+  [docs/en/16_verification.md](docs/en/16_verification.md).
+- **(#120)** `GET records/$ClassRef/$ID/parity`: does this record, and everything it `$owns`,
+  match between draft and live, and where do they differ. Compares a configurable set of the
+  root's own fields (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/`URLSegment`/`Sort` by default,
+  filtered to whichever the class actually declares) draft vs live — the record not existing on
+  live at all is reported as `liveExists: false`, a legitimate state, not a failure. Also walks
+  the record's `$owns` tree recursively via new `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the
+  module's first `$owns` walker — no class in `src/` declared one before this; `?include=none`
+  skips the walk, `?depth=N` caps it), reporting each owned descendant's live/draft status and
+  depth, not a field-level diff (only the root gets that). An owned descendant's live status
+  disagreeing with the root's own is a mismatch (`ok: false`) either direction — root live +
+  descendant draft-only (the primary bug class this endpoint targets) or root not-live +
+  descendant live (stranded content); root and descendant agreeing, live or not, is consistent.
+  Both the root and every owned record are queried by their true base class, not the
+  (potentially narrower) requested/concrete class — a record converted to a different class on
+  draft only has a live row whose `ClassName` differs, and querying through the narrower class's
+  own subclass set would otherwise silently miss it (a subclass's own subclass set never
+  includes its ancestor), reporting a genuinely-live, genuinely-divergent record as
+  `liveExists: false` / `ok: true`. `OwnedTreeWalker` adds a cycle guard and a depth cap neither
+  the `DraftLiveParityTask`/`GoLivePublishTask` prototypes this generalizes had, walks THROUGH
+  (without reporting) an unversioned intermediate record rather than pruning its whole branch —
+  matching `RecursivePublishable`'s own real recursion behavior — and resolves a diamond (the
+  same owned record reachable via two different paths at different depths) to its shallowest
+  depth rather than whichever path happened to reach it first. `?depth=` rejects a non-numeric
+  value rather than silently coercing to `0` (which would disable the whole owned walk);
+  `?include=` rejects anything other than `owned`/`none`. Authorization checks every owned
+  class/record before any part of the response is built — a forbidden branch fails the whole
+  request rather than silently disappearing from the report. `400 PAYLOAD_INVALID` for a
+  non-Versioned class. Response carries both a machine-readable structure
+  (`fields`/`owned`/`liveExists`/`ok`) and a flat `report: [{label, ok, message}]` list, so a
+  project can drop its own copy of `DraftLiveParityTask::report()`. Spec bumped to `v1.10`. See
+  [docs/en/10_publishing-and-stages.md#draftlive-parity](docs/en/10_publishing-and-stages.md#draftlive-parity).
+- **(#130)** `"dryRun": true` on `POST batch`: runs the batch exactly as a real request would
+  (same authorization, class/externalId/relation resolution, payload validation, and model
+  `validate()` on write) inside a transaction that's unconditionally rolled back afterward,
+  regardless of `atomic` or whether every op succeeded — nothing is ever persisted. Subsumes the
+  "create a scratch record, then archive it" pattern previously needed to prove a token is
+  writable before a real batch run. Response statuses are prefixed `would`
+  (`wouldCreate`/`wouldUpdate`/`wouldDelete`; `error` unchanged) in both `results[]` and
+  `summary`, and `meta` carries `{"operation": "batchDryRun", "atomic": <bool>}`, so a caller
+  inspecting `status` can never mistake this for a confirmed write — same convention as #102's
+  subtree-publish `dryRun`. Rollback is verified the same way an atomic failure's is (#127's
+  `verifyRollback()`) — "wrapped in a transaction that gets rolled back" is exactly the mechanism
+  #70 proved isn't trustworthy on its own; a dry run that fails verification reports
+  `500 ROLLBACK_UNVERIFIED`, the loudest possible failure, never folded into the normal dry-run
+  response — and, deliberately, **not** mapped through the `would*` vocabulary: that path uses
+  real verbs (and a real delete's `deleted: true`), since at that point the caller genuinely
+  doesn't know whether the write committed for real. Verification is deliberately lenient here
+  (on the success/mapped path) where the real-atomic-failure caller is
+  strict: an `update` op whose payload is `relations` only (the module's normal element-attach
+  shape) has nothing for the pre-image mechanism to check either way — nothing failed and the
+  batch is rolled back regardless, so that's treated as "nothing to check," not "verification
+  failed" (`verifyRollback()` gained a `$strict` parameter for this; the real atomic-failure path
+  is unchanged). `dryRun` is a batch-only feature — every other write endpoint
+  (`compositions/page`, `pages/$ID/convert`/`apply-template`,
+  `records/$ClassRef/$ID/unpublish`/`archive`, `assets`) rejects it outright
+  (`400 PAYLOAD_INVALID`) rather than silently ignoring it; `records/.../publish` is the one
+  exception, where `dryRun` already meant #102's subtree-publish dry run. Ids in a dry-run
+  response are ephemeral — a rolled-back insert still consumes an `AUTO_INCREMENT` value — and a
+  `wouldDelete` result's `deleted` field is always `false`, unlike a real delete's. Spec bumped to
+  `v1.9`. See [docs/en/07_batch-operations.md#dry-run](docs/en/07_batch-operations.md#dry-run).
+- **(#127)** Atomic batch rollback verification now covers `updated` results, not just
+  `created`/`deleted`. `RecordWriter::write()` snapshots the declared `fields` keys before an
+  update writes, and `BatchProcessor::verifyRollback()` re-reads the row afterward to confirm
+  those fields are genuinely back at their prior values — the same "don't just trust the
+  transaction unwound, check" verification `created`/`deleted` already had. Only the declared
+  `fields` are covered: an `update` whose payload carries only `relations` has no pre-image to
+  check against and reports `ROLLBACK_UNVERIFIED` rather than a false `rolledBack: true` for a
+  check that never ran; relation changes on any `update` remain outside this check's scope.
+  Verification also still reads DRAFT only. A has_one field's pre-image is the raw foreign key
+  (and, for a polymorphic has_one, the companion class column too), not the related record, so
+  the check reflects which record is actually linked, not just whether one is; a composite
+  DBField (e.g. Money) expands to its real, always-scalar sub-columns rather than the composite
+  object itself, whose own string representation isn't a reliable proxy for its content unless
+  that specific subclass happens to override `getValue()`. A record written more than once in
+  the same batch is checked, per field, against its state before the earliest write of that
+  field — matching what a genuine rollback actually restores it to, even when different ops
+  touched different fields on the same record. See
+  [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md).
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
   enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
   `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is

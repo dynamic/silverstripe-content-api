@@ -58,7 +58,8 @@ class RecordWriter
      *
      * @param array{fields?: array, relations?: array, externalId?: string,
      *   publish?: string} $payload
-     * @return array{record: DataObject, operation: string, warnings: array}
+     * @return array{record: DataObject, operation: string, warnings: array,
+     *   preImage?: array<string, mixed>}
      * @throws ApiError
      */
     public function upsert(
@@ -126,7 +127,8 @@ class RecordWriter
      * Sparse update of an already-fetched record. See `upsert()` for why
      * `$internalFields` is a dedicated parameter rather than a `$payload` key.
      *
-     * @return array{record: DataObject, operation: string, warnings: array}
+     * @return array{record: DataObject, operation: string, warnings: array,
+     *   preImage?: array<string, mixed>}
      * @throws ApiError
      */
     public function update(DataObject $record, array $payload, Member $member, array $internalFields = []): array
@@ -177,7 +179,8 @@ class RecordWriter
     /**
      * The shared apply → write → relations → publish core.
      *
-     * @return array{record: DataObject, operation: string, warnings: array}
+     * @return array{record: DataObject, operation: string, warnings: array,
+     *   preImage?: array<string, mixed>}
      */
     protected function write(
         DataObject $record,
@@ -199,6 +202,112 @@ class RecordWriter
         // from "this write only touches unrelated fields" — see that
         // method's docblock for why the distinction matters.
         $priorParentID = $record->isInDB() ? (int) $record->getField('ParentID') : 0;
+
+        // Pre-image for rollback verification (#127): only meaningful for an
+        // update (a "created" record has no prior state to compare against),
+        // and only the declared field keys — enough for
+        // BatchProcessor::verifyRollback() to detect "claims rolled back but
+        // the new value is still there" without retaining a full record
+        // snapshot. Captured here, once, regardless of whether this write
+        // arrived via update() or upsert()-routing-to-an-existing-record, so
+        // both callers get identical coverage for free. Keyed by the
+        // resolved DB column, not the client's payload key — see below.
+        $preImage = null;
+
+        if ($operation === 'updated') {
+            $preImage = [];
+            $hasOne = (array) $record->hasOne();
+            $schema = DataObject::getSchema();
+            $className = get_class($record);
+
+            foreach (array_keys($fields) as $field) {
+                // A has_one relation name (or its own FK-suffixed key)
+                // resolves to the same "{Relation}ID" column
+                // WriteApplicator actually writes — snapshot THAT raw FK
+                // id, never getField() on the relation name itself.
+                // getField() resolves a has_one *name* to the related
+                // DataObject via getComponent(), and DataObject's
+                // __toString() returns its class name, not any per-record
+                // identity — comparing those (or their string casts)
+                // would report "verified" for ANY two records of the same
+                // class regardless of which one is actually linked, a
+                // silent false negative in exactly the case #127 exists
+                // to catch. A polymorphic has_one ('Relation' =>
+                // DataObject::class) also gets its companion "{Name}Class"
+                // column snapshotted — WriteApplicator writes that column
+                // too as part of the same payload key (see
+                // WriteApplicator::applyFields()), and a rollback that
+                // reverted the FK but not the class column would still
+                // point at the wrong record's table.
+                $relationName = match (true) {
+                    isset($hasOne[$field]) => $field,
+                    str_ends_with($field, 'ID') && isset($hasOne[substr($field, 0, -2)]) => substr($field, 0, -2),
+                    default => null,
+                };
+
+                if ($relationName !== null) {
+                    $preImage[$relationName . 'ID'] = $record->getField($relationName . 'ID');
+
+                    if (($hasOne[$relationName] ?? null) === DataObject::class) {
+                        $preImage[$relationName . 'Class'] = $record->getField($relationName . 'Class');
+                    }
+
+                    continue;
+                }
+
+                // A composite DBField (e.g. Money) resolves through
+                // getField() to the actual DBComposite instance, not a
+                // scalar — and that object's own value is NOT a safe
+                // proxy for its content in general: DBComposite never
+                // overrides DBField::getValue(), and DBComposite::
+                // setValue() binds to the parent record instead of
+                // populating the inherited $value property, so the base
+                // getValue() (and therefore a plain string cast) reads as
+                // empty/null on every composite type UNLESS that specific
+                // subclass happens to override getValue() itself (DBMoney
+                // does; most composites don't). A live-bound object also
+                // stays tied to this exact $record instance — reading it
+                // again after applyFields() mutates $record below would
+                // return the POST-write value, not the pre-image.
+                // Resolved the same way has_one is above: expand to the
+                // real, always-scalar sub-columns the field actually
+                // stores as (e.g. "Price" -> "PriceAmount"/"PriceCurrency")
+                // and capture those directly — never the composite object.
+                $compositeClass = $schema->compositeField($className, $field);
+
+                if ($compositeClass !== null) {
+                    $subFields = Injector::inst()->create($compositeClass, $field)->compositeDatabaseFields();
+
+                    foreach (array_keys($subFields) as $subField) {
+                        $preImage[$field . $subField] = $record->getField($field . $subField);
+                    }
+
+                    continue;
+                }
+
+                $value = $record->getField($field);
+
+                if (is_object($value)) {
+                    // Some other object-valued field this method doesn't
+                    // know how to resolve to a raw, comparable column —
+                    // per DataObject::getField()'s own logic the only two
+                    // cases that return an object are the has_one and
+                    // composite ones already handled above, so this
+                    // shouldn't be reachable today. If it ever is (a
+                    // future DBField type, a framework change), skip
+                    // capturing it rather than guessing with a string
+                    // cast that could silently collapse two different
+                    // values to the same string — exactly the bug this
+                    // method exists to avoid. Any OTHER declared field on
+                    // the same operation is still captured and verified;
+                    // this one just isn't part of the check, the same
+                    // documented gap relation changes already have.
+                    continue;
+                }
+
+                $preImage[$field] = $value;
+            }
+        }
 
         $this->applicator->applyFields($record, $fields, $internalFields);
         $this->assertElementPlacementAllowed($record, $priorParentID);
@@ -242,11 +351,17 @@ class RecordWriter
             ];
         }
 
-        return [
+        $out = [
             'record' => $record,
             'operation' => $operation,
             'warnings' => $warnings,
         ];
+
+        if ($preImage !== null) {
+            $out['preImage'] = $preImage;
+        }
+
+        return $out;
     }
 
     /**
