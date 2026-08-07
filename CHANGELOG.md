@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#120)** `GET records/$ClassRef/$ID/parity`: does this record, and everything it `$owns`,
+  match between draft and live, and where do they differ. Compares a configurable set of the
+  root's own fields (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/`URLSegment`/`Sort` by default,
+  filtered to whichever the class actually declares) draft vs live — the record not existing on
+  live at all is reported as `liveExists: false`, a legitimate state, not a failure. Also walks
+  the record's `$owns` tree recursively via new `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the
+  module's first `$owns` walker — no class in `src/` declared one before this; `?include=none`
+  skips the walk, `?depth=N` caps it), reporting each owned descendant's live/draft status and
+  depth, not a field-level diff (only the root gets that). A draft-only owned descendant is only
+  a mismatch (`ok: false`) when the root itself is live — under an unpublished root, draft
+  everywhere is consistent, not a problem. `OwnedTreeWalker` adds a cycle guard and a depth cap
+  neither the `DraftLiveParityTask`/`GoLivePublishTask` prototypes this generalizes had.
+  Authorization checks every owned class/record before any part of the response is built — a
+  forbidden branch fails the whole request rather than silently disappearing from the report.
+  `400 PAYLOAD_INVALID` for a non-Versioned class. Response carries both a machine-readable
+  structure (`fields`/`owned`/`liveExists`/`ok`) and a flat `report: [{label, ok, message}]`
+  list, so a project can drop its own copy of `DraftLiveParityTask::report()`. Spec bumped to
+  `v1.10`. See
+  [docs/en/10_publishing-and-stages.md#draftlive-parity](docs/en/10_publishing-and-stages.md#draftlive-parity).
 - **(#130)** `"dryRun": true` on `POST batch`: runs the batch exactly as a real request would
   (same authorization, class/externalId/relation resolution, payload validation, and model
   `validate()` on write) inside a transaction that's unconditionally rolled back afterward,

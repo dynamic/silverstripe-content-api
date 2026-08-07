@@ -50,6 +50,7 @@ vendor/bin/phpstan analyse       # phpstan.neon.dist
 | `Control/CompositionTest.php` | Full-page composition payload behavior |
 | `Control/EnvironmentGateTest.php` | Environment gating, including the `SS_CONTENT_API_ALLOW_POPULATE` blocking-value data provider |
 | `Control/PageActionsTest.php` | Page convert: no-op same-class, homepage refusal, permission/env gating; also covers the `URLSEGMENT_COLLISION` warning surfaced on a URLSegment-setting write |
+| `Control/RecordParityTest.php` | `GET .../parity`: field comparison, liveExists/ok semantics, depth-2 owned mismatch, `include`/`depth` params, authorization |
 | `Control/RecordActionsTest.php` | Stage actions, unknown action 404, verb requirements |
 | `Control/RecordSerializerTest.php` | Unreadable-relation dedup logging, polymorphic relation edge cases |
 | `Control/RecordsReadTest.php` | List/read filters, sort/pagination, id + `ext:` reads, `_stage`, permission enforcement |
@@ -63,6 +64,7 @@ vendor/bin/phpstan analyse       # phpstan.neon.dist
 | `Security/PermissionPolicyTest.php` | `buildCreateContext()` has_one hydration, incl. trusted-field-only relations |
 | `Write/WriteApplicatorTest.php` | Trusted channel setting a polymorphic Class column directly |
 | `Write/RecordWriterTest.php` | `write()`'s rollback pre-image capture: plain/has_one/composite/polymorphic-has_one field resolution |
+| `Verify/OwnedTreeWalkerTest.php` | `$owns` tree walking: has_many/has_one branches, cycle guard, depth cap, unversioned pruning |
 | `ContentApiTestCase.php` + `Stub/*.php` | Shared fixture/registry/token plumbing and test DataObjects |
 
 ## Gotchas

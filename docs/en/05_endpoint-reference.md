@@ -27,6 +27,7 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 | `GET` | `auth/session` | Token introspection: member, held permission codes, expiry |
 | `GET` | `records/$ClassRef` | List records, with filtering/sorting/pagination/stage |
 | `GET` | `records/$ClassRef/$ID` | Read one record — numeric id or `ext:<external-id>` |
+| `GET` | `records/$ClassRef/$ID/parity` | Draft/live field diff for a record and its owned tree |
 | `POST` | `records/$ClassRef/$ID/publish\|unpublish\|archive` | Stage actions (`{"recursive": true}` on publish) |
 | `POST` | `batch` | Ordered `create\|upsert\|update\|delete` operations |
 | `POST` | `compositions/page` | Atomic full-page composition |
@@ -71,6 +72,14 @@ Response `meta`: `total`, `limit`, `offset`, `stage`.
 `$ID` is a numeric id or `ext:<external-id>` (looked up via
 [`ExternalIdResolver`](06_write-payloads.md#external-ids)). Same `_stage` param as list reads.
 `400 PAYLOAD_INVALID` for a malformed id; `404 NOT_FOUND` if it doesn't resolve.
+
+## `GET records/$ClassRef/$ID/parity`
+
+"Does this record, and everything it `$owns`, match between draft and live." `400
+PAYLOAD_INVALID` for a non-Versioned class (nothing to compare); `404 NOT_FOUND` for an
+unresolvable id. Query params: `include=none` skips the owned-tree walk (default: walked);
+`depth=N` caps how far it recurses. Full reference:
+[Publishing & stages](10_publishing-and-stages.md#draftlive-parity).
 
 ## `POST records/$ClassRef/$ID/{action}`
 
