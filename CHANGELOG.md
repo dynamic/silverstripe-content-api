@@ -5,6 +5,14 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-07
+
+Numbered `1.5.0`, not `1.1.0`, despite `1.0.0` being the most recent tag: `1.1.0`-`1.4.0` are
+already used below by real, dated pre-rename history this file's own no-rewrite rule keeps as-is
+(see the "predates the rename" note further down) — `1.0.0`'s tag was reset per #106 for a clean
+`composer require ^1` resolution, but this CHANGELOG's own version-heading sequence never reset,
+so the next number continues from `1.4.0`, not from the reset tag.
+
 ### Added
 - **(#131)** `GET fingerprint`: a deterministic, path-keyed snapshot of the site's content for
   diffing across gates (before/after a batch, same environment) or across environments (a local
@@ -569,6 +577,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.5.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.0.0...1.5.0
 [1.4.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.3.0...1.4.0
 [1.3.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.1.0...1.2.0
