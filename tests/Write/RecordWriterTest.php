@@ -103,6 +103,37 @@ class RecordWriterTest extends ContentApiTestCase
         $this->assertSame(['BuddyID' => (int) $buddyA->ID], $result['preImage']);
     }
 
+    /**
+     * The bug this guards: `DataObject::getField()` on a composite field
+     * (e.g. Money) returns a `DBComposite` that `DBComposite::bindTo()`
+     * keeps live-bound to the exact `$record` instance it was read from.
+     * Storing that object as the pre-image (rather than an eager scalar
+     * snapshot taken immediately) would silently re-read `$record`'s
+     * POST-write state the next time it's stringified — `applyFields()`
+     * mutates the very same object the "pre-image" was captured from.
+     */
+    public function testPreImageOfACompositeFieldIsAnImmutableSnapshotNotALiveReference(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Has a price']);
+        $record->setField('PriceAmount', 10.0);
+        $record->setField('PriceCurrency', 'USD');
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Price' => ['Amount' => 20.0, 'Currency' => 'EUR']]],
+            $this->member()
+        );
+
+        // $record has now been mutated in place by applyFields() as part
+        // of the update() call above. A live-bound (buggy) pre-image would
+        // reflect THAT state; an eager snapshot reflects the state before
+        // it, captured the instant before the mutation happened.
+        $this->assertIsString($result['preImage']['Price']);
+        $this->assertStringContainsString('10', $result['preImage']['Price']);
+        $this->assertStringNotContainsString('20', $result['preImage']['Price']);
+    }
+
     public function testNoPreImageIsCapturedForACreate(): void
     {
         $result = $this->writer()->upsert(
