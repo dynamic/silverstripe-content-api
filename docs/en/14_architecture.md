@@ -24,7 +24,7 @@ Each route maps to one handler method (`$url_handlers` in `ContentApiController`
 | Route | Handler |
 |---|---|
 | `GET auth/session` | `AuthHandler::session()` |
-| `GET/POST records/*` | `RecordsHandler` (reads), `RecordActionsHandler` (stage actions) |
+| `GET/POST records/*` | `RecordsHandler` (reads), `RecordActionsHandler` (stage actions), `ParityHandler` (draft/live parity, #120) |
 | `POST pages/$ID/*` | `PageHandler::handle()` |
 | `POST/GET assets*` | `AssetHandler` |
 | `POST batch` | `BatchHandler` → `BatchProcessor` |
@@ -55,6 +55,7 @@ class+message in dev/test, an opaque message in production).
 | `Assets/` | `AssetService` | Asset ingestion, conflict resolution, hash-skip |
 | `Serialize/` | `RecordSerializer` | DataObject → API record shape |
 | `Schema/` | `SchemaService` | Site/class introspection |
+| `Verify/` | `OwnedTreeWalker` | Recursive `$owns` tree walk with cycle guard + depth cap (#120) |
 | `Auth/` | `AuthContext` | Resolved-auth value object for one request |
 | `Errors/` | `ErrorCode`, `ApiError` | Machine-readable codes + the throwable that carries them |
 | `Control/`, `Control/Handlers/` | `ContentApiController` + 8 handlers | Routing, envelope, per-endpoint logic |

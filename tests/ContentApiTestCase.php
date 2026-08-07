@@ -12,6 +12,10 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnsCycleObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
@@ -49,6 +53,10 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestPolyObject::class,
         ApiTestMultiRelationalPolyObject::class,
         ApiTestDeprecatingObject::class,
+        ApiTestOwnedParentObject::class,
+        ApiTestOwnedChildObject::class,
+        ApiTestOwnedGrandchildObject::class,
+        ApiTestOwnsCycleObject::class,
     ];
 
     protected function setUp(): void
@@ -67,6 +75,9 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestPoly' => ApiTestPolyObject::class,
             'ApiTestMultiRelationalPoly' => ApiTestMultiRelationalPolyObject::class,
             'ApiTestDeprecating' => ApiTestDeprecatingObject::class,
+            'ApiTestOwnedParent' => ApiTestOwnedParentObject::class,
+            'ApiTestOwnedChild' => ApiTestOwnedChildObject::class,
+            'ApiTestOwnedGrandchild' => ApiTestOwnedGrandchildObject::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
@@ -85,6 +96,10 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestMultiRelationalPolyObject::class, 'api_access', true);
         Config::modify()->set(ApiTestDeprecatingObject::class, 'api_access', true);
         Config::modify()->set(ApiTestDeprecatingObject::class, 'api_writable_fields', ['Title', 'ReceiptTitle']);
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestOwnedGrandchildObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);
     }
 
     /**

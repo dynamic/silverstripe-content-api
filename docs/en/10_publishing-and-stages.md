@@ -22,6 +22,43 @@ account with only `CONTENT_API_ACCESS` can write a draft-only record but then ca
 back until that permission is also granted. See
 [Security model](04_security-model.md#service-account-permissions).
 
+## Draft/live parity
+
+`GET records/$ClassRef/$ID/parity` (#120) answers "does this record, and everything it
+`$owns`, match between draft and live, and where do they differ" — a read this module didn't
+previously have, that every project consuming it ended up hand-rolling per install
+(`DraftLiveParityTask`, ~230 lines on `sheboygan-youth-sailing-installer`, explicitly documented
+there as "the canonical step after any go-live publish").
+
+Two independent checks, both against the same draft read:
+
+- **Root fields** — a configurable set (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/
+  `URLSegment`/`Sort` by default, filtered to whichever the class actually declares), compared
+  draft vs live. The record not existing on live at all is reported as `liveExists: false` — a
+  legitimate state (a placeholder, or a page never published), never treated as a failure by
+  itself.
+- **Owned tree** (`?include=owned`, the default — `?include=none` skips it; `?depth=N` caps how
+  far it recurses) — every record this one `$owns`, recursively, via the new
+  `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the module's first `$owns` walker; no class in
+  `src/` declares `$owns` anywhere else — Elemental's own publish cascade is hand-rolled, not
+  `$owns`-driven, per the section above). Reports each owned descendant's live/draft status and
+  depth, **not** a field-level diff of each one (only the root gets that).
+
+A draft-only owned descendant is only a genuine mismatch (`ok: false`) when the **root itself is
+live** — a draft-only piece under an unpublished (or never-published) root is simply consistent,
+not a problem. This is exactly the invariant behind the bug class this endpoint exists to catch:
+a live page 404ing because something it owns, several levels down, never got published — caught
+in a real production restructure only because a hand-rolled fingerprint task happened to print
+the two contradicting lines adjacent to each other and a human happened to read them together.
+
+Response carries both a machine-readable structure (`fields`, `owned`, `liveExists`, `ok`) and a
+flat `report: [{label, ok, message}]` list, so a project can drop its own version of
+`DraftLiveParityTask::report()` entirely. `400 PAYLOAD_INVALID` for a non-Versioned class —
+there's nothing to compare. Authorization follows the same check-everything-before-emitting-
+anything precedent as `subtree` publish above: every owned class/record is authorized before any
+part of the report is built, so a forbidden branch fails the whole request rather than silently
+disappearing from the output.
+
 ## Generic `/api` writes are stage-unaware
 
 Colymba's own CRUD surface has no concept of `_stage` — a write lands on whatever the

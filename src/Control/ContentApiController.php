@@ -9,6 +9,7 @@ use Dynamic\ContentApi\Control\Handlers\AuthHandler;
 use Dynamic\ContentApi\Control\Handlers\BatchHandler;
 use Dynamic\ContentApi\Control\Handlers\CompositionHandler;
 use Dynamic\ContentApi\Control\Handlers\PageHandler;
+use Dynamic\ContentApi\Control\Handlers\ParityHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordActionsHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
 use Dynamic\ContentApi\Control\Handlers\SchemaHandler;
@@ -45,6 +46,10 @@ class ContentApiController extends Controller
     private static array $url_handlers = [
         'GET auth/session' => 'handleAuthSession',
         'POST records/$ClassRef!/$ID!/$RecordAction!' => 'handleRecordAction',
+        // Must sit above the plain single-record GET below — SilverStripe
+        // matches $url_handlers top-down, and "$ClassRef!/$ID!" alone would
+        // otherwise swallow ".../$ID/parity" first (#120).
+        'GET records/$ClassRef!/$ID!/parity' => 'handleRecordParity',
         'GET records/$ClassRef!/$ID!' => 'handleReadOne',
         'GET records/$ClassRef!' => 'handleReadList',
         'POST pages/$ID!/$PageAction!' => 'handlePageAction',
@@ -62,6 +67,7 @@ class ContentApiController extends Controller
         'handleReadOne',
         'handleReadList',
         'handleRecordAction',
+        'handleRecordParity',
         'handlePageAction',
         'handleAssetUpload',
         'handleAssetRead',
@@ -76,6 +82,7 @@ class ContentApiController extends Controller
         'authHandler' => '%$' . AuthHandler::class,
         'recordsHandler' => '%$' . RecordsHandler::class,
         'recordActionsHandler' => '%$' . RecordActionsHandler::class,
+        'parityHandler' => '%$' . ParityHandler::class,
         'pageHandler' => '%$' . PageHandler::class,
         'assetHandler' => '%$' . AssetHandler::class,
         'batchHandler' => '%$' . BatchHandler::class,
@@ -90,6 +97,8 @@ class ContentApiController extends Controller
     public ?RecordsHandler $recordsHandler = null;
 
     public ?RecordActionsHandler $recordActionsHandler = null;
+
+    public ?ParityHandler $parityHandler = null;
 
     public ?PageHandler $pageHandler = null;
 
@@ -136,6 +145,15 @@ class ContentApiController extends Controller
             $this->requireAuth($request);
 
             return $this->recordActionsHandler->recordAction($request, $this->authContext);
+        });
+    }
+
+    public function handleRecordParity(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->parityHandler->parity($request, $this->authContext);
         });
     }
 
