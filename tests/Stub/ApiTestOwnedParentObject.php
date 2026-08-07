@@ -24,12 +24,24 @@ class ApiTestOwnedParentObject extends DataObject implements TestOnly
         'Sort' => 'Int',
     ];
 
+    private static array $has_one = [
+        // Deliberately points at the SAME class as
+        // ApiTestOwnedChildObject::FeaturedGrandchild — lets a test
+        // construct a genuine diamond (the same grandchild record
+        // reachable both via Parent->Children->[a child]->Grandchildren
+        // at depth 2, and directly via Parent->FeaturedGrandchild at
+        // depth 1), for OwnedTreeWalkerTest's shallowest-depth-wins
+        // coverage.
+        'FeaturedGrandchild' => ApiTestOwnedGrandchildObject::class,
+    ];
+
     private static array $has_many = [
         'Children' => ApiTestOwnedChildObject::class,
     ];
 
     private static array $owns = [
         'Children',
+        'FeaturedGrandchild',
     ];
 
     private static array $extensions = [

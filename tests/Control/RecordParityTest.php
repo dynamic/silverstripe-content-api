@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentSubclassObject;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
@@ -106,6 +107,45 @@ class RecordParityTest extends ContentApiTestCase
     }
 
     /**
+     * Code-review regression test for a critical bug: a record converted
+     * to a different class on draft only (`POST pages/$ID/convert` with
+     * `publish: "none"` is the module's own real write path for this) has
+     * a live row whose ClassName is still the OLD class. Querying that
+     * live row through the requested (now-different, narrower) class's
+     * own subclass set — rather than the record's true base class —
+     * silently fails to find it: a subclass's own subclass set never
+     * includes its own ancestor. Before the fix, this reported
+     * `liveExists: false` / `ok: true` for a record that was genuinely
+     * live and genuinely divergent — the exact false-clean this endpoint
+     * exists to prevent.
+     */
+    public function testFieldMismatchSurvivesAClassChangeThatOnlyHappenedOnDraft(): void
+    {
+        $record = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Still the old class on live']);
+
+        $this->inDraft(function () use ($record) {
+            $converted = $record->newClassInstance(ApiTestOwnedParentSubclassObject::class);
+            $converted->write();
+        });
+
+        // Queried via the NEW (narrower) class — matching what a caller
+        // would naturally do after converting a record, and the exact
+        // shape that hid the bug (a query via the base class' own broader
+        // subclass set would have masked it).
+        $body = $this->decode(
+            $this->apiGet("records/ApiTestOwnedParentSubclass/{$record->ID}/parity", $this->adminToken)
+        );
+
+        $this->assertTrue(
+            $body['data']['liveExists'],
+            'the live row must still be found even though its class no longer matches the requested class'
+        );
+        $this->assertFalse($body['data']['fields']['ClassName']['match']);
+        $this->assertSame(ApiTestOwnedParentObject::class, $body['data']['fields']['ClassName']['live']);
+        $this->assertSame(ApiTestOwnedParentSubclassObject::class, $body['data']['fields']['ClassName']['draft']);
+    }
+
+    /**
      * The exact bug class #120 exists to catch: a live root whose owned
      * tree has a draft-only piece two levels down (a page's element, and
      * that element's own owned child) — not caught by a single-level
@@ -171,6 +211,29 @@ class RecordParityTest extends ContentApiTestCase
         }
     }
 
+    /**
+     * Code-review regression test: the mirror image of the more common
+     * "root live, descendant draft-only" bug — a live owned descendant
+     * under a non-live root is stranded content (the root's own publish
+     * history should have carried it, or never published it at all), and
+     * must be reported as a mismatch too, not silently treated as "root
+     * isn't live, so nothing here can be a problem."
+     */
+    public function testALiveOwnedDescendantUnderANonLiveRootIsReportedAsAMismatch(): void
+    {
+        $parent = $this->createDraftOnly(ApiTestOwnedParentObject::class, ['Title' => 'Never published']);
+        $this->createAndPublish(ApiTestOwnedChildObject::class, [
+            'Title' => 'Published independently — stranded',
+            'ParentID' => $parent->ID,
+        ]);
+
+        $body = $this->decode($this->apiGet("records/ApiTestOwnedParent/{$parent->ID}/parity", $this->adminToken));
+
+        $this->assertFalse($body['data']['liveExists']);
+        $this->assertFalse($body['data']['ok'], 'a live owned descendant under a non-live root must be flagged');
+        $this->assertTrue($body['data']['owned'][0]['live']);
+    }
+
     public function testIncludeNoneSkipsTheOwnedWalk(): void
     {
         $parent = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Parent']);
@@ -205,6 +268,60 @@ class RecordParityTest extends ContentApiTestCase
 
         $this->assertCount(1, $body['data']['owned'], 'depth=1 must stop after the child');
         $this->assertSame(1, $body['data']['owned'][0]['depth']);
+    }
+
+    /**
+     * Code-review regression test: a non-numeric `?depth=` value must not
+     * silently coerce to `(int) 'garbage' === 0`, which would disable the
+     * owned walk entirely with no indication why — the exact failure mode
+     * a typo'd depth param produces.
+     */
+    public function testInvalidDepthParamsAreRejected(): void
+    {
+        $parent = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Parent']);
+
+        foreach (['not-a-number', '-5'] as $badDepth) {
+            $response = $this->apiGet(
+                "records/ApiTestOwnedParent/{$parent->ID}/parity?depth={$badDepth}",
+                $this->adminToken
+            );
+
+            $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        }
+    }
+
+    /**
+     * The companion case: `?depth=` with an empty value is treated the
+     * same as omitting the param entirely (falls back to
+     * `OwnedTreeWalker`'s configured default) — it must NOT be rejected
+     * the way a genuinely malformed value is.
+     */
+    public function testAnEmptyDepthParamFallsBackToTheDefaultRatherThanBeingRejected(): void
+    {
+        $parent = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Parent']);
+        $this->createAndPublish(ApiTestOwnedChildObject::class, [
+            'Title' => 'Child',
+            'ParentID' => $parent->ID,
+        ]);
+
+        $body = $this->decode(
+            $this->apiGet("records/ApiTestOwnedParent/{$parent->ID}/parity?depth=", $this->adminToken)
+        );
+
+        $this->assertNull($body['error']);
+        $this->assertCount(1, $body['data']['owned']);
+    }
+
+    public function testInvalidIncludeParamIsRejected(): void
+    {
+        $parent = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Parent']);
+
+        $response = $this->apiGet(
+            "records/ApiTestOwnedParent/{$parent->ID}/parity?include=everything",
+            $this->adminToken
+        );
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }
 
     public function testNonVersionedClassIsRejected(): void

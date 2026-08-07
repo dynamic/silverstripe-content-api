@@ -37,11 +37,15 @@ use SilverStripe\Versioned\Versioned;
  *   prototype task's own scope: presence-on-live only for owned
  *   descendants, full field comparison only for the root).
  *
- * A draft-only owned descendant only counts as a genuine mismatch
- * (`ok: false`) when the ROOT is live — the exact bug class this endpoint
- * exists to catch (a live page 404ing because some piece it owns, three
- * levels down, never got published). When the root itself isn't live,
- * every owned descendant being draft too is simply consistent, not a
+ * An owned descendant's live status disagreeing with the root's own is a
+ * genuine mismatch (`ok: false`): root live + descendant draft-only is
+ * the exact bug class this endpoint primarily exists to catch (a live
+ * page 404ing because some piece it owns, several levels down, never got
+ * published); root NOT live + descendant live is the mirror image
+ * (stranded content the root's own publish history should have carried
+ * or never published). Root live + descendant live, or root not-live +
+ * descendant not-live, are both consistent — an owned tree that's
+ * uniformly draft because the whole branch was never published is not a
  * problem.
  */
 class ParityHandler
@@ -85,9 +89,8 @@ class ParityHandler
         }
 
         $idParam = (string) $request->param('ID');
-        $includeOwned = strtolower((string) ($request->getVar('include') ?: 'owned')) !== 'none';
-        $depthParam = $request->getVar('depth');
-        $depth = $depthParam !== null ? max(0, (int) $depthParam) : null;
+        $includeOwned = $this->resolveInclude($request);
+        $depth = $this->resolveDepth($request);
 
         $draftRecord = $this->withStage($className, 'draft', function () use ($className, $idParam, $context) {
             $record = $this->reader->fetchRecord($className, $idParam);
@@ -133,6 +136,45 @@ class ParityHandler
     }
 
     /**
+     * `?include=owned` (default) or `?include=none` — anything else is
+     * rejected rather than silently treated as "owned", matching
+     * `RecordsHandler::resolveStage()`'s convention for an unrecognized
+     * enum value.
+     */
+    protected function resolveInclude(HTTPRequest $request): bool
+    {
+        $include = strtolower((string) ($request->getVar('include') ?: 'owned'));
+
+        if (!in_array($include, ['owned', 'none'], true)) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'The "include" parameter must be "owned" or "none".');
+        }
+
+        return $include === 'owned';
+    }
+
+    /**
+     * Absent or empty means "use `OwnedTreeWalker`'s configured default" —
+     * `null`, not `0`. A present-but-invalid value (non-digit, e.g. a typo
+     * or an empty-string edge case from a query-string builder) is
+     * rejected rather than silently coercing to `(int) '' === 0`, which
+     * would disable the owned walk entirely without any indication why.
+     */
+    protected function resolveDepth(HTTPRequest $request): ?int
+    {
+        $raw = $request->getVar('depth');
+
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        if (!ctype_digit((string) $raw)) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'The "depth" parameter must be a non-negative integer.');
+        }
+
+        return (int) $raw;
+    }
+
+    /**
      * @return array{liveExists: bool, fields: array<string, array{draft: mixed, live: mixed, match: bool}>,
      *   ok: bool, report: array<int, array{label: string, ok: bool, message: string}>}
      */
@@ -140,8 +182,20 @@ class ParityHandler
     {
         $label = sprintf('%s #%d', $className, $draftRecord->ID);
 
-        $liveRecord = $this->withStage($className, 'live', function () use ($className, $draftRecord) {
-            return DataObject::get($className)->byID($draftRecord->ID);
+        // Queried by base class, not $className: DataQuery filters by
+        // ClassName IN (subclassesFor($dataClass)) whenever the query
+        // class differs from the base class (DataQuery::
+        // getFinalisedQuery()) — with no exemption for a LIVE-stage read.
+        // A record converted to a different class between publishes
+        // (POST pages/$ID/convert with publish: "none") would otherwise
+        // make its own live row invisible to this exact query, silently
+        // reporting a genuinely-live, genuinely-divergent record as
+        // "liveExists: false" / "ok: true" — the false-clean this
+        // endpoint exists to prevent. A real class difference still
+        // surfaces correctly afterward, as an ordinary ClassName field
+        // mismatch in the comparison below.
+        $liveRecord = $this->withStage($className, 'live', function () use ($draftRecord) {
+            return DataObject::get($draftRecord->baseClass())->byID($draftRecord->ID);
         });
 
         if (!$liveRecord) {
@@ -207,8 +261,10 @@ class ParityHandler
             $className = get_class($record);
             $depth = $entry['depth'];
 
-            $isLive = $this->withStage($className, 'live', function () use ($className, $record) {
-                return DataObject::get($className)->filter('ID', $record->ID)->exists();
+            // Queried by base class, not the owned record's own concrete
+            // class — same reasoning as compareFields()'s live lookup.
+            $isLive = $this->withStage($className, 'live', function () use ($record) {
+                return DataObject::get($record->baseClass())->filter('ID', $record->ID)->exists();
             });
 
             $out[] = [
@@ -218,23 +274,31 @@ class ParityHandler
                 'live' => $isLive,
             ];
 
-            // Only a genuine mismatch when the root itself is live — a
-            // draft-only owned descendant under a draft-only (or
-            // never-published) root is consistent, not a problem. This is
-            // exactly the invariant a live page 404ing on a draft-only
-            // owned piece depends on: root live + descendant not live.
-            $entryOk = $isLive || !$rootIsLive;
+            // A genuine parity mismatch is the descendant's live status
+            // disagreeing with the root's — not just "descendant not
+            // live while the root is." A live descendant under a
+            // NON-live root is stranded content (the root's own publish
+            // history should have carried the descendant with it, or
+            // never published it in the first place), the mirror image
+            // of the more common "root live, descendant draft-only" bug
+            // this endpoint primarily exists to catch.
+            $entryOk = $isLive === $rootIsLive;
 
             if (!$entryOk) {
                 $ok = false;
             }
 
+            $message = match (true) {
+                $isLive && $rootIsLive => 'live',
+                !$isLive && !$rootIsLive => 'draft-only, consistent with the root',
+                !$isLive && $rootIsLive => 'draft-only — not live, but the root is',
+                default => 'live — but the root is not (stranded content)',
+            };
+
             $report[] = [
                 'label' => sprintf('%s #%d (depth %d)', $className, $record->ID, $depth),
                 'ok' => $entryOk,
-                'message' => $isLive
-                    ? 'live'
-                    : ($rootIsLive ? 'draft-only — not live, but the root is' : 'draft-only, consistent with the root'),
+                'message' => $message,
             ];
         }
 

@@ -186,17 +186,19 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
     }
 
     /**
-     * An owned relation to an unversioned class is pruned, not walked — it
-     * has no draft/live state for anything consuming this walker's output
-     * to report on. ApiTestOwnedChildObject itself is always Versioned in
-     * these fixtures, so this exercises the guard via a relation this test
-     * constructs specifically to violate it: an owned has_one pointed at a
-     * record whose class doesn't extend Versioned at all isn't reachable
-     * through the existing stubs, so this test instead confirms the guard
-     * fires on the ROOT itself (a non-Versioned root's tree is never
-     * walked at all — the empty result IS the assertion).
+     * An unversioned record is never EMITTED (it has no draft/live state
+     * for anything consuming this walker's output to report on) — but,
+     * unlike the walker's first cut, its own owned relations are still
+     * walked THROUGH it, matching `RecursivePublishable::
+     * rollbackRelations()`'s real recursion behavior. `ApiTestObject`
+     * declares no `$owns` at all, so this specific fixture can't
+     * distinguish "pruned" from "walked through but nothing to find" —
+     * the assertion is on the root itself never appearing in its own
+     * result, which holds either way; see `RecordParityTest` for
+     * coverage of the ROOT rejection ParityHandler applies before ever
+     * calling this walker on a non-Versioned class.
      */
-    public function testAnUnversionedRootIsNeverWalked(): void
+    public function testAnUnversionedRootIsNeverEmittedIntoItsOwnResult(): void
     {
         $unversioned = \Dynamic\ContentApi\Tests\Stub\ApiTestObject::create(['Title' => 'Not Versioned']);
         $unversioned->write();
@@ -204,5 +206,85 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
         $result = $this->walker()->walk($unversioned);
 
         $this->assertSame([], $result);
+    }
+
+    /**
+     * The bug this guards: `$owns` can form a diamond — the same record
+     * reachable via two different owned paths at different depths (a
+     * shared `File` owned both directly by a page and by one of its
+     * elements is a realistic real-world shape). A plain seen/unseen
+     * visited-set reports whichever path happens to reach the shared
+     * node FIRST; if that's the deeper path, the node's own further
+     * owned relations could go unexpanded even though a shallower,
+     * still-in-budget path to the same node exists. Constructed so the
+     * DEEP path (Parent->Children->Child->Grandchildren, depth 2) is
+     * declared and therefore walked before the SHALLOW one
+     * (Parent->FeaturedGrandchild, depth 1) — the failure mode only
+     * shows up in that order.
+     */
+    public function testADiamondReachedByTwoPathsIsReportedAtItsShallowestDepth(): void
+    {
+        [$parent, $shared] = $this->inDraft(function () {
+            $parent = ApiTestOwnedParentObject::create(['Title' => 'Parent']);
+            $parent->write();
+
+            $shared = ApiTestOwnedGrandchildObject::create(['Title' => 'Shared']);
+            $shared->write();
+
+            $child = ApiTestOwnedChildObject::create([
+                'Title' => 'Child',
+                'ParentID' => $parent->ID,
+                'FeaturedGrandchildID' => $shared->ID,
+            ]);
+            $child->write();
+
+            // Also reachable directly from the parent — the shallow path.
+            $parent->FeaturedGrandchildID = $shared->ID;
+            $parent->write();
+
+            return [$parent, $shared];
+        });
+
+        $result = $this->inDraft(fn () => $this->walker()->walk($parent));
+
+        $sharedEntries = array_values(array_filter(
+            $result,
+            fn (array $entry) => get_class($entry['record']) === ApiTestOwnedGrandchildObject::class
+                && (int) $entry['record']->ID === (int) $shared->ID
+        ));
+
+        $this->assertCount(1, $sharedEntries, 'the shared node must appear exactly once, not once per path');
+        $this->assertSame(1, $sharedEntries[0]['depth'], 'the shallower path\'s depth must win');
+    }
+
+    public function testAMisconfiguredOwnsEntryIsLoggedNotSilentlyDropped(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'owns', ['Children', 'NoSuchRelation']);
+
+        $parent = $this->inDraft(function () {
+            $parent = ApiTestOwnedParentObject::create(['Title' => 'Parent']);
+            $parent->write();
+
+            return $parent;
+        });
+
+        $logger = new class implements \Psr\Log\LoggerInterface {
+            use \Psr\Log\LoggerTrait;
+
+            public array $messages = [];
+
+            public function log($level, $message, array $context = []): void
+            {
+                $this->messages[] = (string) $message;
+            }
+        };
+
+        $walker = OwnedTreeWalker::create();
+        $walker->logger = $logger;
+
+        $walker->walk($parent);
+
+        $this->assertNotEmpty($logger->messages);
+        $this->assertStringContainsString('NoSuchRelation', $logger->messages[0]);
     }
 }
