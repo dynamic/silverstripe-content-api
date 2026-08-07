@@ -20,6 +20,7 @@ Two cooperating surfaces share one token and one models map:
 - **Calling the API?** [Endpoint reference](05_endpoint-reference.md) · [Write payloads](06_write-payloads.md) · [Batch operations](07_batch-operations.md) · [Page compositions](08_page-compositions.md) · [Assets](09_assets.md) · [Publishing & stages](10_publishing-and-stages.md) · [Schema introspection](11_schema-introspection.md) · [Error codes](12_error-codes.md)
 - **Migrating from Populate fixtures?** [Migrating from fixtures](13_migrating-from-fixtures.md)
 - **Contributing to the module?** [Architecture](14_architecture.md) · [Testing & contributing](15_testing-and-contributing.md) · [Upstream issues workstream](upstream-issues.md)
+- **Restructuring production content?** [Verification](16_verification.md)
 
 ## Page index
 
@@ -41,6 +42,7 @@ Two cooperating surfaces share one token and one models map:
 | 13 | [Migrating from fixtures](13_migrating-from-fixtures.md) | Populate-YAML → content API concept map |
 | 14 | [Architecture](14_architecture.md) | Request lifecycle, service map, the two write surfaces |
 | 15 | [Testing & contributing](15_testing-and-contributing.md) | Test setup, running the suite, the spec-sync workflow |
+| 16 | [Verification](16_verification.md) | Fingerprint → dry-run → apply → parity → reachability, as one workflow |
 | — | [Upstream issues](upstream-issues.md) | The colymba/silverstripe-restfulapi support workstream |
 
 See also: the companion [MCP server](https://github.com/dynamic/silverstripe-content-api-mcp), which exposes this

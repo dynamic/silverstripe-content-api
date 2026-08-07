@@ -49,6 +49,7 @@ vendor/bin/phpstan analyse       # phpstan.neon.dist
 | `Control/ColorTokenTest.php` | `$palette`/`$button` resolution (only runs where essentials-tools is installed) |
 | `Control/CompositionTest.php` | Full-page composition payload behavior |
 | `Control/EnvironmentGateTest.php` | Environment gating, including the `SS_CONTENT_API_ALLOW_POPULATE` blocking-value data provider |
+| `Control/FingerprintTest.php` | `GET fingerprint`: path keying across a reparent, sorted/byte-stable ordering, the Race Team scenario (live child under a draft-only parent), unresolved-owner bucketing, `related` reachability one hop out, `classes`/`includeIds` params, permission-filtered classes in `meta.skipped` |
 | `Control/PageActionsTest.php` | Page convert: no-op same-class, homepage refusal, permission/env gating; also covers the `URLSEGMENT_COLLISION` warning surfaced on a URLSegment-setting write |
 | `Control/RecordParityTest.php` | `GET .../parity`: field comparison, liveExists/ok semantics, depth-2 owned mismatch, `include`/`depth` params, authorization |
 | `Control/RecordActionsTest.php` | Stage actions, unknown action 404, verb requirements |

@@ -1,6 +1,6 @@
 {
   "$comment": "MCP-style tool definitions for every content API endpoint. dynamic/silverstripe-content-api-mcp maps one tool per entry onto the REST endpoint, injecting the X-Silverstripe-Apitoken header. Class payload contracts are discovered at runtime via the schema_class tool.",
-  "version": "v1.10",
+  "version": "v1.11",
   "baseRoute": "content-api/v1",
   "tools": [
     {
@@ -148,6 +148,27 @@
           "classRef",
           "id"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "content_fingerprint",
+      "description": "A deterministic, path-keyed snapshot of the site's content for diffing across gates (before/after a batch) or environments (a local rehearsal vs. production). Pages are keyed by their URL path, not id — ids churn across a rebuild/sync/environment boundary, paths don't (call with includeIds=true to add ids back for debugging a specific row, but don't diff on them). Also asserts the reachability invariant a plain snapshot can't: violations lists every live page (or live related record) whose path runs through a non-live ancestor, since SiteTree::get_by_link() 404s on the first non-live path segment regardless of the target row's own live status. related sections (project-configured, e.g. a hero-image relation keyed by its owning page's FK column) report unresolved counts for owners that don't resolve to a known page rather than leaking a raw id. classes restricts which sections appear in the response (pages plus any configured related ref); permission-filtered classes appear in meta.skipped, not silently omitted, so a diff between callers with different access doesn't read as false-clean.",
+      "method": "GET",
+      "path": "fingerprint",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "classes": {
+            "type": "string",
+            "description": "Comma-separated section refs to include (\"pages\" plus any configured related ref). Omit to include every section."
+          },
+          "includeIds": {
+            "type": "boolean",
+            "default": false,
+            "description": "Add each row's numeric id. Off by default — the whole point of this snapshot is being diffable across environments where ids aren't stable."
+          }
+        },
         "additionalProperties": false
       }
     },

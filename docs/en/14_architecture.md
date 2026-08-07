@@ -25,6 +25,7 @@ Each route maps to one handler method (`$url_handlers` in `ContentApiController`
 |---|---|
 | `GET auth/session` | `AuthHandler::session()` |
 | `GET/POST records/*` | `RecordsHandler` (reads), `RecordActionsHandler` (stage actions), `ParityHandler` (draft/live parity, #120) |
+| `GET fingerprint` | `FingerprintHandler` → `FingerprintService` (path-keyed content snapshot + reachability check, #131) |
 | `POST pages/$ID/*` | `PageHandler::handle()` |
 | `POST/GET assets*` | `AssetHandler` |
 | `POST batch` | `BatchHandler` → `BatchProcessor` |
@@ -56,9 +57,10 @@ class+message in dev/test, an opaque message in production).
 | `Serialize/` | `RecordSerializer` | DataObject → API record shape |
 | `Schema/` | `SchemaService` | Site/class introspection |
 | `Verify/` | `OwnedTreeWalker` | Recursive `$owns` tree walk with cycle guard + depth cap (#120) |
+| `Verify/` | `FingerprintService` | Deterministic, path-keyed content snapshot + ancestor-reachability check (#131) |
 | `Auth/` | `AuthContext` | Resolved-auth value object for one request |
 | `Errors/` | `ErrorCode`, `ApiError` | Machine-readable codes + the throwable that carries them |
-| `Control/`, `Control/Handlers/` | `ContentApiController` + 8 handlers | Routing, envelope, per-endpoint logic |
+| `Control/`, `Control/Handlers/` | `ContentApiController` + 10 handlers | Routing, envelope, per-endpoint logic |
 | `Tasks/` | `MintApiTokenTask`, `SetupServiceAccountTask` | `sake dev/tasks/MintContentApiToken`, `sake dev/tasks/SetupContentApiServiceAccount` — thin `run($request)` adapters, translate legacy SS5 request vars only |
 | `Tasks/Support/` | `ApiTokenMinter`, `ServiceAccountProvisioner`, `TaskResult`, `TaskStatus` | Branch-neutral business logic behind the two tasks above (#65), behaviorally identical to branch `2`'s copies (class docblocks may name each branch's own adapter; code and returned messages must not differ) — this branch's adapters call the same services instead of duplicating ~180 lines per branch. Dependency-free (no `symfony/console`, which this branch doesn't require). The services' own message text still names branch `2`'s `--flag` syntax, so each adapter here translates it to this branch's `key=value` syntax before echoing. Branch `2` additionally has `TaskResultRenderer`, the one piece of SS6-specific (`PolyOutput`/`Command`) rendering glue — not present here; this branch's adapters `echo` `TaskResult::$lines` directly |
 
