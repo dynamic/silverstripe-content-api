@@ -45,7 +45,7 @@ vendor/bin/phpstan analyse       # phpstan.neon.dist
 |---|---|
 | `Control/AssetsTest.php` | Asset upload/read: create, idempotent identical content, conflict modes, publish flag, permission + env gating, payload validation |
 | `Control/AuthTest.php` | Auth adapter error mapping, session introspection, cross-surface contract with colymba's own auth |
-| `Control/BatchTest.php` | Batch ops through the RecordWriter/WriteApplicator path |
+| `Control/BatchTest.php` | Batch ops through the RecordWriter/WriteApplicator path, incl. `dryRun` |
 | `Control/ColorTokenTest.php` | `$palette`/`$button` resolution (only runs where essentials-tools is installed) |
 | `Control/CompositionTest.php` | Full-page composition payload behavior |
 | `Control/EnvironmentGateTest.php` | Environment gating, including the `SS_CONTENT_API_ALLOW_POPULATE` blocking-value data provider |
@@ -62,6 +62,7 @@ vendor/bin/phpstan analyse       # phpstan.neon.dist
 | `Security/ContentApiGrantExtensionTest.php` | `ContentApiGrantExtension`: escalation regression (a declared class's verbs must not leak to an undeclared subclass), per-verb scoping, the never-`false` guard, `VIEW_DRAFT_CONTENT`/`Versioned::canDelete()` interactions, `BaseElement::canCreate()` non-delegation |
 | `Security/PermissionPolicyTest.php` | `buildCreateContext()` has_one hydration, incl. trusted-field-only relations |
 | `Write/WriteApplicatorTest.php` | Trusted channel setting a polymorphic Class column directly |
+| `Write/RecordWriterTest.php` | `write()`'s rollback pre-image capture: plain/has_one/composite/polymorphic-has_one field resolution |
 | `ContentApiTestCase.php` + `Stub/*.php` | Shared fixture/registry/token plumbing and test DataObjects |
 
 ## Gotchas

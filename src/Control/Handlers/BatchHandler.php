@@ -33,6 +33,10 @@ class BatchHandler
 
     public function handle(HTTPRequest $request, AuthContext $context): array
     {
+        // #130: both gates still apply to a dry run — validate-only still
+        // authorizes and resolves everything a real run would, and that
+        // alone leaks schema/permission information a caller shouldn't get
+        // for free just by adding "dryRun": true.
         $this->policy->checkPopulateAccess($context->member);
         $this->environmentGate->checkPopulationAllowed();
 
@@ -42,8 +46,19 @@ class BatchHandler
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'Request body is not valid JSON.');
         }
 
+        $data = $this->processor->process($body, $context->member);
+
+        if (empty($body['dryRun'])) {
+            return ['data' => $data];
+        }
+
+        // A dry-run response carries a distinct meta.operation the same
+        // way #102's subtree-publish dry run does — a caller inspecting
+        // only `data.results`/`data.summary` shouldn't be able to mistake
+        // this for a real run's envelope; `meta` is the tell.
         return [
-            'data' => $this->processor->process($body, $context->member),
+            'data' => $data,
+            'meta' => ['operation' => 'batchDryRun', 'atomic' => !empty($body['atomic'])],
         ];
     }
 }

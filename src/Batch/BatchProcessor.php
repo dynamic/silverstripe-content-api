@@ -58,16 +58,22 @@ class BatchProcessor
         }
 
         $atomic = !empty($payload['atomic']);
+        $dryRun = !empty($payload['dryRun']);
         $defaultPublish = (string) ($payload['defaultPublish'] ?? 'none');
 
         // Populated by run()/runOperation() as 'updated' results are
         // produced — pre-images for verifyRollback() (#127). Declared here,
         // outside the atomic/non-atomic branch, so both paths share one
-        // variable; only the atomic path ever reads it back, but a plain
-        // by-reference array threaded through the call stack (rather than
-        // instance state on this shared/injected service) keeps concurrent
-        // or re-entrant process() calls from stepping on each other.
+        // variable; only the atomic and dry-run paths ever read it back,
+        // but a plain by-reference array threaded through the call stack
+        // (rather than instance state on this shared/injected service)
+        // keeps concurrent or re-entrant process() calls from stepping on
+        // each other.
         $preImages = [];
+
+        if ($dryRun) {
+            return $this->runDryRun($operations, $defaultPublish, $member, $atomic, $preImages);
+        }
 
         if (!$atomic) {
             return $this->run($operations, $defaultPublish, $member, false, $preImages);
@@ -119,6 +125,137 @@ class BatchProcessor
         }
 
         return $outcome;
+    }
+
+    /**
+     * #130: `dryRun: true` — runs the batch exactly as a real request would
+     * (same authorization, class/externalId/relation resolution, payload
+     * validation, model `validate()` on write — none of that surfaces
+     * except by actually attempting the write; see `RecordWriter::write()`)
+     * inside a transaction that is UNCONDITIONALLY rolled back afterward,
+     * regardless of `$atomic` or whether every op succeeded. Non-atomic
+     * dry runs still report per-op errors the same way a real non-atomic
+     * run would (`$abortOnError = $atomic`, identical to `process()`'s own
+     * real-run branches) — a dry run predicts exactly what a real run
+     * would report, it doesn't change the reporting shape.
+     *
+     * `DryRunCompleteException` is the forcing mechanism: it's thrown
+     * unconditionally at the end of the transaction closure whether `run()`
+     * returned normally or raised `BatchAbortException` (atomic + a real
+     * op failure), so `DbTransaction::run()` always sees an exception and
+     * always rolls back — there is no code path here that lets a dry run
+     * commit. Caught immediately outside the transaction; never a real
+     * error as far as the caller is concerned.
+     *
+     * Rollback is then verified the same way an atomic failure's rollback
+     * is (`verifyRollback()`, #127) — "wrapped in a transaction that gets
+     * rolled back" is exactly the mechanism #70 proved isn't trustworthy
+     * on its own. A dry run that fails verification is the loudest
+     * possible failure: it means this "safe preflight" call may have just
+     * written real data, so it's reported as `ROLLBACK_UNVERIFIED` (500),
+     * the same code a genuinely-failed atomic rollback uses, never folded
+     * into the normal dry-run response.
+     *
+     * @return array{results: array, summary: array}
+     */
+    protected function runDryRun(
+        array $operations,
+        string $defaultPublish,
+        Member $member,
+        bool $atomic,
+        array &$preImages
+    ): array {
+        try {
+            DbTransaction::run(function () use ($operations, $defaultPublish, $member, $atomic, &$preImages) {
+                $failedIndex = null;
+
+                try {
+                    $outcome = $this->run($operations, $defaultPublish, $member, $atomic, $preImages);
+                } catch (BatchAbortException $aborted) {
+                    $outcome = $aborted->partialOutcome;
+                    $failedIndex = $aborted->failedIndex;
+                }
+
+                // Always throws — see this method's own docblock for why
+                // an exception must escape the transaction closure
+                // unconditionally, whether $outcome came from a normal
+                // return or an atomic abort.
+                throw new DryRunCompleteException($outcome, $failedIndex);
+            });
+
+            // DbTransaction::run() never returns normally from the closure
+            // above — it always throws DryRunCompleteException. Reaching
+            // this line at all would mean that guarantee broke somehow;
+            // treat it the same as a failed verification rather than
+            // silently reporting an empty dry run as successful.
+            throw new ApiError(
+                ErrorCode::ROLLBACK_UNVERIFIED,
+                'Dry run did not complete as expected — treat as unverified.'
+            );
+        } catch (DryRunCompleteException $complete) {
+            $outcome = $complete->outcome;
+            $failedIndex = $complete->failedIndex;
+        }
+
+        $verified = $this->verifyRollback($operations, $outcome['results'], $preImages);
+
+        if (!$verified) {
+            throw new ApiError(
+                ErrorCode::ROLLBACK_UNVERIFIED,
+                'Dry run could not be verified as having made zero persistent changes '
+                    . '— check the affected records directly before trusting this preflight.',
+                [$outcome]
+            );
+        }
+
+        if ($failedIndex !== null) {
+            // Predict exactly what a real atomic run would report for the
+            // same failure — the only difference is `rolledBack` is
+            // unconditionally true here (just proven above), where a real
+            // failed run's rollback still has to be independently verified
+            // per-request.
+            throw new ApiError(
+                ErrorCode::VALIDATION_FAILED,
+                sprintf('Dry run: atomic batch would fail at operation %d.', $failedIndex),
+                [$outcome + ['rolledBack' => true]]
+            );
+        }
+
+        return [
+            'results' => $this->toDryRunResults($outcome['results']),
+            'summary' => $this->toDryRunSummary($outcome['summary']),
+        ];
+    }
+
+    /**
+     * Maps a real run's per-op status vocabulary to its dry-run
+     * equivalent — `created`/`updated`/`deleted` become `wouldCreate`/
+     * `wouldUpdate`/`wouldDelete` (matching #102's `would*` convention for
+     * `publishDryRun`), `error` is unchanged. A dry-run response replaces
+     * the normal envelope rather than augmenting it (also #102's
+     * convention) specifically so a caller can never mistake a `status`
+     * field for confirmation that something was actually written.
+     */
+    protected function toDryRunResults(array $results): array
+    {
+        $map = ['created' => 'wouldCreate', 'updated' => 'wouldUpdate', 'deleted' => 'wouldDelete'];
+
+        return array_map(static function (array $result) use ($map) {
+            $result['status'] = $map[$result['status']] ?? $result['status'];
+
+            return $result;
+        }, $results);
+    }
+
+    protected function toDryRunSummary(array $summary): array
+    {
+        return [
+            'wouldCreate' => $summary['created'] ?? 0,
+            'wouldUpdate' => $summary['updated'] ?? 0,
+            'wouldDelete' => $summary['deleted'] ?? 0,
+            'skipped' => $summary['skipped'] ?? 0,
+            'errors' => $summary['errors'] ?? 0,
+        ];
     }
 
     /**
