@@ -93,19 +93,19 @@ class BatchProcessor
             }
 
             // A caught exception unwinding through DbTransaction::run() ran
-            // the transaction's rollback branch, but a re-check of the
-            // records this batch reported as created shows at least one is
-            // still there — the SQL rollback didn't actually take effect
-            // (confirmed cause: #70, a PHP diagnostic that isn't a
-            // Throwable — e.g. a deprecation notice from application code
-            // mid-write — can leave a caller unable to trust the
-            // framework's own transaction-nesting bookkeeping).
+            // the transaction's rollback branch, but a re-check shows at
+            // least one 'created', 'deleted', or (#127) 'updated' result
+            // didn't genuinely revert — the SQL rollback didn't actually
+            // take effect (confirmed cause: #70, a PHP diagnostic that
+            // isn't a Throwable — e.g. a deprecation notice from
+            // application code mid-write — can leave a caller unable to
+            // trust the framework's own transaction-nesting bookkeeping).
             // Report this distinctly rather than claiming "rolled back" —
             // the caller must check the database directly before retrying.
-            // Every 'created'/verifiable-'deleted' result's id is listed in
-            // $result['results'] below; there is no narrower list to give
-            // (verifyRollback() stops at the first unconfirmed record, it
-            // doesn't collect every one that's still there).
+            // Every checked result's id is listed in $result['results']
+            // below; there is no narrower list to give (verifyRollback()
+            // stops at the first unconfirmed record, it doesn't collect
+            // every one that's still wrong).
             throw new ApiError(
                 ErrorCode::ROLLBACK_UNVERIFIED,
                 sprintf(
@@ -307,7 +307,23 @@ class BatchProcessor
 
                         foreach ($preImage as $column => $originalValue) {
                             $currentValue = $record->getField($column);
-                            $currentValue = is_object($currentValue) ? (string) $currentValue : $currentValue;
+
+                            if (is_object($currentValue)) {
+                                // Every column RecordWriter::write() ever
+                                // stores a pre-image for is resolved to a
+                                // raw, always-scalar DB column — a has_one
+                                // FK/Class or a composite's real
+                                // sub-column, never the composite/relation
+                                // object itself. An object here means that
+                                // resolution didn't happen for this
+                                // column, and a string cast can't be
+                                // trusted not to silently collapse two
+                                // different values to the same string
+                                // (confirmed possible for a composite
+                                // DBField whose own getValue() isn't
+                                // overridden) — fail closed instead.
+                                return false;
+                            }
 
                             if ((string) $currentValue !== (string) $originalValue) {
                                 return false;

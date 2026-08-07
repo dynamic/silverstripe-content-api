@@ -217,10 +217,12 @@ class RecordWriter
         if ($operation === 'updated') {
             $preImage = [];
             $hasOne = (array) $record->hasOne();
+            $schema = DataObject::getSchema();
+            $className = get_class($record);
 
             foreach (array_keys($fields) as $field) {
                 // A has_one relation name (or its own FK-suffixed key)
-                // both resolve to the same "{Relation}ID" column
+                // resolves to the same "{Relation}ID" column
                 // WriteApplicator actually writes — snapshot THAT raw FK
                 // id, never getField() on the relation name itself.
                 // getField() resolves a has_one *name* to the related
@@ -230,25 +232,80 @@ class RecordWriter
                 // would report "verified" for ANY two records of the same
                 // class regardless of which one is actually linked, a
                 // silent false negative in exactly the case #127 exists
-                // to catch.
-                $column = match (true) {
-                    isset($hasOne[$field]) => $field . 'ID',
-                    str_ends_with($field, 'ID') && isset($hasOne[substr($field, 0, -2)]) => $field,
-                    default => $field,
+                // to catch. A polymorphic has_one ('Relation' =>
+                // DataObject::class) also gets its companion "{Name}Class"
+                // column snapshotted — WriteApplicator writes that column
+                // too as part of the same payload key (see
+                // WriteApplicator::applyFields()), and a rollback that
+                // reverted the FK but not the class column would still
+                // point at the wrong record's table.
+                $relationName = match (true) {
+                    isset($hasOne[$field]) => $field,
+                    str_ends_with($field, 'ID') && isset($hasOne[substr($field, 0, -2)]) => substr($field, 0, -2),
+                    default => null,
                 };
 
-                $value = $record->getField($column);
+                if ($relationName !== null) {
+                    $preImage[$relationName . 'ID'] = $record->getField($relationName . 'ID');
 
-                // Force eager evaluation now, before applyFields() mutates
-                // $record below — a composite DBField (e.g. Money)
-                // returned by getField() stays live-bound to this exact
-                // $record instance (DBComposite::bindTo()), so reading it
-                // again later — after the mutation — would silently
-                // return the POST-write value instead of the pre-image,
-                // making the whole check vacuous. Casting to string
-                // immediately, while the old data is still in place,
-                // freezes the value instead of deferring evaluation.
-                $preImage[$column] = is_object($value) ? (string) $value : $value;
+                    if (($hasOne[$relationName] ?? null) === DataObject::class) {
+                        $preImage[$relationName . 'Class'] = $record->getField($relationName . 'Class');
+                    }
+
+                    continue;
+                }
+
+                // A composite DBField (e.g. Money) resolves through
+                // getField() to the actual DBComposite instance, not a
+                // scalar — and that object's own value is NOT a safe
+                // proxy for its content in general: DBComposite never
+                // overrides DBField::getValue(), and DBComposite::
+                // setValue() binds to the parent record instead of
+                // populating the inherited $value property, so the base
+                // getValue() (and therefore a plain string cast) reads as
+                // empty/null on every composite type UNLESS that specific
+                // subclass happens to override getValue() itself (DBMoney
+                // does; most composites don't). A live-bound object also
+                // stays tied to this exact $record instance — reading it
+                // again after applyFields() mutates $record below would
+                // return the POST-write value, not the pre-image.
+                // Resolved the same way has_one is above: expand to the
+                // real, always-scalar sub-columns the field actually
+                // stores as (e.g. "Price" -> "PriceAmount"/"PriceCurrency")
+                // and capture those directly — never the composite object.
+                $compositeClass = $schema->compositeField($className, $field);
+
+                if ($compositeClass !== null) {
+                    $subFields = Injector::inst()->create($compositeClass, $field)->compositeDatabaseFields();
+
+                    foreach (array_keys($subFields) as $subField) {
+                        $preImage[$field . $subField] = $record->getField($field . $subField);
+                    }
+
+                    continue;
+                }
+
+                $value = $record->getField($field);
+
+                if (is_object($value)) {
+                    // Some other object-valued field this method doesn't
+                    // know how to resolve to a raw, comparable column —
+                    // per DataObject::getField()'s own logic the only two
+                    // cases that return an object are the has_one and
+                    // composite ones already handled above, so this
+                    // shouldn't be reachable today. If it ever is (a
+                    // future DBField type, a framework change), skip
+                    // capturing it rather than guessing with a string
+                    // cast that could silently collapse two different
+                    // values to the same string — exactly the bug this
+                    // method exists to avoid. Any OTHER declared field on
+                    // the same operation is still captured and verified;
+                    // this one just isn't part of the check, the same
+                    // documented gap relation changes already have.
+                    continue;
+                }
+
+                $preImage[$field] = $value;
             }
         }
 
