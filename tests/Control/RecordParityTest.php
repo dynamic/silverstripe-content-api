@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentSubclassObject;
@@ -143,6 +144,37 @@ class RecordParityTest extends ContentApiTestCase
         $this->assertFalse($body['data']['fields']['ClassName']['match']);
         $this->assertSame(ApiTestOwnedParentObject::class, $body['data']['fields']['ClassName']['live']);
         $this->assertSame(ApiTestOwnedParentSubclassObject::class, $body['data']['fields']['ClassName']['draft']);
+    }
+
+    /**
+     * Same underlying bug as the test above, one level down: the fix
+     * applies independently to `compareOwned()`'s per-entry live check,
+     * not only `compareFields()`'s root check. An owned child converted
+     * to a different class on draft only must still report `live: true`
+     * — reverting only the owned-side fix (leaving the root-side fix in
+     * place) leaves this specific case broken while every root-only test
+     * still passes.
+     */
+    public function testAnOwnedDescendantConvertedOnDraftOnlyStillReportsLive(): void
+    {
+        $parent = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Parent']);
+        $child = $this->createAndPublish(ApiTestOwnedChildObject::class, [
+            'Title' => 'Still the old class on live',
+            'ParentID' => $parent->ID,
+        ]);
+
+        $this->inDraft(function () use ($child) {
+            $converted = $child->newClassInstance(ApiTestOwnedChildSubclassObject::class);
+            $converted->write();
+        });
+
+        $body = $this->decode($this->apiGet("records/ApiTestOwnedParent/{$parent->ID}/parity", $this->adminToken));
+
+        $this->assertTrue(
+            $body['data']['owned'][0]['live'],
+            'the owned child\'s live row must still be found even though its class no longer matches'
+        );
+        $this->assertTrue($body['data']['ok']);
     }
 
     /**
@@ -320,6 +352,23 @@ class RecordParityTest extends ContentApiTestCase
             "records/ApiTestOwnedParent/{$parent->ID}/parity?include=everything",
             $this->adminToken
         );
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
+    /**
+     * Code-review regression test: `resolveInclude()` originally used
+     * `?:`, which treats the STRING "0" as falsy the same way an empty
+     * string is — `?include=0` would have silently fallen back to
+     * "owned" instead of being rejected as the malformed value it
+     * genuinely is. `resolveDepth()`'s `=== ''` check never had this
+     * problem; `resolveInclude()` needed the same fix.
+     */
+    public function testIncludeParamOfLiteralZeroIsRejectedNotSilentlyTreatedAsOwned(): void
+    {
+        $parent = $this->createAndPublish(ApiTestOwnedParentObject::class, ['Title' => 'Parent']);
+
+        $response = $this->apiGet("records/ApiTestOwnedParent/{$parent->ID}/parity?include=0", $this->adminToken);
 
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }

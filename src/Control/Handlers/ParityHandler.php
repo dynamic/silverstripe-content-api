@@ -143,7 +143,13 @@ class ParityHandler
      */
     protected function resolveInclude(HTTPRequest $request): bool
     {
-        $include = strtolower((string) ($request->getVar('include') ?: 'owned'));
+        $raw = $request->getVar('include');
+
+        // `=== ''`, not `?:` — `?:` treats the string "0" as falsy too, so
+        // an explicit "?include=0" would have silently fallen back to
+        // "owned" instead of being rejected as the malformed value it is.
+        // Same distinction resolveDepth() makes for the same reason.
+        $include = ($raw === null || $raw === '') ? 'owned' : strtolower((string) $raw);
 
         if (!in_array($include, ['owned', 'none'], true)) {
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'The "include" parameter must be "owned" or "none".');

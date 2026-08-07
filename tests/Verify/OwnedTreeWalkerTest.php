@@ -209,6 +209,45 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
     }
 
     /**
+     * The bug this guards, distinct from the test above: an unversioned
+     * record's OWN owned relations must still be walked THROUGH it, only
+     * never reported for the unversioned record itself —
+     * `RecursivePublishable::rollbackRelations()` (the real framework
+     * mechanism `publishRecursive()` builds on) recurses into an
+     * unversioned owned record's own owned relations; it only skips
+     * *reporting* draft/live state for something that has none. This
+     * fixture (unlike `ApiTestObject` above, which declares no `$owns` at
+     * all) has an `$owns` pointing at a genuinely versioned leaf, so it
+     * can actually distinguish "pruned the branch" from "walked through
+     * but reported nothing for itself."
+     */
+    public function testAnUnversionedIntermediateIsWalkedThroughNotPrunedAt(): void
+    {
+        [$wrapper, $leaf] = $this->inDraft(function () {
+            $leaf = ApiTestOwnedGrandchildObject::create(['Title' => 'Versioned leaf']);
+            $leaf->write();
+
+            $wrapper = \Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject::create([
+                'Title' => 'Unversioned wrapper',
+                'LeafID' => $leaf->ID,
+            ]);
+            $wrapper->write();
+
+            return [$wrapper, $leaf];
+        });
+
+        $result = $this->inDraft(fn () => $this->walker()->walk($wrapper));
+
+        $this->assertCount(1, $result, 'the versioned leaf must still be found through the unversioned wrapper');
+        $this->assertSame((int) $leaf->ID, (int) $result[0]['record']->ID);
+        $this->assertSame(
+            1,
+            $result[0]['depth'],
+            'the unversioned wrapper itself consumes a depth level even though it is never reported'
+        );
+    }
+
+    /**
      * The bug this guards: `$owns` can form a diamond — the same record
      * reachable via two different owned paths at different depths (a
      * shared `File` owned both directly by a page and by one of its
