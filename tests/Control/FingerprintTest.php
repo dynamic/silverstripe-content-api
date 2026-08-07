@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRestrictedRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Verify\FingerprintService;
 use SilverStripe\CMS\Model\SiteTree;
@@ -35,6 +36,7 @@ class FingerprintTest extends ContentApiTestCase
         Config::modify()->set(FingerprintService::class, 'related_classes', [
             'ApiTestFingerprintRelated' => 'PageID',
             'ApiTestFingerprintNonVersionedRelated' => 'PageID',
+            'ApiTestFingerprintRestrictedRelated' => 'PageID',
         ]);
     }
 
@@ -701,5 +703,195 @@ class FingerprintTest extends ContentApiTestCase
 
         $this->assertContains('ApiTestFingerprintRelated', $body['meta']['skipped']);
         $this->assertArrayNotHasKey('ApiTestFingerprintRelated', $body['data']['related']);
+    }
+
+    /**
+     * Second-review-round regression test: `ApiTestFingerprintRelatedObject`'s
+     * own `canView()` always returns `true`, so it can't exercise
+     * `buildRelated()`'s per-row `canViewRecord()` filter at all — the
+     * related half of the critical ACL fix was previously asserted only
+     * by the page-side tests. `ApiTestFingerprintRestrictedRelatedObject`
+     * denies everyone but ADMIN.
+     */
+    public function testRestrictedRelatedRecordInvisibleToNonAdminToken(): void
+    {
+        $page = $this->createPage('fp-restricted-related-owner');
+
+        $this->inDraft(function () use ($page) {
+            $record = ApiTestFingerprintRestrictedRelatedObject::create(['Title' => 'X', 'PageID' => $page->ID]);
+            $record->write();
+            $record->publishSingle();
+        });
+
+        $adminBody = $this->fingerprint();
+        $this->assertCount(1, $adminBody['data']['related']['ApiTestFingerprintRestrictedRelated']['records']);
+
+        $plainToken = $this->mintTokenFor('apiUser');
+        $plainBody = $this->decode($this->apiGet('fingerprint', $plainToken));
+
+        $this->assertSame(
+            [],
+            $plainBody['data']['related']['ApiTestFingerprintRestrictedRelated']['records'],
+            'a related record the caller cannot view must not appear in the response'
+        );
+    }
+
+    /**
+     * Second-review-round regression test: the ACL check in
+     * `buildRelated()` originally ran AFTER the `$ownerPath === null`
+     * branch's `continue`, so a record that was BOTH invisible to this
+     * caller AND had a broken owner FK was still counted in `unresolved`
+     * and — with `includeIds=1` — had its raw id published via
+     * `unresolvedIds`, regardless of whether the caller could view it.
+     */
+    public function testUnresolvedOwnerOfAnInvisibleRecordIsNotLeakedViaIncludeIds(): void
+    {
+        $hiddenOrphan = $this->inDraft(function () {
+            $record = ApiTestFingerprintRestrictedRelatedObject::create([
+                'Title' => 'Hidden and orphaned',
+                'PageID' => 999999999,
+            ]);
+            $record->write();
+            $record->publishSingle();
+
+            return $record;
+        });
+
+        $plainToken = $this->mintTokenFor('apiUser');
+        $body = $this->decode($this->apiGet('fingerprint?includeIds=1', $plainToken));
+
+        $this->assertSame(0, $body['data']['related']['ApiTestFingerprintRestrictedRelated']['unresolved']);
+        $this->assertSame(
+            [],
+            $body['data']['related']['ApiTestFingerprintRestrictedRelated']['unresolvedIds'],
+            'the hidden record must not appear even though includeIds=1 was requested'
+        );
+
+        // Sanity: an admin token (which CAN view it) does still see it as
+        // unresolved — confirms the record itself is genuinely orphaned,
+        // not just filtered by classes= or some other unrelated reason.
+        $adminBody = $this->fingerprint('?includeIds=1');
+        $this->assertSame(
+            [(int) $hiddenOrphan->ID],
+            $adminBody['data']['related']['ApiTestFingerprintRestrictedRelated']['unresolvedIds']
+        );
+    }
+
+    /**
+     * Second-review-round regression test: `totals` was computed over the
+     * full internal (unfiltered) page/record sets rather than what this
+     * caller can actually see — RecordsHandler::readList()'s own #20 fix
+     * exists to prevent exactly this ("filtering after counting leaks the
+     * hidden-record count"). A restricted token's totals must match what
+     * it can actually see in `pages`/`related`, not the whole site.
+     */
+    public function testTotalsAgreeWithVisibleRowCountForARestrictedToken(): void
+    {
+        $this->createPage('fp-totals-restricted-visible');
+        $this->createPage('fp-totals-restricted-draft-only', 0, publish: false);
+
+        $plainToken = $this->mintTokenFor('apiUser');
+        $body = $this->decode($this->apiGet('fingerprint', $plainToken));
+
+        $this->assertCount(
+            $body['data']['totals']['pages']['draft'],
+            $body['data']['pages'],
+            'totals.pages.draft must equal the number of rows actually returned in pages, not the whole site'
+        );
+
+        $liveCount = count(array_filter($body['data']['pages'], static fn (array $p) => $p['live']));
+        $this->assertSame($liveCount, $body['data']['totals']['pages']['live']);
+    }
+
+    /**
+     * Second-review-round regression test: this is the one test that
+     * actually proves the internal-state split works — buildPages() keeps
+     * $byId/$paths/$liveIds/$parents unfiltered (used for path/ancestor
+     * math) while only $visible/$rows are filtered by caller ACL. A
+     * hidden draft-only ancestor must not corrupt the PATH or the
+     * blockedBy computation for a visible descendant beneath it.
+     */
+    public function testVisiblePageUnderHiddenDraftOnlyAncestorStillGetsCorrectPathAndBlockedBy(): void
+    {
+        $hiddenParent = $this->createPage('fp-hidden-ancestor', 0, publish: false);
+        $this->createPage('fp-visible-descendant', $hiddenParent->ID);
+
+        $plainToken = $this->mintTokenFor('apiUser');
+        $body = $this->decode($this->apiGet('fingerprint', $plainToken));
+
+        $this->assertNull(
+            $this->pageEntry($body, '/fp-hidden-ancestor'),
+            'the draft-only ancestor itself must be invisible to a token without VIEW_DRAFT_CONTENT'
+        );
+
+        $descendant = $this->pageEntry($body, '/fp-hidden-ancestor/fp-visible-descendant');
+        $this->assertNotNull(
+            $descendant,
+            'the live descendant must still be visible, with its correct full path — proving the hidden ' .
+                'ancestor did not corrupt the internal path index'
+        );
+        $this->assertTrue($descendant['live']);
+
+        $violation = current(array_filter(
+            $body['data']['violations'],
+            static fn (array $v) => $v['path'] === '/fp-hidden-ancestor/fp-visible-descendant'
+        ));
+        $this->assertNotFalse($violation, 'the live descendant must still be reported as blocked');
+        $this->assertSame(['/fp-hidden-ancestor'], $violation['blockedBy']);
+    }
+
+    /**
+     * Second-review-round regression test: `pageViolations()` was
+     * previously only computed inside `if ($wantsPages)` — `classes=`
+     * excluding `pages` from the OUTPUT also silently stopped the one
+     * check the whole endpoint exists to run. `violations` must reflect
+     * everything the caller can see, independent of which SECTIONS were
+     * requested.
+     */
+    public function testViolationsStillReportedWhenClassesExcludesPages(): void
+    {
+        $parent = $this->createPage('fp-classes-exclude-pages-parent', 0, publish: false);
+        $this->createPage('fp-classes-exclude-pages-child', $parent->ID);
+
+        $body = $this->fingerprint('?classes=ApiTestFingerprintRelated');
+
+        $this->assertSame([], $body['data']['pages'], 'pages section itself must still be excluded');
+
+        $violation = current(array_filter(
+            $body['data']['violations'],
+            static fn (array $v) => $v['path'] === '/fp-classes-exclude-pages-parent/fp-classes-exclude-pages-child'
+        ));
+        $this->assertNotFalse($violation, 'the page-level violation must still be reported');
+    }
+
+    /**
+     * Companion to the test above: excluding the related ref from
+     * `classes=` must not stop reporting a related-class violation
+     * either.
+     */
+    public function testViolationsStillReportedWhenClassesExcludesTheRelatedSection(): void
+    {
+        $parent = $this->createPage('fp-classes-exclude-related-parent', 0, publish: false);
+        $owner = $this->createPage('fp-classes-exclude-related-owner', $parent->ID);
+
+        $this->inDraft(function () use ($owner) {
+            $record = ApiTestFingerprintRelatedObject::create(['Title' => 'X', 'PageID' => $owner->ID]);
+            $record->write();
+            $record->publishSingle();
+        });
+
+        $body = $this->fingerprint('?classes=pages');
+
+        $this->assertArrayNotHasKey(
+            'ApiTestFingerprintRelated',
+            $body['data']['related'],
+            'related section itself must still be excluded'
+        );
+
+        $violation = current(array_filter(
+            $body['data']['violations'],
+            static fn (array $v) => $v['className'] === ApiTestFingerprintRelatedObject::class
+        ));
+        $this->assertNotFalse($violation, 'the related-class violation must still be reported');
     }
 }

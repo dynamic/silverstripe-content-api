@@ -88,10 +88,15 @@ A deterministic, path-keyed snapshot of the site's content, meant to be diffed �
 environment before/after a batch, or two different environments ahead of a replay. Pages are
 keyed by URL path rather than id (ids churn across a rebuild/sync/environment boundary; paths
 don't) and `violations` asserts the reachability invariant a plain snapshot can't: a live page (or
-live related record) whose path runs through a non-live ancestor. Query params: `classes=` (comma
-list of section refs — `pages` plus any project-configured `related` ref — restricting the
-response; omit for everything), `includeIds=true` (adds ids back in, off by default). Full
-reference: [Verification](16_verification.md#fingerprint).
+live related record) whose path runs through a non-live ancestor — always computed regardless of
+`classes=`, which only restricts which SECTIONS appear in the response, never which reachability
+problems get reported. Query params: `classes=` (comma list of section refs — `pages` plus any
+project-configured `related` ref — restricting the response; an unrecognized ref is rejected,
+`400 PAYLOAD_INVALID`; omit for everything), `includeIds=true` (adds ids back in, off by default).
+Applies the same class- and record-level access control as every other read endpoint, per row — a
+class not exposed to the content API at all appears in `meta.skipped`; a specific row this token
+can't view (e.g. a draft-only page without `VIEW_DRAFT_CONTENT`) is simply absent from the
+response. Full reference: [Verification](16_verification.md#fingerprint).
 
 ## `POST records/$ClassRef/$ID/{action}`
 

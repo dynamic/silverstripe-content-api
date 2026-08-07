@@ -55,14 +55,21 @@ deterministic, path-keyed snapshot of the site's content via
   `VIEW_DRAFT_CONTENT`, for instance) is simply absent from `pages`/`related`/`violations`, the
   same way `RecordsHandler::readList()` filters a list. `skipped` itself is not per-caller — it
   names classes unreadable by anyone, not by "this token specifically" — the row-level omissions
-  are where per-caller variation actually shows up.
+  are where per-caller variation actually shows up. `totals` (per section, `{draft, live}`) counts
+  only what THIS caller can see — it always agrees with the corresponding section's row count,
+  never the whole site's, so it can't be used to infer how much content a restricted token can't
+  view.
 - **Determinism is the whole point.** Every collection is sorted (by path, or by owner path then
   external id for `related` rows sharing one owner); ids are excluded from `data` unless
   `includeIds=true`.
 
-`classes=` restricts which sections appear in the *response* — narrowing it to a `related` ref
-without `pages` still resolves owner paths through the same internal index a full scan would use;
-only the `pages` section itself is omitted from the output.
+`classes=` restricts which SECTIONS appear in the *response* (`pages`, and each `related` ref) —
+narrowing it to a `related` ref without `pages` still resolves owner paths through the same
+internal index a full scan would use, and still emits `pages`-related reachability entries. It
+never restricts `violations`: excluding `pages` (or a `related` ref) from the response never stops
+that section's reachability check from running — a check that only fires when its own section
+happens to be requested would be exactly the "typo'd ref reads as false 'no drift'" failure mode
+`classes=` rejecting an unknown ref outright already exists to prevent.
 
 ## Dry-run batch
 

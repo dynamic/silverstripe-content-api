@@ -156,23 +156,29 @@ class FingerprintService
             [$builtPages, $paths, $liveIds, $parents, $classNames, $pageTotals, $visiblePageIds]
                 = $this->buildPages($includeIds, $member);
 
+            // Computed unconditionally — NOT gated on $wantsPages.
+            // `violations` is the entire reason this endpoint exists;
+            // `classes=` narrowing the OUTPUT sections must not also
+            // narrow the one check that would catch a real reachability
+            // break. `?classes=SomeRelatedRef` (excluding `pages`) must
+            // not silently stop reporting a live page stuck behind a
+            // draft-only ancestor — the same "a typo'd ref must not
+            // produce a false 'no drift' reading" reasoning that makes an
+            // unknown ref a hard rejection applies here too.
+            $violations = array_merge(
+                $violations,
+                $this->pageViolations($paths, $liveIds, $parents, $classNames, $visiblePageIds)
+            );
+
             if ($wantsPages) {
                 $pages = $builtPages;
                 $totals['pages'] = $pageTotals;
-                $violations = array_merge(
-                    $violations,
-                    $this->pageViolations($paths, $liveIds, $parents, $classNames, $visiblePageIds)
-                );
             }
         }
 
         $related = [];
 
         foreach ((array) static::config()->get('related_classes') as $ref => $ownerColumn) {
-            if ($classRefs !== null && !in_array($ref, $classRefs, true)) {
-                continue;
-            }
-
             $className = $this->tryResolve($ref);
 
             if ($className === null || !in_array('read', $this->registry->accessVerbs($className), true)) {
@@ -204,12 +210,19 @@ class FingerprintService
                 $member
             );
 
-            $related[$ref] = $section;
-            $totals[$ref] = $classTotals;
+            // Violations always merge in, same reasoning as pages above —
+            // `classes=` restricts which SECTIONS appear, never which
+            // reachability problems get reported.
             $violations = array_merge($violations, $classViolations);
+
+            if ($classRefs === null || in_array($ref, $classRefs, true)) {
+                $related[$ref] = $section;
+                $totals[$ref] = $classTotals;
+            }
         }
 
         sort($skipped);
+        ksort($related);
 
         return [
             'pages' => $pages,
@@ -323,6 +336,16 @@ class FingerprintService
             true
         );
 
+        // isPageVisible() below calls canViewRecord() per row, which for
+        // a SiteTree record routes through Versioned::canViewVersioned()
+        // — that issues its own version-number lookup query per record
+        // (more for any record whose draft/live versions differ) unless
+        // primed. Pre-populating both stages' caches turns what would be
+        // O(pages) queries across a whole-site scan into two.
+        $ids = array_keys($byId);
+        Versioned::prepopulate_versionnumber_cache(SiteTree::class, Versioned::DRAFT, $ids);
+        Versioned::prepopulate_versionnumber_cache(SiteTree::class, Versioned::LIVE, $ids);
+
         $paths = [];
         $parents = [];
 
@@ -368,16 +391,21 @@ class FingerprintService
         // environments even when the content itself is identical.
         usort($rows, static fn (array $a, array $b) => $a['path'] <=> $b['path']);
 
+        // Counted over $visible, not $byId — the same #20 precedent as
+        // the per-record ACL check above: a total that includes pages
+        // this caller can't view discloses exactly how many hidden pages
+        // exist (and makes `totals` disagree with `pages`/`violations`
+        // for any non-admin caller, which reads as drift between two
+        // fingerprints from callers with different permissions even when
+        // nothing actually changed).
         $totals = [
-            'draft' => count($byId),
-            // Intersected against the enumerated draft ids rather than a
-            // raw count of the Live table: a page deleted from DRAFT while
-            // still published (`deleteFromStage(DRAFT)` on a Live row) has
-            // no entry in `$byId` — and therefore no path, no row in
-            // `pages` — at all. Counting it here would report a `live`
-            // total higher than anything `pages`/`violations` can ever
-            // account for.
-            'live' => count(array_intersect_key($liveIds, $byId)),
+            'draft' => count($visible),
+            // Intersected against $visible rather than $byId: a page
+            // deleted from DRAFT while still published
+            // (`deleteFromStage(DRAFT)` on a Live row) has no entry in
+            // `$byId` — and therefore no path, no row in `pages` — at
+            // all, so it must not inflate `live` either.
+            'live' => count(array_intersect_key($liveIds, $visible)),
         ];
 
         return [$rows, $paths, $liveIds, $parents, $classNames, $totals, $visible];
@@ -536,6 +564,14 @@ class FingerprintService
             }
         }
 
+        if ($isVersioned) {
+            // Same reasoning as buildPages(): canViewRecord() below
+            // routes through Versioned::canViewVersioned() per record.
+            $recordIds = array_map(static fn (DataObject $r) => (int) $r->ID, $records);
+            Versioned::prepopulate_versionnumber_cache($className, Versioned::DRAFT, $recordIds);
+            Versioned::prepopulate_versionnumber_cache($className, Versioned::LIVE, $recordIds);
+        }
+
         $rows = [];
         $unresolved = 0;
         $unresolvedIds = [];
@@ -544,6 +580,19 @@ class FingerprintService
         $liveTotal = 0;
 
         foreach ($records as $record) {
+            // Checked FIRST, before anything is counted anywhere —
+            // matching RecordsHandler::readList()'s #20 precedent that
+            // filtering after counting/pagination leaks the hidden-record
+            // count. A record this caller can't view must not appear in
+            // `unresolved`/`unresolvedIds` either: a broken owner FK on a
+            // record the caller has no visibility into is not this
+            // caller's problem to see, and `includeIds=1` must not expose
+            // its id via `unresolvedIds` just because it happened to also
+            // be unresolved.
+            if (!$this->policy->canViewRecord($record, $member)) {
+                continue;
+            }
+
             $total++;
             $id = (int) $record->ID;
             $ownerId = (int) $record->getField($ownerColumn);
@@ -568,10 +617,6 @@ class FingerprintService
                     $unresolvedIds[] = $id;
                 }
 
-                continue;
-            }
-
-            if (!$this->policy->canViewRecord($record, $member)) {
                 continue;
             }
 
