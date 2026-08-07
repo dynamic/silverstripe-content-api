@@ -5,13 +5,15 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
-## [1.5.0] - 2026-08-07
+## [1.6.0] - 2026-08-07
 
-Numbered `1.5.0`, not `1.1.0`, despite `1.0.0` being the most recent tag: `1.1.0`-`1.4.0` are
-already used below by real, dated pre-rename history this file's own no-rewrite rule keeps as-is
-(see the "predates the rename" note further down) — `1.0.0`'s tag was reset per #106 for a clean
-`composer require ^1` resolution, but this CHANGELOG's own version-heading sequence never reset,
-so the next number continues from `1.4.0`, not from the reset tag.
+Numbered `1.6.0`/`1.5.0`, not `1.1.0`/`1.2.0`: `1.1.0`-`1.4.0` are already used below by real,
+dated pre-rename history this file's own no-rewrite rule keeps as-is (see the "predates the
+rename" note further down). The `1.0.0` tag was reset per #106 for a clean `composer require ^1`
+resolution, but this CHANGELOG's own version-heading sequence never reset, so the next numbers
+continue from `1.4.0`, not from the reset tag — and skip straight to `1.6.0` here because `1.5.0`
+(below) backfills work the reset `1.0.0` tag's own commit already contained but never got its own
+heading, while everything in this section is genuinely new since that tag.
 
 ### Added
 - **(#131)** `GET fingerprint`: a deterministic, path-keyed snapshot of the site's content for
@@ -137,6 +139,18 @@ so the next number continues from `1.4.0`, not from the reset tag.
   field — matching what a genuine rollback actually restores it to, even when different ops
   touched different fields on the same record. See
   [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md).
+
+## [1.5.0] - 2026-08-07
+
+Everything below was already present in the reset `1.0.0` tag's own commit (2026-08-06) — the
+tag reset per #106 was a clean composer-resolution reset, not a content reset, and this
+CHANGELOG's `[Unreleased]` section was never actually emptied out under its own heading at that
+point. Backfilled here, under a heading number that doesn't collide with the preserved pre-rename
+`1.1.0`-`1.4.0` history below, so the version-heading sequence has a place for it. No code in
+this section is new relative to `1.0.0` — a consumer already on `1.0.0` sees no functional change
+upgrading to `1.5.0`.
+
+### Added
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
   enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
   `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is
@@ -577,6 +591,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.6.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.5.0...1.6.0
 [1.5.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.0.0...1.5.0
 [1.4.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.3.0...1.4.0
 [1.3.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.2.0...1.3.0
