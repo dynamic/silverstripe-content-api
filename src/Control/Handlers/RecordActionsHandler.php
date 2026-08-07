@@ -64,6 +64,20 @@ class RecordActionsHandler
         $this->policy->checkClassAccess($className, $verb, $context->member);
         $body = $this->jsonBody($request);
 
+        // #130: dryRun is meaningful here only for publish mode "subtree"
+        // (checked below, alongside liveOnly, once the mode is known).
+        // unpublish/archive have no dry-run support at all — reject
+        // outright rather than silently performing the real action, same
+        // reasoning as #102's dryRun/liveOnly rejection just below: a
+        // caller who set "dryRun": true reasonably believes nothing will
+        // be written.
+        if ($action !== 'publish' && !empty($body['dryRun'])) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('"dryRun" is not supported on "%s".', $action)
+            );
+        }
+
         return $this->inDraft(function () use ($request, $className, $action, $body, $context, $verb) {
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
             $this->policy->checkRecordAccess($record, $verb, $context->member);

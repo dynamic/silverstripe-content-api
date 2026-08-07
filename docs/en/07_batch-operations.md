@@ -101,12 +101,22 @@ database for real.
   a transaction that gets rolled back" is exactly the mechanism proven unreliable on its own by
   #70. A dry run that fails verification is the loudest possible failure: it means this "safe
   preflight" call may have just written real data, reported as `500 ROLLBACK_UNVERIFIED`, never
-  folded into the normal dry-run response.
+  folded into the normal dry-run response. Verification is **lenient** about an `update` op that
+  declared only `relations` (no `fields`) — there's nothing to check for it either way, so a dry
+  run doesn't fail the whole batch over it the way a real atomic failure's stricter check does;
+  it's simply not part of what got verified. Verification also only ever reads DRAFT, same as a
+  real atomic failure's — a dry run whose ops carry `publish` also wrote LIVE inside the
+  transaction, and that side isn't independently re-checked before reporting "verified".
 - **Ids in a dry-run response are ephemeral** — a rolled-back insert still consumes an
   `AUTO_INCREMENT` value, so don't treat a `wouldCreate` result's `id` as reusable or as evidence
-  of what a real run's id will be.
-- `dryRun` is a `POST batch` feature only — `compositions/page` and `pages/$ID/convert`/
-  `apply-template` reject it outright (`400 PAYLOAD_INVALID`) rather than silently ignoring it.
+  of what a real run's id will be. A `wouldDelete` result's `deleted` field is always `false` (the
+  record still exists) even though the same field is `true` on a real delete's response.
+- `dryRun` is a `POST batch` feature only — every other write endpoint (`compositions/page`,
+  `pages/$ID/convert`/`apply-template`, `records/$ClassRef/$ID/unpublish`/`archive`, `assets`)
+  rejects it outright (`400 PAYLOAD_INVALID`) rather than silently ignoring it.
+  `records/$ClassRef/$ID/publish` is the one exception — `dryRun` there means
+  [subtree-publish dry-run](10_publishing-and-stages.md#publish-modes), a different, older (#102)
+  feature with its own `wouldPublish` response shape, not this one.
 
 ## Response shape
 

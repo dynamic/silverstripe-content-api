@@ -19,11 +19,19 @@ All notable changes to this project are documented here. Format loosely follows
   `verifyRollback()`) — "wrapped in a transaction that gets rolled back" is exactly the mechanism
   #70 proved isn't trustworthy on its own; a dry run that fails verification reports
   `500 ROLLBACK_UNVERIFIED`, the loudest possible failure, never folded into the normal dry-run
-  response. `dryRun` is a batch-only feature — `compositions/page` and
-  `pages/$ID/convert`/`apply-template` reject it outright (`400 PAYLOAD_INVALID`) rather than
-  silently ignoring it. Ids in a dry-run response are ephemeral — a rolled-back insert still
-  consumes an `AUTO_INCREMENT` value. Spec bumped to `v1.9`. See
-  [docs/en/07_batch-operations.md#dry-run](docs/en/07_batch-operations.md#dry-run).
+  response. Verification is deliberately lenient here where the real-atomic-failure caller is
+  strict: an `update` op whose payload is `relations` only (the module's normal element-attach
+  shape) has nothing for the pre-image mechanism to check either way — nothing failed and the
+  batch is rolled back regardless, so that's treated as "nothing to check," not "verification
+  failed" (`verifyRollback()` gained a `$strict` parameter for this; the real atomic-failure path
+  is unchanged). `dryRun` is a batch-only feature — every other write endpoint
+  (`compositions/page`, `pages/$ID/convert`/`apply-template`,
+  `records/$ClassRef/$ID/unpublish`/`archive`, `assets`) rejects it outright
+  (`400 PAYLOAD_INVALID`) rather than silently ignoring it; `records/.../publish` is the one
+  exception, where `dryRun` already meant #102's subtree-publish dry run. Ids in a dry-run
+  response are ephemeral — a rolled-back insert still consumes an `AUTO_INCREMENT` value — and a
+  `wouldDelete` result's `deleted` field is always `false`, unlike a real delete's. Spec bumped to
+  `v1.9`. See [docs/en/07_batch-operations.md#dry-run](docs/en/07_batch-operations.md#dry-run).
 - **(#127)** Atomic batch rollback verification now covers `updated` results, not just
   `created`/`deleted`. `RecordWriter::write()` snapshots the declared `fields` keys before an
   update writes, and `BatchProcessor::verifyRollback()` re-reads the row afterward to confirm

@@ -150,6 +150,15 @@ class AssetHandler
     {
         $contentType = (string) $request->getHeader('Content-Type');
 
+        // #130: dryRun is a `POST batch` feature only. Reject rather than
+        // silently ignore — a caller who set "dryRun": true reasonably
+        // believes nothing will be written, and asset ingestion has no
+        // dry-run support at all. Checked for both request shapes below,
+        // before any binary is read.
+        if (filter_var($request->postVar('dryRun'), FILTER_VALIDATE_BOOLEAN)) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, '"dryRun" is only supported on "POST batch".');
+        }
+
         if (str_contains($contentType, 'multipart/form-data')) {
             $upload = $_FILES['file'] ?? null;
 
@@ -181,6 +190,11 @@ class AssetHandler
 
         if (!is_array($body)) {
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'Request body is not valid JSON.');
+        }
+
+        // See the multipart branch above for why this is rejected outright.
+        if (!empty($body['dryRun'])) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, '"dryRun" is only supported on "POST batch".');
         }
 
         if (empty($body['base64'])) {
