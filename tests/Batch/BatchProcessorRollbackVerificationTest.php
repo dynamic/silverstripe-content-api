@@ -427,12 +427,41 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $this->assertFalse($this->verifyRollback($operations, $results));
     }
 
-    private function verifyRollback(array $operations, array $results, array $preImages = []): bool
+    /**
+     * #130 code-review regression: `$strict` distinguishes the
+     * real-atomic-failure caller (`process()`, always strict — no
+     * captured pre-image for an 'updated' result fails closed) from the
+     * dry-run caller (`runDryRun()`, non-strict — the same "nothing
+     * captured" state is skipped instead, since nothing failed and the
+     * whole batch is guaranteed rolled back regardless). Strict mode is
+     * every other test in this file's default and is unchanged by this
+     * addition; this test pins the non-strict behavior specifically.
+     */
+    public function testNonStrictModeSkipsAnUpdateWithNoPreImageInsteadOfFailingClosed(): void
+    {
+        $operations = [
+            ['op' => 'update', 'class' => 'ApiTest', 'relations' => ['Children' => ['mode' => 'set', 'items' => []]]],
+        ];
+        $results = [
+            ['index' => 0, 'status' => 'updated', 'id' => 1],
+        ];
+
+        $this->assertFalse(
+            $this->verifyRollback($operations, $results, [], true),
+            'strict mode (the default, used for a real atomic failure) must still fail closed'
+        );
+        $this->assertTrue(
+            $this->verifyRollback($operations, $results, [], false),
+            'non-strict mode (dry-run) must skip a result with nothing captured, not fail the whole check'
+        );
+    }
+
+    private function verifyRollback(array $operations, array $results, array $preImages = [], bool $strict = true): bool
     {
         $processor = BatchProcessor::create();
         $method = new ReflectionMethod(BatchProcessor::class, 'verifyRollback');
         $method->setAccessible(true);
 
-        return $method->invoke($processor, $operations, $results, $preImages);
+        return $method->invoke($processor, $operations, $results, $preImages, $strict);
     }
 }
