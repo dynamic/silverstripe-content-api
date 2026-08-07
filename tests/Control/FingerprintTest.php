@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
@@ -503,13 +504,22 @@ class FingerprintTest extends ContentApiTestCase
      */
     public function testPagesReportedInSkippedWhenUnreadableEvenIfClassesExcludesIt(): void
     {
-        Config::modify()->set(ApiTestPage::class, 'api_access', false);
-        Config::modify()->set(ApiTestBlockPage::class, 'api_access', false);
-        // The testbed's own app/_config/content-api.yml exposes the real
-        // `Page` class too — every SiteTree subclass this test suite could
-        // possibly resolve as "exposed" must be denied for the section to
-        // genuinely become unreadable.
-        Config::modify()->set(\Page::class, 'api_access', false);
+        // Deny every CURRENTLY exposed SiteTree subclass, discovered at
+        // test time rather than hardcoded — the host project's own
+        // app/_config/content-api.yml can expose real SiteTree subclasses
+        // (e.g. `Page`, a project-specific `BlockPage`) that differ
+        // between testbeds/projects and aren't declared by this module's
+        // own test stubs at all. A hardcoded list here is exactly the
+        // kind of fragility that silently passes in one environment and
+        // fails in another the moment a project's own config exposes one
+        // more SiteTree subclass this list didn't anticipate.
+        $registry = ClassRegistry::singleton();
+
+        foreach ($registry->allExposed() as $info) {
+            if (is_a($info['class'], SiteTree::class, true)) {
+                Config::modify()->set($info['class'], 'api_access', false);
+            }
+        }
 
         $body = $this->fingerprint('?classes=ApiTestFingerprintRelated');
 
