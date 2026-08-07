@@ -64,7 +64,7 @@ vendor/bin/phpstan analyse       # phpstan.neon.dist
 | `Security/PermissionPolicyTest.php` | `buildCreateContext()` has_one hydration, incl. trusted-field-only relations |
 | `Write/WriteApplicatorTest.php` | Trusted channel setting a polymorphic Class column directly |
 | `Write/RecordWriterTest.php` | `write()`'s rollback pre-image capture: plain/has_one/composite/polymorphic-has_one field resolution |
-| `Verify/OwnedTreeWalkerTest.php` | `$owns` tree walking: has_many/has_one branches, cycle guard, depth cap, unversioned pruning |
+| `Verify/OwnedTreeWalkerTest.php` | `$owns` tree walking: has_many/has_one branches, cycle guard, depth cap, diamond ownership resolved to shallowest depth, unversioned intermediates walked through (not pruned), misconfigured-relation logging |
 | `ContentApiTestCase.php` + `Stub/*.php` | Shared fixture/registry/token plumbing and test DataObjects |
 
 ## Gotchas

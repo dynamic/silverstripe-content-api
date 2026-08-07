@@ -42,7 +42,8 @@ Two independent checks, both against the same draft read:
   — every record this one `$owns`, recursively, via the new
   `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the module's first `$owns` walker; no class in
   `src/` declares `$owns` anywhere else — Elemental's own publish cascade is hand-rolled, not
-  `$owns`-driven, per the section above). Reports each owned descendant's live/draft status and
+  `$owns`-driven — see "`publishRecursive()` does not cascade to elements" below). Reports each
+  owned descendant's live/draft status and
   depth, **not** a field-level diff of each one (only the root gets that). Walks *through* an
   unversioned intermediate record without reporting it (it has no draft/live state of its own),
   matching `RecursivePublishable`'s real recursion behavior rather than pruning the whole branch

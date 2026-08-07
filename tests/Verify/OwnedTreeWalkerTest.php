@@ -14,10 +14,13 @@ use SilverStripe\Versioned\Versioned;
 /**
  * Direct coverage for #120's `OwnedTreeWalker` — the module's first `$owns`
  * walker (no class in `src/` ever declared `$owns` before this feature; see
- * the stub docblocks for why the test fixtures are synthetic). Two
+ * the stub docblocks for why the test fixtures are synthetic). Several
  * corrections versus the `DraftLiveParityTask` prototype this generalizes
- * are the whole point of a dedicated test file: the prototype has neither a
- * cycle guard nor a depth cap.
+ * are the whole point of a dedicated test file — see {@see OwnedTreeWalker}'s
+ * own class docblock for the full list (cycle guard, depth cap, walking
+ * through rather than pruning at an unversioned intermediate, and resolving
+ * a diamond in `$owns` to its shallowest reachable depth); each has its own
+ * test below.
  */
 class OwnedTreeWalkerTest extends ContentApiTestCase
 {
@@ -296,15 +299,75 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
         $this->assertSame(1, $sharedEntries[0]['depth'], 'the shallower path\'s depth must win');
     }
 
+    /**
+     * The same diamond as above, but under a `max_depth` cap that cuts
+     * off the DEEP path before the shallow one reunites with it — proves
+     * the re-processing a shallower re-visit triggers still respects the
+     * cap correctly (re-expanding at depth 1, which is within budget,
+     * rather than either re-using the stale depth-2 pass's now-irrelevant
+     * "already at the cap" state or blowing past the cap entirely).
+     */
+    public function testADiamondReunitedWithinBudgetIsStillReportedAtItsShallowestDepth(): void
+    {
+        Config::modify()->set(OwnedTreeWalker::class, 'max_depth', 2);
+
+        [$parent, $child, $shared] = $this->inDraft(function () {
+            $parent = ApiTestOwnedParentObject::create(['Title' => 'Parent']);
+            $parent->write();
+
+            $shared = ApiTestOwnedGrandchildObject::create(['Title' => 'Shared']);
+            $shared->write();
+
+            $child = ApiTestOwnedChildObject::create([
+                'Title' => 'Child',
+                'ParentID' => $parent->ID,
+                'FeaturedGrandchildID' => $shared->ID,
+            ]);
+            $child->write();
+
+            // Deep path: Parent->Children->Child (depth 1)->Grandchildren
+            // is NOT used here — Child's FeaturedGrandchild (depth 2) is
+            // the deep path to the shared node, reached first since
+            // 'Children' is walked before the parent's own
+            // 'FeaturedGrandchild'.
+            $parent->FeaturedGrandchildID = $shared->ID;
+            $parent->write();
+
+            return [$parent, $child, $shared];
+        });
+
+        $result = $this->inDraft(fn () => $this->walker()->walk($parent));
+
+        $depths = [];
+
+        foreach ($result as $entry) {
+            $depths[get_class($entry['record']) . ':' . $entry['record']->ID] = $entry['depth'];
+        }
+
+        $this->assertSame(1, $depths[ApiTestOwnedChildObject::class . ':' . $child->ID]);
+        $this->assertSame(
+            1,
+            $depths[ApiTestOwnedGrandchildObject::class . ':' . $shared->ID],
+            'the shared node must be re-expanded at the shallower depth, not stuck at the deep path\'s depth 2'
+        );
+
+        foreach ($result as $entry) {
+            $this->assertLessThanOrEqual(2, $entry['depth'], 'no entry may exceed the configured max_depth');
+        }
+    }
+
     public function testAMisconfiguredOwnsEntryIsLoggedNotSilentlyDropped(): void
     {
         Config::modify()->set(ApiTestOwnedParentObject::class, 'owns', ['Children', 'NoSuchRelation']);
 
-        $parent = $this->inDraft(function () {
+        [$parent, $child] = $this->inDraft(function () {
             $parent = ApiTestOwnedParentObject::create(['Title' => 'Parent']);
             $parent->write();
 
-            return $parent;
+            $child = ApiTestOwnedChildObject::create(['Title' => 'Child', 'ParentID' => $parent->ID]);
+            $child->write();
+
+            return [$parent, $child];
         });
 
         $logger = new class implements \Psr\Log\LoggerInterface {
@@ -321,9 +384,19 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
         $walker = OwnedTreeWalker::create();
         $walker->logger = $logger;
 
-        $walker->walk($parent);
+        $result = $walker->walk($parent);
 
         $this->assertNotEmpty($logger->messages);
         $this->assertStringContainsString('NoSuchRelation', $logger->messages[0]);
+
+        // The bad relation logs a warning but must not stop the walk —
+        // 'Children' (declared alongside it in the same $owns array) is
+        // still a valid, walkable relation and must still be reached.
+        $this->assertCount(
+            1,
+            $result,
+            'a misconfigured $owns entry must not prevent a valid sibling from being walked'
+        );
+        $this->assertSame((int) $child->ID, (int) $result[0]['record']->ID);
     }
 }
