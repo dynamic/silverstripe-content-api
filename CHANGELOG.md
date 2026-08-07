@@ -14,8 +14,11 @@ All notable changes to this project are documented here. Format loosely follows
   `fields` are covered: an `update` whose payload carries only `relations` has no pre-image to
   check against and reports `ROLLBACK_UNVERIFIED` rather than a false `rolledBack: true` for a
   check that never ran; relation changes on any `update` remain outside this check's scope.
-  Verification also still reads DRAFT only. See
-  [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md).
+  Verification also still reads DRAFT only. A has_one field's pre-image is the raw foreign key,
+  not the related record, so the check reflects which record is actually linked, not just
+  whether one is; a record written more than once in the same batch is checked against its
+  state before the earliest of those writes, matching what a genuine rollback actually restores
+  it to. See [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md).
 - **(#64)** Elemental's own `allowed_elements`/`disallowed_elements` per-page-type config is now
   enforced on composition and batch/upsert/update — a request that newly places (or re-places) a
   `BaseElement` onto an `ElementalArea` whose owning page doesn't permit that element class is

@@ -66,7 +66,7 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $results = [
             ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
         ];
-        $preImages = [0 => ['Title' => 'Original title']];
+        $preImages = [ApiTestObject::class . ':' . $record->ID => ['Title' => 'Original title']];
 
         $this->assertTrue($this->verifyRollback($operations, $results, $preImages));
     }
@@ -86,7 +86,7 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $results = [
             ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
         ];
-        $preImages = [0 => ['Title' => 'Original title']];
+        $preImages = [ApiTestObject::class . ':' . $record->ID => ['Title' => 'Original title']];
 
         $this->assertFalse(
             $this->verifyRollback($operations, $results, $preImages),
@@ -102,7 +102,7 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $results = [
             ['index' => 0, 'status' => 'updated', 'id' => 999999999],
         ];
-        $preImages = [0 => ['Title' => 'Original title']];
+        $preImages = [ApiTestObject::class . ':999999999' => ['Title' => 'Original title']];
 
         $this->assertFalse(
             $this->verifyRollback($operations, $results, $preImages),
@@ -152,7 +152,9 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         $results = [
             ['index' => 0, 'status' => 'updated', 'id' => (int) $record->ID],
         ];
-        $preImages = [0 => ['Title' => 'Original title', 'Rank' => 5]];
+        $preImages = [
+            ApiTestObject::class . ':' . $record->ID => ['Title' => 'Original title', 'Rank' => 5],
+        ];
 
         $this->assertFalse($this->verifyRollback($operations, $results, $preImages));
     }
