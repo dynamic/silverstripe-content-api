@@ -101,7 +101,11 @@ database for real.
   a transaction that gets rolled back" is exactly the mechanism proven unreliable on its own by
   #70. A dry run that fails verification is the loudest possible failure: it means this "safe
   preflight" call may have just written real data, reported as `500 ROLLBACK_UNVERIFIED`, never
-  folded into the normal dry-run response. Verification is **lenient** about an `update` op that
+  folded into the normal dry-run response — and, deliberately, **not** mapped through the `would*`
+  vocabulary: `error.details[0].results[]` uses real verbs (`created`/`updated`/`deleted`) and a
+  real delete's `deleted: true`, because at that point the caller genuinely doesn't know whether
+  the write committed for real, and real verbs are the honest signal for that state. Verification
+  is **lenient** about an `update` op that
   declared only `relations` (no `fields`) — there's nothing to check for it either way, so a dry
   run doesn't fail the whole batch over it the way a real atomic failure's stricter check does;
   it's simply not part of what got verified. Verification also only ever reads DRAFT, same as a
