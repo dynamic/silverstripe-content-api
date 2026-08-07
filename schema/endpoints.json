@@ -177,7 +177,7 @@
     },
     {
       "name": "content_batch",
-      "description": "Run ordered write operations with per-op results and a summary (agent self-correction contract). atomic=true wraps a transaction and rolls everything back on first failure. On atomic failure, a rolledBack: true result is independently verified before it's reported — every 'created', 'deleted' (whose mode could actually have reached the draft row: archive, or any mode on an unversioned class; unpublish on a versioned class only touches live, so it's correctly skipped), and 'updated' (its declared fields, re-checked against a pre-write snapshot) op is re-checked — an unverified rollback reports 500 ROLLBACK_UNVERIFIED instead, carrying the same results array so every entry can be checked by hand. dryRun=true runs the batch exactly as a real request would (same authorization/resolution/validation) inside a transaction that's unconditionally rolled back afterward, regardless of atomic or outcome — every status in the response is prefixed 'would' (wouldCreate/wouldUpdate/wouldDelete) so it can never be mistaken for a confirmed write; supported on this endpoint only, rejected elsewhere. Attaching an element to a page whose Elemental config doesn't permit that type fails that op with 422 ELEMENT_NOT_ALLOWED_ON_PAGE.",
+      "description": "Run ordered write operations with per-op results and a summary (agent self-correction contract). atomic=true wraps a transaction and rolls everything back on first failure. On atomic failure, a rolledBack: true result is independently verified before it's reported — every 'created', 'deleted' (whose mode could actually have reached the draft row: archive, or any mode on an unversioned class; unpublish on a versioned class only touches live, so it's correctly skipped), and 'updated' (its declared fields, re-checked against a pre-write snapshot) op is re-checked — an unverified rollback reports 500 ROLLBACK_UNVERIFIED instead, carrying the same results array so every entry can be checked by hand. dryRun=true runs the batch exactly as a real request would (same authorization/resolution/validation) inside a transaction that's unconditionally rolled back afterward, regardless of atomic or outcome. On success (or a predicted atomic failure) every status in the response is prefixed 'would' (wouldCreate/wouldUpdate/wouldDelete) so it can never be mistaken for a confirmed write; a dry run that itself can't be verified as zero-persistence reports 500 ROLLBACK_UNVERIFIED with real (unmapped) verbs instead, since at that point the caller genuinely can't tell whether it committed. Supported on this endpoint only, rejected elsewhere. Attaching an element to a page whose Elemental config doesn't permit that type fails that op with 422 ELEMENT_NOT_ALLOWED_ON_PAGE.",
       "method": "POST",
       "path": "batch",
       "inputSchema": {
@@ -190,7 +190,7 @@
           "dryRun": {
             "type": "boolean",
             "default": false,
-            "description": "Validate and authorize every operation, then unconditionally roll back — nothing is ever persisted. Response statuses are prefixed 'would' (wouldCreate/wouldUpdate/wouldDelete)."
+            "description": "Validate and authorize every operation, then unconditionally roll back — nothing is ever persisted. Response statuses are prefixed 'would' (wouldCreate/wouldUpdate/wouldDelete) on success; a 500 ROLLBACK_UNVERIFIED failure uses real (unmapped) verbs instead."
           },
           "defaultPublish": {
             "type": "string",

@@ -148,13 +148,17 @@ class BatchProcessor
      * error as far as the caller is concerned.
      *
      * Rollback is then verified the same way an atomic failure's rollback
-     * is (`verifyRollback()`, #127) — "wrapped in a transaction that gets
-     * rolled back" is exactly the mechanism #70 proved isn't trustworthy
-     * on its own. A dry run that fails verification is the loudest
-     * possible failure: it means this "safe preflight" call may have just
-     * written real data, so it's reported as `ROLLBACK_UNVERIFIED` (500),
-     * the same code a genuinely-failed atomic rollback uses, never folded
-     * into the normal dry-run response.
+     * is (`verifyRollback()`, #127, called non-strict — see that method's
+     * own docblock for why) — "wrapped in a transaction that gets rolled
+     * back" is exactly the mechanism #70 proved isn't trustworthy on its
+     * own. A dry run that fails verification is the loudest possible
+     * failure: it means this "safe preflight" call may have just written
+     * real data, so it's reported as `ROLLBACK_UNVERIFIED` (500), the
+     * same code a genuinely-failed atomic rollback uses — and, unlike the
+     * success/predicted-failure paths below, that response deliberately
+     * carries real (unmapped) verbs, not `would*` ones: the caller
+     * genuinely can't tell whether the write committed, so real verbs are
+     * the honest signal. Never folded into the normal dry-run response.
      *
      * @return array{results: array, summary: array}
      */
