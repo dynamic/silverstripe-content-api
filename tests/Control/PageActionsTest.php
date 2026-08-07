@@ -68,6 +68,24 @@ class PageActionsTest extends ContentApiTestCase
         $this->assertSame(ApiTestPage::class, SiteTree::get()->byID($about->ID)->ClassName);
     }
 
+    /**
+     * #130: dryRun is a `POST batch` feature only — rejected outright on
+     * page actions rather than silently ignored, same convention as
+     * #102's dryRun/liveOnly rejection on non-subtree publish modes.
+     */
+    public function testConvertRejectsDryRunNotSilentlyIgnored(): void
+    {
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost("pages/{$about->ID}/convert", [
+            'className' => 'ApiTestPage',
+            'dryRun' => true,
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        $this->assertSame(SiteTree::class, SiteTree::get()->byID($about->ID)->ClassName, 'nothing should have run');
+    }
+
     public function testConvertToSameClassIsUnchanged(): void
     {
         $about = $this->objFromFixture(SiteTree::class, 'aboutPage');

@@ -65,6 +65,49 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
   so re-check every `created`/`deleted`/`updated` result in it by hand before retrying.
   See `docs/en/12_error-codes.md`.
 
+## Dry run
+
+`"dryRun": true` runs the batch exactly as a real request would — the same authorization,
+class/externalId/relation resolution, payload validation and model `validate()` (none of that
+surfaces except by actually attempting the write) — inside a transaction that is
+**unconditionally rolled back afterward**, regardless of `atomic` or whether every op succeeded.
+Subsumes the "create a scratch record, then delete it" pattern sometimes used to prove a token
+is writable ahead of a real batch: `dryRun` gives the same answer without ever touching the
+database for real.
+
+```json
+{
+  "dryRun": true,
+  "operations": [
+    { "op": "create", "class": "ElementContent", "fields": { "Title": "Preview" } }
+  ]
+}
+```
+
+- Still requires `CONTENT_API_POPULATE` and passes environment gating — validate-only still
+  authorizes and resolves everything a real run would, which alone leaks schema/permission
+  information a caller shouldn't get for free.
+- The response **replaces** the normal envelope rather than augmenting it: every `status` value
+  is prefixed `would` — `created`/`updated`/`deleted` become `wouldCreate`/`wouldUpdate`/
+  `wouldDelete` (`error` is unchanged) — in both `results[].status` and `summary`, so a caller
+  inspecting `status` can never mistake this for a confirmed write. `meta` carries
+  `{"operation": "batchDryRun", "atomic": <bool>}`.
+- Non-atomic (`"atomic": false`, the default) still reports per-op errors independently, same as
+  a real non-atomic run — a dry run predicts exactly what a real run would report, it doesn't
+  change the reporting shape. `atomic: true` still aborts on the first op failure and reports the
+  same `422 VALIDATION_FAILED` envelope a real atomic failure would, with `rolledBack` always
+  `true` (the whole batch was wrapped in a transaction that never had a chance to commit).
+- Rollback is verified the same way an atomic failure's is (see "Atomicity" above) — "wrapped in
+  a transaction that gets rolled back" is exactly the mechanism proven unreliable on its own by
+  #70. A dry run that fails verification is the loudest possible failure: it means this "safe
+  preflight" call may have just written real data, reported as `500 ROLLBACK_UNVERIFIED`, never
+  folded into the normal dry-run response.
+- **Ids in a dry-run response are ephemeral** — a rolled-back insert still consumes an
+  `AUTO_INCREMENT` value, so don't treat a `wouldCreate` result's `id` as reusable or as evidence
+  of what a real run's id will be.
+- `dryRun` is a `POST batch` feature only — `compositions/page` and `pages/$ID/convert`/
+  `apply-template` reject it outright (`400 PAYLOAD_INVALID`) rather than silently ignoring it.
+
 ## Response shape
 
 ```json

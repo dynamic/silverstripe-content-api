@@ -105,6 +105,25 @@ class CompositionTest extends ContentApiTestCase
         return $this->objFromFixture(ApiTestBlockPage::class, 'blockPage');
     }
 
+    /**
+     * #130: dryRun is a `POST batch` feature only — rejected outright on
+     * compositions rather than silently ignored, same convention as
+     * #102's dryRun/liveOnly rejection on non-subtree publish modes.
+     */
+    public function testDryRunIsRejectedNotSilentlyIgnored(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost(
+            'compositions/page',
+            ['dryRun' => true] + $this->payload($page),
+            $this->adminToken
+        );
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        $this->assertSame('Block Page', ApiTestBlockPage::get()->byID($page->ID)->Title, 'nothing should have run');
+    }
+
     public function testFullComposition(): void
     {
         $page = $this->blockPage();

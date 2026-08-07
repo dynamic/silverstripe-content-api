@@ -1440,6 +1440,148 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #130: a dry-run create must leave no record behind and the response
+     * must use the `would*` vocabulary, not the real-run one — a caller
+     * inspecting `status` must never be able to mistake this for a
+     * confirmed write.
+     */
+    public function testDryRunCreateLeavesNoRecordAndReportsWouldCreate(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'dry-run-create',
+                    'fields' => ['Title' => 'Would be created'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['operation' => 'batchDryRun', 'atomic' => false], $body['meta']);
+        $this->assertSame(['wouldCreate'], array_column($body['data']['results'], 'status'));
+        $this->assertSame(1, $body['data']['summary']['wouldCreate']);
+        $this->assertNull(
+            ApiTestObject::get()->filter('FixtureIdentifier', 'dry-run-create')->first(),
+            'a dry run must never leave a real record behind'
+        );
+    }
+
+    /**
+     * #130's whole reason for existing: the exact "create + archive against
+     * production" probe pattern the prod-replay retrospective had to fall
+     * back to, now provable in one preflight call. update and delete both
+     * covered in the same batch.
+     */
+    public function testDryRunUpdateAndDeleteLeaveNoTraceAndReportWouldVerbs(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title']);
+        $record->write();
+        $toDelete = ApiTestObject::create(['Title' => 'Would be archived']);
+        $toDelete->write();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Would be updated'],
+                ],
+                [
+                    'op' => 'delete',
+                    'class' => 'ApiTest',
+                    'id' => (int) $toDelete->ID,
+                    'mode' => 'archive',
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['wouldUpdate', 'wouldDelete'], array_column($body['data']['results'], 'status'));
+        $this->assertSame(
+            'Original title',
+            ApiTestObject::get()->byID($record->ID)->Title,
+            'a dry-run update must not touch the row'
+        );
+        $this->assertNotNull(
+            ApiTestObject::get()->byID($toDelete->ID),
+            'a dry-run delete must not touch the row'
+        );
+    }
+
+    /**
+     * A dry run authorizes exactly like a real run — the whole point is to
+     * predict what a real run would do, including its failures.
+     */
+    public function testDryRunStillReportsPerOpErrors(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('UNKNOWN_FIELD', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
+     * Atomic + dryRun: a real op failure must predict the exact same
+     * VALIDATION_FAILED envelope a real atomic run would report — a dry run
+     * predicts what a real run would do, it doesn't change the shape of
+     * the failure response. The one difference: `rolledBack` is
+     * unconditionally true here (the whole batch was wrapped in a
+     * transaction that never had a chance to commit), not independently
+     * re-derived per request the way a real failed atomic run's is.
+     */
+    public function testAtomicDryRunPredictsTheSameValidationFailureAndLeavesNothingBehind(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'atomic' => true,
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'atomic-dry-1',
+                    'fields' => ['Title' => 'First'],
+                ],
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Bogus' => 1]],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('VALIDATION_FAILED', $body['error']['code']);
+        $this->assertTrue($body['error']['details'][0]['rolledBack']);
+        $this->assertNull(ApiTestObject::get()->filter('FixtureIdentifier', 'atomic-dry-1')->first());
+    }
+
+    /**
+     * The environment gate and CONTENT_API_POPULATE check must still apply
+     * to a dry run — validate-only still authorizes and resolves everything
+     * a real run would, which alone leaks schema/permission information a
+     * caller shouldn't get for free just by adding "dryRun": true.
+     */
+    public function testDryRunIsStillEnvironmentGated(): void
+    {
+        Config::modify()->set(EnvironmentGate::class, 'population_enabled_environments', []);
+
+        $response = $this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                ['op' => 'create', 'class' => 'ApiTest', 'fields' => ['Title' => 'Should not resolve']],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'ENV_FORBIDDEN', 403);
+    }
+
+    /**
      * Creates an ApiTestBlockPage with a genuinely persisted ElementalArea.
      * Elemental only auto-creates the area during a write that happens in
      * the DRAFT reading stage (`ElementalAreasExtension::
