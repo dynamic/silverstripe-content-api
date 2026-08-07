@@ -186,16 +186,25 @@ class FingerprintService
                 continue;
             }
 
-            // A misconfigured owner column (a typo, or the has_one
-            // RELATION name — e.g. "Page" — instead of its real FK column
-            // "PageID") must not proceed silently: getField() on an
-            // unknown field returns null, so a wrong column name makes
-            // every record look like an unresolved owner (indistinguishable
-            // from genuinely broken FKs), and the relation-name mistake
-            // specifically resolves to the owning DataObject itself, whose
-            // (int) cast is 1 — silently mis-attributing every record to
-            // whatever page happens to have id 1.
-            if (DataObject::getSchema()->fieldSpec($className, (string) $ownerColumn) === null) {
+            // A misconfigured owner column must not proceed silently.
+            // ownerRelationTargetsSiteTree() rejects three distinct
+            // mistakes: a typo'd column name; the has_one RELATION name
+            // used instead of its real FK column (e.g. "Page" instead of
+            // "PageID" — getField() on an unknown field returns null for
+            // a typo, but resolves to the owning DataObject itself for
+            // the relation-name mistake, whose (int) cast is 1, silently
+            // mis-attributing every record to whatever page happens to
+            // have id 1); and a column that genuinely exists and IS a
+            // has_one FK, but doesn't point at SiteTree at all (e.g. a
+            // plausible copy/paste of the wrong Int/FK column) — a
+            // fieldSpec()-only check accepts that silently, since it only
+            // confirms the column exists, not what it actually points at.
+            // Since $pagePaths is built purely from SiteTree, a column
+            // that isn't a SiteTree-targeting FK could never resolve to a
+            // real owner path anyway — every record would land in
+            // `unresolved` (or worse, collide with an unrelated page id)
+            // regardless of what the column legitimately contains.
+            if (!$this->ownerRelationTargetsSiteTree($className, (string) $ownerColumn)) {
                 $skipped[] = $ref;
                 continue;
             }
@@ -281,9 +290,32 @@ class FingerprintService
     {
         try {
             return $this->registry->resolve($classRef);
+            // ClassRegistry::resolve() only ever throws UNKNOWN_CLASS
+            // today — the ref itself still surfaces via `skipped` either
+            // way, so a future ApiError variant silently landing here
+            // wouldn't hide the failure, only its specific reason.
         } catch (ApiError) {
             return null;
         }
+    }
+
+    /**
+     * Whether `$ownerColumn` is genuinely a has_one FK on `$className`
+     * pointing at `SiteTree` (or a subclass) — not merely an existing
+     * column. `$pagePaths` is built purely from `SiteTree`, so any column
+     * that isn't a SiteTree-targeting FK could never resolve a real owner
+     * path regardless of what it legitimately contains.
+     */
+    protected function ownerRelationTargetsSiteTree(string $className, string $ownerColumn): bool
+    {
+        if (!str_ends_with($ownerColumn, 'ID')) {
+            return false;
+        }
+
+        $relationName = substr($ownerColumn, 0, -2);
+        $relationClass = DataObject::getSchema()->hasOneComponent($className, $relationName);
+
+        return $relationClass !== null && is_a($relationClass, SiteTree::class, true);
     }
 
     /**
@@ -589,7 +621,20 @@ class FingerprintService
             // caller's problem to see, and `includeIds=1` must not expose
             // its id via `unresolvedIds` just because it happened to also
             // be unresolved.
-            if (!$this->policy->canViewRecord($record, $member)) {
+            //
+            // Class-level check here is on the record's own ACTUAL class
+            // (`$record->ClassName`), not the `$className` this method was
+            // called with — `DataObject::get($className)` instantiates
+            // each row as its true persisted subclass, and the caller's
+            // single `accessVerbs($className)` check in build() only
+            // covers the CONFIGURED related_classes class, exactly the
+            // same "explicit per-subclass deny overridden by a broader
+            // ancestor exposure" gap isPageVisible() exists to close for
+            // pages.
+            if (
+                !in_array('read', $this->registry->accessVerbs($record->ClassName), true)
+                || !$this->policy->canViewRecord($record, $member)
+            ) {
                 continue;
             }
 

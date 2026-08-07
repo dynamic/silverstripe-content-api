@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedDeniedSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRestrictedRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
@@ -69,6 +70,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestFingerprintRelatedObject::class,
         ApiTestFingerprintNonVersionedRelatedObject::class,
         ApiTestFingerprintRestrictedRelatedObject::class,
+        ApiTestFingerprintRelatedDeniedSubclassObject::class,
     ];
 
     protected function setUp(): void
@@ -121,6 +123,10 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestFingerprintRelatedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintNonVersionedRelatedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintRestrictedRelatedObject::class, 'api_access', true);
+        // Explicit deny on the SUBCLASS despite its parent being exposed
+        // — the fixture the ApiTestFingerprintRelatedDeniedSubclassObject
+        // regression test depends on.
+        Config::modify()->set(ApiTestFingerprintRelatedDeniedSubclassObject::class, 'api_access', false);
     }
 
     /**

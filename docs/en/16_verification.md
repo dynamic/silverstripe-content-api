@@ -49,16 +49,22 @@ deterministic, path-keyed snapshot of the site's content via
   (not just its immediate parent), so a live related record under a live owner page whose *own*
   parent is draft-only is caught too. Duplicate entries describing the same underlying problem
   (several related records sharing one blocked owner page) collapse to one.
-- **Class- and record-level ACL apply per row**, the same as `GET records/$ClassRef` — a class not
-  exposed to the content API at all (site config) is reported in `meta.skipped`; a class that IS
-  exposed but a *specific row* this caller can't view (a draft-only page without
+- **Class- and record-level ACL apply per row**, the same as `GET records/$ClassRef` — checked
+  against each row's own ACTUAL class (a `related` class is instantiated per its true persisted
+  subclass, same as `pages`), not just the class configured in `related_classes`/exposed at the
+  ref level — an explicit per-subclass deny is never overridden by a broader ancestor's exposure.
+  A class not exposed to the content API at all (site config) is reported in `meta.skipped`; a
+  class that IS exposed but a *specific row* this caller can't view (a draft-only page without
   `VIEW_DRAFT_CONTENT`, for instance) is simply absent from `pages`/`related`/`violations`, the
   same way `RecordsHandler::readList()` filters a list. `skipped` itself is not per-caller — it
   names classes unreadable by anyone, not by "this token specifically" — the row-level omissions
-  are where per-caller variation actually shows up. `totals` (per section, `{draft, live}`) counts
-  only what THIS caller can see — it always agrees with the corresponding section's row count,
-  never the whole site's, so it can't be used to infer how much content a restricted token can't
-  view.
+  are where per-caller variation actually shows up. A related record's `ownerPath` is not itself
+  separately ACL-checked against the owner PAGE's own visibility — the same bare-path-segment
+  tradeoff `blockedBy` makes, not a full row disclosure. `totals` (per section, `{draft, live}`)
+  counts only what THIS caller can see, never the whole site's — for `pages` that always equals the
+  section's row count; for `related` it also includes records this caller can see but whose owner
+  couldn't be resolved (reported separately via `unresolved`), so `totals.draft` there can exceed
+  `records.length`.
 - **Determinism is the whole point.** Every collection is sorted (by path, or by owner path then
   external id for `related` rows sharing one owner); ids are excluded from `data` unless
   `includeIds=true`.
