@@ -55,6 +55,15 @@ class CompositionHandler
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'Request body is not valid JSON.');
         }
 
+        // #130: dryRun is a `POST batch` feature only. Reject rather than
+        // silently ignore — a caller who set "dryRun": true reasonably
+        // believes nothing will be written; silently proceeding with a
+        // real composition would violate that belief. Same convention as
+        // #102's dryRun/liveOnly rejection on non-subtree publish modes.
+        if (!empty($body['dryRun'])) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, '"dryRun" is only supported on "POST batch".');
+        }
+
         $data = null;
 
         try {

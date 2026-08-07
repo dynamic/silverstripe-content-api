@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#130)** `"dryRun": true` on `POST batch`: runs the batch exactly as a real request would
+  (same authorization, class/externalId/relation resolution, payload validation, and model
+  `validate()` on write) inside a transaction that's unconditionally rolled back afterward,
+  regardless of `atomic` or whether every op succeeded — nothing is ever persisted. Subsumes the
+  "create a scratch record, then archive it" pattern previously needed to prove a token is
+  writable before a real batch run. Response statuses are prefixed `would`
+  (`wouldCreate`/`wouldUpdate`/`wouldDelete`; `error` unchanged) in both `results[]` and
+  `summary`, and `meta` carries `{"operation": "batchDryRun", "atomic": <bool>}`, so a caller
+  inspecting `status` can never mistake this for a confirmed write — same convention as #102's
+  subtree-publish `dryRun`. Rollback is verified the same way an atomic failure's is (#127's
+  `verifyRollback()`) — "wrapped in a transaction that gets rolled back" is exactly the mechanism
+  #70 proved isn't trustworthy on its own; a dry run that fails verification reports
+  `500 ROLLBACK_UNVERIFIED`, the loudest possible failure, never folded into the normal dry-run
+  response. `dryRun` is a batch-only feature — `compositions/page` and
+  `pages/$ID/convert`/`apply-template` reject it outright (`400 PAYLOAD_INVALID`) rather than
+  silently ignoring it. Ids in a dry-run response are ephemeral — a rolled-back insert still
+  consumes an `AUTO_INCREMENT` value. Spec bumped to `v1.9`. See
+  [docs/en/07_batch-operations.md#dry-run](docs/en/07_batch-operations.md#dry-run).
 - **(#127)** Atomic batch rollback verification now covers `updated` results, not just
   `created`/`deleted`. `RecordWriter::write()` snapshots the declared `fields` keys before an
   update writes, and `BatchProcessor::verifyRollback()` re-reads the row afterward to confirm
