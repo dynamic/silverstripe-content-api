@@ -137,9 +137,11 @@ one. Two consequences follow directly from `elements[]` requiring `externalId` (
 `prune`'s scope rule (just above):
 
 - **It can't appear in a composition's `elements[]` at all** — a payload entry always needs an
-  `externalId`, and there's nothing to put there yet. Read or update it via the plain
-  `records/$ClassRef/$ID` endpoint by numeric id instead (see [Endpoint
-  reference](05_endpoint-reference.md)) — that addressing works regardless of external id.
+  `externalId`, and there's nothing to put there yet. It's still addressable by numeric id
+  though: `GET records/$ClassRef/$ID` reads it, and — since there's no `PUT`/`PATCH` route on
+  this surface at all, composition or not — `POST batch` with `op: "update"` and a numeric `id`
+  (not `externalId`) updates it. See [Endpoint reference](05_endpoint-reference.md) and [Batch
+  operations](07_batch-operations.md).
 - **`prune: {"scope": "all"}` will archive it** the first time a composition targets that page,
   since a legacy element can never be represented in `elements[]` to be "kept." `scope: "managed"`
   (the default) is safe against this — it never even considers an external-id-less element — but
@@ -147,8 +149,8 @@ one. Two consequences follow directly from `elements[]` requiring `externalId` (
 
 There's no built-in backfill helper — `FixtureIdentifier` is a plain, ordinary field once the
 extension is applied, so assigning one to existing rows is an ordinary one-off write (a `sake`
-task, or a `records/$ClassRef/$ID` batch update by numeric id setting a stable, project-chosen
-value). Do that before relying on `elements[]` addressing or `prune: {"scope": "all"}` against a
+task, or a `POST batch` `op: "update"` by numeric `id` setting a stable, project-chosen value).
+Do that before relying on `elements[]` addressing or `prune: {"scope": "all"}` against a
 page with pre-existing content; until then, either stay on `scope: "managed"` (or `prune`
 disabled entirely) or manage that page's legacy elements through the numeric-id endpoints instead
 of composition.

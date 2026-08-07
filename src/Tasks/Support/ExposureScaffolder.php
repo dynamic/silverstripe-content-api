@@ -74,8 +74,11 @@ class ExposureScaffolder
      *   `--root=DNADesign\Elemental\Models\ElementContent`).
      * @param string[] $excludes Additional FQCNs (and their subclasses) to skip,
      *   on top of {@see ClassRegistry::discoveryDenylist()}.
-     * @throws InvalidArgumentException when $roots is empty, or names an
-     *   unknown class
+     * @throws InvalidArgumentException when $roots is empty, or $roots/$excludes
+     *   names an unknown class — a typo'd --exclude is validated exactly as
+     *   strictly as --root, since silently dropping it would leave the class
+     *   it was meant to keep out fully exposed in the output with no signal
+     *   at all, defeating the "a human reviews this diff" safety model.
      */
     public function generate(array $roots, array $excludes = []): string
     {
@@ -88,7 +91,13 @@ class ExposureScaffolder
 
         foreach ($roots as $root) {
             if (!class_exists($root)) {
-                throw new InvalidArgumentException(sprintf('Unknown class "%s".', $root));
+                throw new InvalidArgumentException(sprintf('Unknown --root class "%s".', $root));
+            }
+        }
+
+        foreach ($excludes as $exclude) {
+            if (!class_exists($exclude)) {
+                throw new InvalidArgumentException(sprintf('Unknown --exclude class "%s".', $exclude));
             }
         }
 
@@ -160,11 +169,16 @@ class ExposureScaffolder
     protected function skippedAncestorsNote(array $skippedAncestors): string
     {
         $lines = [
-            '# Skipped — shared ancestor of another class in this output, so no',
-            '# api_writable_fields block was generated for it (hoisting one here would',
-            '# silently allowlist every field on every subclass above too — the module\'s',
-            '# own #27 mistake). Scaffold it directly with its own --root if you',
-            '# genuinely need to write to this class itself, not just its subclasses:',
+            '# Skipped entirely — no api_access/api_writable_fields/extensions block was',
+            '# generated for these classes, because each is a shared ancestor of another',
+            '# class in THIS output. There is deliberately no --exclude workaround: running',
+            '# again with the descendant excluded would only bring the ancestor back as a',
+            '# standalone root, reproducing the exact hazard this skip exists to prevent',
+            '# (api_writable_fields anywhere in a class\'s config chain allowlists every',
+            '# subclass sharing that chain too — the module\'s own #27 mistake). If one of',
+            '# these classes genuinely needs its own write config, independent of its',
+            '# subclasses, that config has to be hand-written, understanding it will apply',
+            '# to every subclass below it as well:',
         ];
 
         foreach ($skippedAncestors as $class) {

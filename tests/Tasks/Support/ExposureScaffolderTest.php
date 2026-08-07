@@ -8,6 +8,7 @@ use Dynamic\ContentApi\Tasks\Support\ExposureScaffolder;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Write\WriteGuardExtension;
 use InvalidArgumentException;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Security\Member;
 
@@ -25,6 +26,19 @@ class ExposureScaffolderTest extends SapphireTest
         $this->expectException(InvalidArgumentException::class);
 
         ExposureScaffolder::create()->generate(['Totally\\Not\\A\\Real\\Class']);
+    }
+
+    /**
+     * A typo'd --exclude must fail loudly, the same as a typo'd --root —
+     * silently ignoring it would leave the class it was meant to keep out
+     * fully exposed in the output with no signal at all, undermining the
+     * "a human reviews this diff" safety model the whole tool relies on.
+     */
+    public function testRejectsAnUnknownExcludeClass(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        ExposureScaffolder::create()->generate([ApiTestElement::class], ['Totally\\Not\\A\\Real\\Class']);
     }
 
     /**
@@ -82,6 +96,28 @@ class ExposureScaffolderTest extends SapphireTest
         $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
 
         $this->assertStringNotContainsString('    - Parent', $yaml);
+    }
+
+    /**
+     * `writableFields()` diffs the class's own `$db` against
+     * `WriteApplicator`'s `protected_fields` — a regression there (the list
+     * silently shrinking, or the diff being dropped) would leak a field
+     * like `Password` into scaffolded, paste-ready YAML with nothing else
+     * catching it before a human pastes it straight into project config.
+     * `ID`/`ClassName`/`Created`/`LastEdited` are NOT a meaningful case for
+     * this: they're framework `$fixed_fields`, never present in `db`
+     * config at all, so they'd be absent from the output regardless of
+     * whether this filtering works — a real `db`-declared protected name
+     * (temporarily merged onto the fixture below) is what actually
+     * exercises the diff.
+     */
+    public function testNeverIncludesProtectedFields(): void
+    {
+        Config::modify()->merge(ApiTestElement::class, 'db', ['Password' => 'Varchar']);
+
+        $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
+
+        $this->assertStringNotContainsString('    - Password', $yaml);
     }
 
     /**

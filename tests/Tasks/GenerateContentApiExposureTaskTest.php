@@ -64,6 +64,30 @@ class GenerateContentApiExposureTaskTest extends SapphireTest
     }
 
     /**
+     * A bare `--write` (flag present, no value) must fall back to
+     * `DEFAULT_WRITE_PATH`, not silently behave like stdout or throw.
+     */
+    public function testBareWriteFlagFallsBackToTheDefaultPath(): void
+    {
+        $path = BASE_PATH . '/_config/999-content-api-generated.yml';
+
+        try {
+            [$exitCode, $output] = $this->runTask([
+                '--root' => [ApiTestElement::class],
+                '--write' => null,
+            ]);
+
+            $this->assertSame(Command::SUCCESS, $exitCode);
+            $this->assertStringContainsString('999-content-api-generated.yml', $output);
+            $this->assertFileExists($path);
+        } finally {
+            if (file_exists($path)) {
+                unlink($path);
+            }
+        }
+    }
+
+    /**
      * @return array{0: int, 1: string}
      */
     protected function runTask(array $options): array
