@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use ReflectionMethod;
+use SilverStripe\Security\Member;
 
 /**
  * Direct coverage for #70's `BatchProcessor::verifyRollback()` — the
@@ -157,6 +158,54 @@ class BatchProcessorRollbackVerificationTest extends ContentApiTestCase
         ];
 
         $this->assertFalse($this->verifyRollback($operations, $results, $preImages));
+    }
+
+    /**
+     * Code-review regression test for #127: this drives `runOperation()`
+     * itself (via reflection, sharing one `$preImages` array by reference
+     * across two calls) rather than feeding `verifyRollback()` an
+     * already-correct array — the merge bug lived in `runOperation()`'s
+     * capture step, not in `verifyRollback()`'s comparison, so only a test
+     * that exercises the real capture path can catch a regression there.
+     * Two `update` ops on the same record touch DISJOINT fields; a bug
+     * that keeps only the first op's pre-image array wholesale (rather
+     * than merging per column) would silently drop `Rank` from
+     * `$preImages` entirely, and this asserts both columns survive.
+     */
+    public function testTwoUpdatesToTheSameRecordWithDisjointFieldsBothContributeToThePreImage(): void
+    {
+        $record = ApiTestObject::create(['Title' => 'Original title', 'Rank' => 5]);
+        $record->write();
+
+        $processor = BatchProcessor::create();
+        $method = new ReflectionMethod(BatchProcessor::class, 'runOperation');
+        $method->setAccessible(true);
+        $member = $this->objFromFixture(Member::class, 'apiUser');
+
+        $preImages = [];
+
+        $method->invokeArgs($processor, [
+            ['op' => 'update', 'class' => 'ApiTest', 'id' => (int) $record->ID, 'fields' => ['Title' => 'New title']],
+            'none',
+            $member,
+            0,
+            &$preImages,
+        ]);
+        $method->invokeArgs($processor, [
+            ['op' => 'update', 'class' => 'ApiTest', 'id' => (int) $record->ID, 'fields' => ['Rank' => 42]],
+            'none',
+            $member,
+            1,
+            &$preImages,
+        ]);
+
+        $key = ApiTestObject::class . ':' . $record->ID;
+
+        $this->assertSame(
+            ['Title' => 'Original title', 'Rank' => 5],
+            $preImages[$key] ?? null,
+            'a field only ever touched by the second op must still end up in the merged pre-image'
+        );
     }
 
     public function testAnArchiveModeDeleteThatIsStillGoneFailsVerification(): void

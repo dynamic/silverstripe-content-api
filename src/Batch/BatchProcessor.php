@@ -134,15 +134,21 @@ class BatchProcessor
      * a pre-image of the declared field keys (via `RecordWriter::write()`)
      * before the write happens, threaded down from `process()` as
      * `$preImages` — keyed by "ClassName:id", not by operation index, and
-     * never overwritten once set. Two consequences of that keying, both
-     * required for correctness, not just tidiness:
+     * merged per COLUMN (earliest write wins), never a whole-array
+     * overwrite. Two consequences of that keying, both required for
+     * correctness, not just tidiness:
      * - If the same record is written more than once in one batch (e.g.
      *   two `update` ops on the same id, or an `upsert` that resolves to a
      *   row an earlier op in this same batch just created), every
-     *   'updated' result for it is checked against the FIRST snapshot
-     *   taken — a genuine rollback restores the record to its state
-     *   before the earliest write that touched it, not before whichever
-     *   one happened to run last.
+     *   'updated' result for it is checked against the pre-image of EACH
+     *   column as it stood before the EARLIEST write that touched THAT
+     *   column — a genuine rollback restores every column to its state
+     *   before its own earliest write, not before whichever op happened
+     *   to run last. A field only ever touched by a later op still gets
+     *   its own (later-captured, but still earliest-for-that-field)
+     *   snapshot — the per-column merge, not a per-record "first op
+     *   wins" shortcut, is what keeps that coverage from silently
+     *   disappearing.
      * - An 'updated' result whose id was ALSO reported 'created' earlier
      *   in this same batch is skipped entirely, not compared against a
      *   pre-image at all: the create branch below already asserts the
@@ -421,18 +427,20 @@ class BatchProcessor
             // #127: carried out of the public $out below — a rollback
             // pre-image is verifyRollback()'s internal bookkeeping, never
             // part of the API response. Keyed by "ClassName:id" — NOT by
-            // operation index — and never overwritten once set: if the
-            // same record is written more than once in one batch (e.g.
-            // two `update` ops on the same id), a genuine rollback
-            // restores it to its state before the EARLIEST of those
-            // writes, not before whichever one happened to run last.
-            // Comparing every one of that record's 'updated' results
-            // against the same first-captured snapshot is what makes
-            // that check correct regardless of how many times the record
-            // was touched.
+            // operation index — and merged per COLUMN, earliest wins, never
+            // overwritten once a column is captured: if the same record is
+            // written more than once in one batch (e.g. two `update` ops
+            // touching different fields on the same id), a genuine rollback
+            // restores it to its state before the EARLIEST write of EACH
+            // field, not before whichever op happened to run last. `+`
+            // (array union, left operand's keys win on collision) is
+            // deliberate here — `??=` on the whole array would keep only
+            // the FIRST op's column set wholesale and silently drop
+            // verification for any column a later op was the only one to
+            // touch.
             if (($result['preImage'] ?? null) !== null) {
                 $preImageKey = $className . ':' . $serialized['id'];
-                $preImages[$preImageKey] ??= $result['preImage'];
+                $preImages[$preImageKey] = ($preImages[$preImageKey] ?? []) + $result['preImage'];
             }
 
             $out = [

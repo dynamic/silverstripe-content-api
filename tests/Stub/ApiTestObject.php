@@ -21,6 +21,11 @@ class ApiTestObject extends DataObject implements TestOnly
     private static array $db = [
         'Title' => 'Varchar',
         'Rank' => 'Int',
+        // A composite DBField — exists solely so #127's rollback
+        // pre-image capture has a real composite column to be tested
+        // against (see
+        // RecordWriterTest::testPreImageOfACompositeFieldIsAnImmutableSnapshotNotALiveReference()).
+        'Price' => 'Money',
     ];
 
     private static array $has_one = [
