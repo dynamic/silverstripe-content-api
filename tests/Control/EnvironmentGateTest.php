@@ -6,11 +6,17 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Environment;
+use SilverStripe\Core\Injector\Injector;
 
 class EnvironmentGateTest extends ContentApiTestCase
 {
+    private TestHandler $logHandler;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -18,6 +24,12 @@ class EnvironmentGateTest extends ContentApiTestCase
         // Force population endpoints closed by config so only the env-var
         // override under test can reopen them.
         Config::modify()->set(EnvironmentGate::class, 'population_enabled_environments', []);
+
+        $this->logHandler = new TestHandler();
+        Injector::inst()->registerService(
+            new Logger('test', [$this->logHandler]),
+            LoggerInterface::class
+        );
     }
 
     protected function tearDown(): void
@@ -106,6 +118,45 @@ class EnvironmentGateTest extends ContentApiTestCase
     }
 
     /**
+     * #126: a rehearsal against `dev`/`test` never reaches this branch at
+     * all, so a passing rehearsal gives no signal this gate exists before a
+     * real `live`/`uat` write hits it — the log line exists specifically so
+     * whatever server-side log a deploy process monitors still carries the
+     * warning, independent of whatever the caller does with the response.
+     */
+    public function testBlockingTheGateAlsoLogsAWarning(): void
+    {
+        Environment::setEnv('SS_CONTENT_API_ALLOW_POPULATE', false);
+
+        try {
+            (new EnvironmentGate())->checkPopulationAllowed();
+            $this->fail('Expected ApiError ENV_FORBIDDEN to be thrown.');
+        } catch (ApiError) {
+            // asserted below; the exception itself is covered by the other tests
+        }
+
+        $this->assertTrue(
+            $this->logHandler->hasWarningThatContains('rehearsal never exercises this gate'),
+            'blocking the gate must log a warning explaining why local rehearsal gave no signal'
+        );
+    }
+
+    /**
+     * The override path must stay silent — logging a "blocked" warning on
+     * every deliberate, successful population call would train an operator
+     * to ignore this specific log line, defeating the point of it standing
+     * out the one time it's unexpected.
+     */
+    public function testTheOverridePathDoesNotLogAWarning(): void
+    {
+        Environment::setEnv('SS_CONTENT_API_ALLOW_POPULATE', '1');
+
+        (new EnvironmentGate())->checkPopulationAllowed();
+
+        $this->assertEmpty($this->logHandler->getRecords(), 'a successful override must not log anything');
+    }
+
+    /**
      * #126: the wire response must carry machine-actionable details, not
      * just prose — a caller that isn't a human reading the message text
      * (an agent driving this API on someone's behalf) can't tell an
@@ -114,6 +165,7 @@ class EnvironmentGateTest extends ContentApiTestCase
      */
     public function testBlockedCallCarriesStructuredDetails(): void
     {
+        Environment::setEnv('SS_CONTENT_API_ALLOW_POPULATE', false);
         Config::modify()->set(
             EnvironmentGate::class,
             'population_enabled_environments',
@@ -142,12 +194,22 @@ class EnvironmentGateTest extends ContentApiTestCase
      */
     public function testIsPopulationAllowedMatchesCheckPopulationAllowedOutcome(): void
     {
+        Environment::setEnv('SS_CONTENT_API_ALLOW_POPULATE', false);
         $gate = new EnvironmentGate();
 
         $this->assertFalse($gate->isPopulationAllowed());
+        try {
+            $gate->checkPopulationAllowed();
+            $this->fail('isPopulationAllowed() said false but checkPopulationAllowed() did not throw.');
+        } catch (ApiError) {
+            // Expected — confirms the two methods actually agree, not just
+            // that isPopulationAllowed() returns a plausible-looking bool.
+        }
 
         Environment::setEnv('SS_CONTENT_API_ALLOW_POPULATE', '1');
 
         $this->assertTrue($gate->isPopulationAllowed());
+        $gate->checkPopulationAllowed();
+        $this->addToAssertionCount(1); // no throw is the assertion
     }
 }
