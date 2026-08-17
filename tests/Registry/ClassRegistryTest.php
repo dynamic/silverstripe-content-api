@@ -82,6 +82,68 @@ class ClassRegistryTest extends SapphireTest
         $registry->resolve('ApiTestDiscoveryChild');
     }
 
+    public function testResolveSuggestsARealUnregisteredClass(): void
+    {
+        // No discovery_roots, no models: entry — ApiTestDiscoveryChild is a
+        // real, autoloadable DataObject subclass that is genuinely unmapped
+        // (#125). resolve() should say so and name the FQCN, not read like a
+        // typo/routing problem.
+        $registry = ClassRegistry::singleton();
+
+        try {
+            $registry->resolve('ApiTestDiscoveryChild');
+            $this->fail('Expected an ApiError.');
+        } catch (ApiError $error) {
+            $this->assertSame('UNKNOWN_CLASS', $error->getErrorCode()->value);
+            $this->assertSame(404, $error->getStatus());
+            $this->assertStringContainsString(ApiTestDiscoveryChild::class, $error->getMessage());
+            $this->assertNotSame([], $error->getDetails());
+            $this->assertSame('CLASS_NOT_MAPPED', $error->getDetails()[0]['code']);
+            $this->assertSame(ApiTestDiscoveryChild::class, $error->getDetails()[0]['message']);
+        }
+    }
+
+    public function testResolveWithNoRealClassMatchGetsNoSuggestion(): void
+    {
+        // A ref that doesn't match any real class's basename gets the plain
+        // message and empty details — unchanged from before #125, and the
+        // shape the two existing SchemaTest/RecordsReadTest assertions rely
+        // on (they only assert code/status, but this pins the no-suggestion
+        // case explicitly).
+        $registry = ClassRegistry::singleton();
+
+        try {
+            $registry->resolve('TotallyBogusClassRef');
+            $this->fail('Expected an ApiError.');
+        } catch (ApiError $error) {
+            $this->assertSame('UNKNOWN_CLASS', $error->getErrorCode()->value);
+            $this->assertSame([], $error->getDetails());
+        }
+    }
+
+    public function testResolveWithModelsEntryPointingAtAMissingClassReportsClassNotFound(): void
+    {
+        // A models: entry can point at an FQCN that simply doesn't autoload
+        // (stale config, typo in the FQCN itself) — a different failure mode
+        // from "never registered," and worth its own message/details even
+        // though both throw the same UNKNOWN_CLASS code.
+        Config::modify()->set(ClassRegistry::class, 'models', [
+            'Ghost' => 'Dynamic\\ContentApi\\Tests\\Stub\\DoesNotExist',
+        ]);
+
+        $registry = ClassRegistry::singleton();
+
+        try {
+            $registry->resolve('Ghost');
+            $this->fail('Expected an ApiError.');
+        } catch (ApiError $error) {
+            $this->assertSame('UNKNOWN_CLASS', $error->getErrorCode()->value);
+            $this->assertSame(404, $error->getStatus());
+            $this->assertNotSame([], $error->getDetails());
+            $this->assertSame('CLASS_NOT_FOUND', $error->getDetails()[0]['code']);
+        }
+    }
+
     public function testExplicitApiAccessWinsOverDiscoveryFallback(): void
     {
         Config::modify()->set(ClassRegistry::class, 'discovery_roots', [ApiTestDiscoveryRoot::class]);
