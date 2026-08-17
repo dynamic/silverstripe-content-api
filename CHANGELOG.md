@@ -41,10 +41,12 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Docs
 - **(#66)** `docs/en/upstream-issues.md` now states upfront that response time on the
-  silverstripeltd fork has been slow to nonexistent (their own `feature/cms-6-compatibility` PR
-  has sat roughly 11 months with zero review, and neither `feature/v5` nor
-  `feature/cms-6-compatibility` has ever been tagged), so the module's local workarounds are the
-  practical default rather than a stopgap pending an imminent upstream fix.
+  silverstripeltd-maintained line has been slow to nonexistent (their own
+  `feature/cms-6-compatibility` PR has sat open since 2025-09-05 with zero review, and neither
+  `feature/v5` nor `feature/cms-6-compatibility` has ever been tagged), so the module's local
+  workarounds are the practical default — plan accordingly rather than assuming an imminent
+  upstream fix. Also clarifies that items 1–5's own `filed:` links describe proposals this
+  project filed and withdrew the same week, not open tickets upstream is still sitting on.
 
 ## [2.1.0] - 2026-08-07
 
