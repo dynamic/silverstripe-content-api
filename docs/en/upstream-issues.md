@@ -8,6 +8,15 @@ consumer benefits. File against
 (and cross-reference [colymba/silverstripe-restfulapi](https://github.com/colymba/silverstripe-restfulapi)
 where relevant).
 
+Response time on the silverstripeltd fork specifically has been slow to nonexistent —
+[silverstripeltd#1](https://github.com/silverstripeltd/silverstripe-restfulapi/pull/1) (their own
+PR proposing `feature/cms-6-compatibility` into their own `main`, opened 2025-09-05) has sat
+roughly 11 months with zero comments or reviews, and neither `feature/v5` nor
+`feature/cms-6-compatibility` has ever been tagged or released. This module carries its own
+workarounds (`WriteGuardExtension` chief among them) as the practical default, not a stopgap
+pending an imminent upstream fix — plan accordingly rather than waiting on any of the items
+below to land there.
+
 ## 1. Opt-in hashed token storage — filed: [silverstripeltd#2](https://github.com/silverstripeltd/silverstripe-restfulapi/issues/2)
 
 `TokenAuthenticator` stores the API token in plaintext (`Member.ApiToken`

@@ -39,6 +39,13 @@ All notable changes to this project are documented here. Format loosely follows
   `populationEnabled` flag, so checking that flag on `GET schema/site` can never itself trigger
   the "population blocked" warning meant for an actual blocked write.
 
+### Docs
+- **(#66)** `docs/en/upstream-issues.md` now states upfront that response time on the
+  silverstripeltd fork has been slow to nonexistent (their own `feature/cms-6-compatibility` PR
+  has sat roughly 11 months with zero review, and neither `feature/v5` nor
+  `feature/cms-6-compatibility` has ever been tagged), so the module's local workarounds are the
+  practical default rather than a stopgap pending an imminent upstream fix.
+
 ## [2.1.0] - 2026-08-07
 
 ### Added
