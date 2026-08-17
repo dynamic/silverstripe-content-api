@@ -5,6 +5,12 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Docs
+- **(#147)** `docs/en/15_testing-and-contributing.md` now documents the actual pre-push gate:
+  Actions is disabled repo-wide (`actions/permissions` → `enabled: false`), so `local-ci`
+  (PHPUnit + phpcs + phpstan + `scripts/check-doc-drift.sh`, per `.local-ci.json`) is the real
+  test/lint gate, not a GitHub Actions workflow that was never going to run.
+
 ## [1.6.0] - 2026-08-07
 
 Numbered `1.6.0`/`1.5.0`, not `1.1.0`/`1.2.0`: `1.1.0`-`1.4.0` are already used below by real,

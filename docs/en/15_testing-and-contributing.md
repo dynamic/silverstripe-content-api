@@ -39,6 +39,15 @@ vendor/bin/phpcbf src/ tests/    # auto-fix — composer lint-clean
 vendor/bin/phpstan analyse       # phpstan.neon.dist
 ```
 
+## Pre-push gate
+
+This repo has **no GitHub Actions workflow** — deliberately, not an oversight. `gh api
+repos/dynamic/silverstripe-content-api/actions/permissions` returns `{"enabled": false}`; Actions
+is disabled repo-wide by org policy, and running the test/lint suite is reserved for local
+tooling rather than CI. The actual pre-push gate is `local-ci` (declared in `.local-ci.json`),
+which runs PHPUnit + phpcs + phpstan + `scripts/check-doc-drift.sh`. Run it (or the commands
+above by hand) before opening a PR — nothing else will catch a regression for you.
+
 ## Test suite map
 
 | File | Covers |
