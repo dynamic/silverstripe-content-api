@@ -42,8 +42,6 @@ use Throwable;
  */
 class ContentApiController extends Controller
 {
-    private static bool $cors_enabled = false;
-
     private static array $url_handlers = [
         'GET auth/session' => 'handleAuthSession',
         'POST records/$ClassRef!/$ID!/$RecordAction!' => 'handleRecordAction',
