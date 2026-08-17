@@ -104,4 +104,50 @@ class EnvironmentGateTest extends ContentApiTestCase
             $this->assertSame(ErrorCode::ENV_FORBIDDEN, $e->getErrorCode());
         }
     }
+
+    /**
+     * #126: the wire response must carry machine-actionable details, not
+     * just prose — a caller that isn't a human reading the message text
+     * (an agent driving this API on someone's behalf) can't tell an
+     * ENV_FORBIDDEN apart from an ACL failure otherwise, and has no way to
+     * go read the site's own .env to find out which.
+     */
+    public function testBlockedCallCarriesStructuredDetails(): void
+    {
+        Config::modify()->set(
+            EnvironmentGate::class,
+            'population_enabled_environments',
+            ['test']
+        );
+
+        try {
+            (new EnvironmentGate())->checkPopulationAllowed();
+            $this->fail('Expected ApiError ENV_FORBIDDEN to be thrown.');
+        } catch (ApiError $e) {
+            $details = $e->getDetails();
+
+            $this->assertNotSame([], $details);
+            $this->assertSame('ENV_FORBIDDEN', $details[0]['code']);
+            $this->assertArrayHasKey('environment', $details[0]);
+            $this->assertSame('SS_CONTENT_API_ALLOW_POPULATE', $details[0]['envVar']);
+            $this->assertSame(['test'], $details[0]['populationEnabledEnvironments']);
+        }
+    }
+
+    /**
+     * #126: isPopulationAllowed() is the silent probe SchemaService's
+     * populationEnabled flag uses — it must return the same answer as
+     * checkPopulationAllowed() would decide, without throwing, so a schema
+     * read never has to catch an exception just to test a boolean.
+     */
+    public function testIsPopulationAllowedMatchesCheckPopulationAllowedOutcome(): void
+    {
+        $gate = new EnvironmentGate();
+
+        $this->assertFalse($gate->isPopulationAllowed());
+
+        Environment::setEnv('SS_CONTENT_API_ALLOW_POPULATE', '1');
+
+        $this->assertTrue($gate->isPopulationAllowed());
+    }
 }

@@ -93,6 +93,17 @@ PHP truthiness, so the literal string `"false"` is correctly treated as false). 
 `true` to bypass the gate deliberately (e.g. a UAT population run). Unset or unrecognized values
 default to `false`.
 
+**Before a project's first population write against a `live`-type target, confirm this variable
+is set.** A `dev`/`test` rehearsal never exercises this gate at all — the environment check above
+only fires outside `population_enabled_environments` — so a clean, repeated local rehearsal gives
+no signal whatsoever that a real target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. The gate
+also logs a warning server-side (not just the `403 ENV_FORBIDDEN` response) the moment it blocks
+a call, specifically so this is visible in a deploy/ops log even when nothing is watching the API
+response itself. The response itself also carries structured `details` (`environment`, `envVar`,
+`populationEnabledEnvironments`) so a caller that isn't a human reading the message text — an
+agent driving this API on someone's behalf — can tell this apart from an ACL failure without
+being able to read the site's own `.env` (#126).
+
 ## WriteApplicator
 
 `Dynamic\ContentApi\Write\WriteApplicator`

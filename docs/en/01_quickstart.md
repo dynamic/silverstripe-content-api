@@ -89,6 +89,11 @@ curl -H "X-Silverstripe-Apitoken: $TOKEN" https://site.test/api/ElementContent
 integrations, and whether population endpoints are enabled for the current environment. See
 [Schema introspection](11_schema-introspection.md).
 
+> **Before a first population write against a `live`-type target**, check `schema/site`'s
+> population-enabled flag (or just confirm `SS_CONTENT_API_ALLOW_POPULATE` is set there) —
+> `dev`/`test` never exercises this gate, so a clean local rehearsal gives no warning that a real
+> target needs it. See [Configuration](02_configuration.md#environmentgate) (#126).
+
 ## Next
 
 - [Write payloads](06_write-payloads.md) for the `fields`/`relations` shape

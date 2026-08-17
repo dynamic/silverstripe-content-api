@@ -64,18 +64,17 @@ class SchemaService
             ];
         }
 
-        $populationAllowed = true;
-
-        try {
-            $this->environmentGate->checkPopulationAllowed();
-        } catch (\Dynamic\ContentApi\Errors\ApiError) {
-            $populationAllowed = false;
-        }
-
         return [
             'api' => 'silverstripe-content-api/v1',
             'environment' => Director::get_environment_type(),
-            'populationEnabled' => $populationAllowed,
+            // #126: the silent probe, not checkPopulationAllowed() — a
+            // schema read is not itself an attempted write, and must never
+            // trigger the "population blocked" warning that method logs
+            // for an actual blocked write. The prior try/catch here called
+            // the throwing method purely to test its outcome, which meant
+            // every GET schema/site against a blocked environment logged a
+            // false "blocked" warning on nothing more than a read.
+            'populationEnabled' => $this->environmentGate->isPopulationAllowed(),
             'crud' => $this->crudSurface(),
             'integrations' => $this->detectIntegrations(),
             'classes' => $classes,
