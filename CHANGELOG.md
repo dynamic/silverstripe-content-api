@@ -13,6 +13,25 @@ All notable changes to this project are documented here. Format loosely follows
   position: `/content-api/v1` is server-to-server/agent-only and has no CORS surface at all.
   Colymba's own `cors.Enabled` (governing the separate `/api` surface) is unaffected.
 
+### Fixed
+- **(#136)** `DbTransaction::run()` — the one place every write path in this module opens a
+  transaction — now catches `\Error` (a `TypeError`/`ArgumentCountError`, not `\Exception`)
+  escaping the work closure and rolls back explicitly before re-throwing. Framework
+  `Database::withTransaction()` only ever catches `Exception`, so an `Error` mid-write previously
+  left `transactionRollback()` uncalled and the transaction open at its current nesting level —
+  the `#70`/`#127` rollback-verification safety net was silently bypassed exactly when the
+  transaction's own bookkeeping was most likely to be in a bad state. Deliberately catches
+  `\Error`, not `\Throwable` — catching `Exception` too would roll back a second time for the
+  path the framework already handles correctly on its own.
+
+  **Remaining scope, not covered by this fix**: `BatchProcessor::process()`'s atomic path and
+  `runDryRun()` still report a bare `SERVER_ERROR` 500 rather than `ROLLBACK_UNVERIFIED` when an
+  `Error` escapes a batch operation — `$results`/`$summary` are locals inside `run()` that only
+  escape via `BatchAbortException`, so per-op reporting on the `Error` path needs a separate
+  follow-up converting an `Error` into a `BatchAbortException` at the per-op boundary. This fix
+  closes the data-integrity hole (nothing is left half-committed); it doesn't yet restore
+  accurate error reporting on that specific path.
+
 ### Docs
 - **(#147)** `docs/en/15_testing-and-contributing.md` now documents the actual pre-push gate:
   Actions is disabled on this repo (`actions/permissions` → `enabled: false`), so `local-ci` —
