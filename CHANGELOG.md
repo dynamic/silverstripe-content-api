@@ -5,6 +5,14 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Removed
+- **(#150)** `ContentApiController.cors_enabled` — configured and documented but never read
+  anywhere in PHP; the controller emitted no `Access-Control-*` headers and had no `OPTIONS`
+  handling regardless of its value. Removed the dead property, its `_config/config.yml` default,
+  and the docs paragraph, and replaced the paragraph with an explicit statement of the actual
+  position: `/content-api/v1` is server-to-server/agent-only and has no CORS surface at all.
+  Colymba's own `cors.Enabled` (governing the separate `/api` surface) is unaffected.
+
 ### Docs
 - **(#147)** `docs/en/15_testing-and-contributing.md` now documents the actual pre-push gate:
   Actions is disabled on this repo (`actions/permissions` → `enabled: false`), so `local-ci` —
