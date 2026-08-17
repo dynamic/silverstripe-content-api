@@ -23,6 +23,22 @@ All notable changes to this project are documented here. Format loosely follows
   against an unfamiliar target. The wire error code stays `ENV_FORBIDDEN` — already dedicated to
   this one check, so changing it would be a breaking change to every existing consumer's error
   handling for a discoverability gap that doesn't need a new code, only better data.
+- **(#124)** New `Dynamic\ContentApi\Tasks\Support\ServiceAccountMemberProvisioner`:
+  find-or-create the service-account `Member` itself and attach it to an
+  already-provisioned permission group. `ServiceAccountProvisioner` only provisioned the Group +
+  permission codes; `ApiTokenMinter` explicitly required a `Member` to already exist and be
+  attached — nothing bridged the two, so every project needing a service account wrote this
+  find-or-create block itself, and re-ran it after every DB sync (a locally-created
+  service-account Member isn't part of a synced prod snapshot). Wired into
+  `SetupServiceAccountTask` via a new `member=<email>` request var — explicitly opt-in, not run
+  by default, so a plain group-provisioning run never silently mints a login-capable account as
+  a side effect. Idempotent, matching `ServiceAccountProvisioner`'s own contract: a re-run finds
+  the existing Member rather than duplicating it, never detaches it from a group it's already in,
+  and never touches a password. Refuses to guess (same as `ServiceAccountProvisioner`) when
+  multiple groups share a title, and fails clearly when the named group doesn't exist yet. The
+  created Member gets no `CMS_ACCESS_*` code (the granted permission codes carry none) and, per
+  SilverStripe's own `Member::write()` behavior on a record with no password set, an unknown
+  auto-generated one — token auth only, in practice unreachable by a normal login either way.
 
 ### Removed
 - **(#150)** `ContentApiController.cors_enabled` — configured and documented but never read
