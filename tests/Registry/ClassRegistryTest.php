@@ -144,6 +144,73 @@ class ClassRegistryTest extends SapphireTest
         }
     }
 
+    /**
+     * #125 review follow-up (caught before merge): a first version of the
+     * suggestion mechanism ignored discoveryDenylist() entirely and would
+     * suggest registering Member/Group/Permission/etc — the exact classes
+     * the module hardcodes as never-exposable, regardless of project
+     * config. Confirmed live against the real denylist (not a stub), since
+     * the whole point is that this can't be relaxed by project config.
+     */
+    public function testResolveNeverSuggestsARegistryDenylistedClass(): void
+    {
+        $registry = ClassRegistry::singleton();
+
+        foreach (['Member', 'Group', 'Permission', 'MemberPassword'] as $classRef) {
+            try {
+                $registry->resolve($classRef);
+                $this->fail("Expected an ApiError for \"{$classRef}\".");
+            } catch (ApiError $error) {
+                $this->assertSame(
+                    [],
+                    $error->getDetails(),
+                    "resolve(\"{$classRef}\") must not suggest registering a denylisted class"
+                );
+                $this->assertStringNotContainsStringIgnoringCase(
+                    'SilverStripe\\Security',
+                    $error->getMessage(),
+                    "resolve(\"{$classRef}\") must not name the denylisted class's FQCN"
+                );
+            }
+        }
+    }
+
+    /**
+     * #125 review follow-up (caught before merge): the suggestion must not
+     * tell a caller to "add a models: entry" for a class that's already
+     * mapped, just under a different ref — that invites a duplicate alias
+     * rather than pointing at the real fix (use the existing ref). The
+     * module explicitly supports refs that differ from a class's basename
+     * (the whole point of the models overlay), so this is a real scenario,
+     * not an edge case.
+     */
+    public function testResolveOfAnAlreadyMappedClasssBasenamePointsAtTheExistingRef(): void
+    {
+        Config::modify()->set(ClassRegistry::class, 'models', [
+            'CustomRef' => ApiTestDiscoveryChild::class,
+        ]);
+
+        $registry = ClassRegistry::singleton();
+
+        try {
+            // ApiTestDiscoveryChild's own basename, unmapped as a key —
+            // but the class itself IS mapped, under "CustomRef".
+            $registry->resolve('ApiTestDiscoveryChild');
+            $this->fail('Expected an ApiError.');
+        } catch (ApiError $error) {
+            $this->assertSame('UNKNOWN_CLASS', $error->getErrorCode()->value);
+            $this->assertStringContainsString('CustomRef', $error->getMessage());
+            $this->assertStringNotContainsString(
+                'models:',
+                $error->getMessage(),
+                'must not tell the caller to add a models: entry for a class that is already mapped'
+            );
+            $this->assertNotSame([], $error->getDetails());
+            $this->assertSame('CLASS_ALREADY_MAPPED', $error->getDetails()[0]['code']);
+            $this->assertSame('CustomRef', $error->getDetails()[0]['message']);
+        }
+    }
+
     public function testExplicitApiAccessWinsOverDiscoveryFallback(): void
     {
         Config::modify()->set(ClassRegistry::class, 'discovery_roots', [ApiTestDiscoveryRoot::class]);

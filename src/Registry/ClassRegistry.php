@@ -366,6 +366,31 @@ class ClassRegistry
         if (!$className) {
             $suggestion = $this->findClassBasenameMatch($classRef);
 
+            // #125 review follow-up: the suggestion is worthless (or actively
+            // wrong) in two cases the basename match alone can't see —
+            // caught here, not inside findClassBasenameMatch(), since both
+            // need $models, which that method deliberately doesn't take.
+            if ($suggestion !== null) {
+                // (a) already registered, just under a different ref — the
+                // fix is "use that ref", not "add a models: entry", and
+                // telling the caller to add one invites a duplicate alias.
+                $existingRef = array_search($suggestion, $models, true);
+
+                if ($existingRef !== false) {
+                    throw new ApiError(
+                        ErrorCode::UNKNOWN_CLASS,
+                        sprintf(
+                            'Unknown class reference "%s". "%s" is already registered, as ref '
+                                . '"%s" — use that instead.',
+                            $classRef,
+                            $suggestion,
+                            $existingRef
+                        ),
+                        [['field' => null, 'code' => 'CLASS_ALREADY_MAPPED', 'message' => (string) $existingRef]]
+                    );
+                }
+            }
+
             throw new ApiError(
                 ErrorCode::UNKNOWN_CLASS,
                 $suggestion !== null
@@ -396,17 +421,34 @@ class ClassRegistry
      * time specifically because the error read like a typo/routing problem
      * rather than a registration gap.
      *
-     * Deliberately narrow: only matches an exact case-insensitive basename,
-     * never a fuzzy/partial match — a wrong suggestion would be worse than
-     * none. Returns the first match found; ambiguity between two
+     * (b) Never suggests a `discoveryDenylist()` class — caught here, not by
+     * the caller. `Member`/`Group`/`Permission`/etc. are hardcoded-excluded
+     * from discovery for exactly this reason (the class docblock: "a project
+     * can't accidentally relax it away"), and a first version of this method
+     * suggested them anyway — reviewed and caught before merge. Telling a
+     * caller to register `Member` would both give actively wrong guidance
+     * and turn `resolve()` into an existence oracle for classes the module
+     * has specifically decided callers shouldn't be pointed at, regardless
+     * of whether they already hold a valid token.
+     *
+     * Deliberately narrow otherwise: only matches an exact case-insensitive
+     * basename, never a fuzzy/partial match — a wrong suggestion would be
+     * worse than none. Returns the first match found; ambiguity between two
      * identically-named classes in different namespaces isn't worth
-     * resolving here, since either result correctly signals "register this".
+     * resolving further here, since either surviving result still correctly
+     * signals "register this" (and (a) above already prefers an
+     * already-registered match when there is one).
      */
     private function findClassBasenameMatch(string $classRef): ?string
     {
         $needle = strtolower($classRef);
+        $denylist = $this->discoveryDenylist();
 
         foreach (ClassInfo::subclassesFor(DataObject::class, false) as $candidate) {
+            if (in_array($candidate, $denylist, true)) {
+                continue;
+            }
+
             if (strtolower(ClassInfo::shortName($candidate)) === $needle) {
                 return $candidate;
             }

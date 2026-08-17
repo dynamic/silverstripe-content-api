@@ -55,7 +55,12 @@ All notable changes to this project are documented here. Format loosely follows
   doesn't autoload (stale config, not a caller mistake) gets its own distinct message. Both cases
   still throw `UNKNOWN_CLASS`/404 — introducing a second error code would be a breaking change to
   any caller branching on `error.code` for what's purely a message-quality gap — but now carry
-  structured `details` (`CLASS_NOT_MAPPED` / `CLASS_NOT_FOUND`) a caller can act on programmatically.
+  structured `details` (`CLASS_NOT_MAPPED` / `CLASS_NOT_FOUND` / `CLASS_ALREADY_MAPPED`) a caller
+  can act on programmatically. The suggestion never names a `discoveryDenylist()` class
+  (`Member`/`Group`/`Permission`/etc. — caught in review before merge: a first draft suggested
+  registering exactly the classes the module hardcodes as never-exposable), and when the matched
+  class is already registered under a different ref, says so (`CLASS_ALREADY_MAPPED`) instead of
+  wrongly suggesting a duplicate `models:` entry.
 
 ## [1.6.0] - 2026-08-07
 
