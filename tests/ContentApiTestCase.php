@@ -38,6 +38,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
 use Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\Assets\File;
+use SilverStripe\Assets\Image;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\FunctionalTest;
@@ -145,11 +147,19 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedChildSubclassObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedGrandchildObject::class, 'api_access', true);
-        // Deliberately NO api_access grant on SilverStripe\Assets\Image
-        // here — the #119 unpublish-owns shared-asset test
-        // (ApiTestOwnedAssetOwnerObject) only passes if the walk excludes
-        // Image before it's ever authorization-checked, not merely
-        // alongside a grant that happens to also be present.
+        // #186: the suite runs inside a host testbed whose own exposure YAML
+        // is loaded alongside this config (the SS6 testbed grants
+        // SilverStripe\Assets\Image its own api_access; the SS5 testbed
+        // doesn't) — a real class, unlike the ApiTest* stubs above, so a host
+        // project's grant leaks in and silently decides asset-permission
+        // assertions instead of the test. Pin both real asset classes to no
+        // access here so AssetHandler::governingAssetClass()'s ancestry walk
+        // starts from a known state on either host; individual tests
+        // (AssetsTest, and the #119 unpublish-owns shared-asset test below,
+        // which needs the walk to exclude Image before it's ever
+        // authorization-checked) set their own grant when they need one.
+        Config::modify()->set(File::class, 'api_access', false);
+        Config::modify()->set(Image::class, 'api_access', false);
         Config::modify()->set(ApiTestOwnedAssetOwnerObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedPageObject::class, 'api_access', 'action');
         Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);

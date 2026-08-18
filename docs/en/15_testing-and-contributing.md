@@ -93,6 +93,17 @@ PR — nothing else will catch a regression for you.
   container**, not a project-relative path — clear it after editing any `_config/*.yml` before a
   CLI `phpunit`/`sake` run picks up the change.
 
+- **A test touching a real framework class (not an `ApiTest*` stub) inherits the host project's
+  own exposure config, not a clean slate.** `ContentApiTestCase::setUp()` grants `api_access` to
+  every `ApiTest*` stub explicitly for exactly this reason, but a class the host project also maps
+  in its own `content-api.yml` (e.g. `SilverStripe\Assets\File`/`Image`) still carries whatever
+  that host declared, layered underneath. #186 was this: one testbed granted `Image` its own
+  `api_access` and the other didn't, so two `AssetsTest` cases that assumed `Image` carried no
+  grant passed on one host and failed on the other — a host-config difference, not a module
+  regression. `ContentApiTestCase` now pins `File`/`Image` to `false` for this reason; any new
+  test that needs a real (non-stub) framework class to start from a known state should pin that
+  class explicitly rather than relying on either testbed's own config.
+
 ## Keeping `schema/endpoints.json` in sync with the MCP server
 
 [`schema/endpoints.json`](../../schema/endpoints.json) is the **source of truth** for the
