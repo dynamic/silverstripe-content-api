@@ -3,10 +3,18 @@
 namespace Dynamic\ContentApi\Tests\Verify;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateLeafObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateRootObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateUnversionedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnsCycleObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Verify\OwnedTreeWalker;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Versioned\Versioned;
@@ -398,5 +406,272 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
             'a misconfigured $owns entry must not prevent a valid sibling from being walked'
         );
         $this->assertSame((int) $child->ID, (int) $result[0]['record']->ID);
+    }
+
+    /**
+     * #174: `walkDuplicates()` reads `$cascade_duplicates` where `walk()`
+     * reads `$owns`. `ApiTestElement` is the discriminating fixture — it
+     * declares `$cascade_duplicates` and no `$owns` at all, so the same
+     * record walks to nothing one way and to its children the other.
+     * Everything else about the walk (cycle guard, depth cap, dropping
+     * unversioned records) is shared code and is covered above.
+     */
+    public function testWalkDuplicatesReadsCascadeDuplicatesNotOwns(): void
+    {
+        [$element, $item] = $this->inDraft(function () {
+            $element = ApiTestElement::create(['Title' => 'Element']);
+            $element->write();
+
+            $item = ApiTestElementItem::create(['Title' => 'Child', 'ElementID' => $element->ID]);
+            $item->write();
+
+            $plain = ApiTestPlainChildObject::create(['Title' => 'Unversioned', 'ElementID' => $element->ID]);
+            $plain->write();
+
+            return [$element, $item];
+        });
+
+        $this->assertCount(
+            0,
+            $this->inDraft(fn () => $this->walker()->walk($element)),
+            'ApiTestElement declares no $owns — walk() must find nothing'
+        );
+
+        $result = $this->inDraft(fn () => $this->walker()->walkDuplicates($element));
+
+        // Only the versioned child: PlainItems is walked but, like any
+        // unversioned record, never emitted.
+        $this->assertCount(1, $result);
+        $this->assertSame((int) $item->ID, (int) $result[0]['record']->ID);
+        $this->assertSame(1, $result[0]['depth']);
+    }
+
+    /**
+     * @return array{0: ApiTestDuplicateRootObject, 1: ApiTestVersionedObject,
+     *   2: ApiTestDuplicateChildObject, 3: ApiTestDuplicateLeafObject,
+     *   4: ApiTestVersionedObject}
+     */
+    private function duplicateFixture(): array
+    {
+        return $this->inDraft(function () {
+            $root = ApiTestDuplicateRootObject::create(['Title' => 'Root']);
+            $root->write();
+
+            $shared = ApiTestVersionedObject::create(['Title' => 'Shared']);
+            $shared->write();
+            $root->Shared()->add($shared);
+
+            $note = ApiTestVersionedObject::create(['Title' => 'Note']);
+            $note->write();
+
+            $child = ApiTestDuplicateChildObject::create([
+                'Title' => 'Child',
+                'RootID' => $root->ID,
+                'NoteID' => $note->ID,
+            ]);
+            $child->write();
+
+            $leaf = ApiTestDuplicateLeafObject::create(['Title' => 'Leaf', 'ChildID' => $child->ID]);
+            $leaf->write();
+
+            return [$root, $shared, $child, $leaf, $note];
+        });
+    }
+
+    /**
+     * A many_many named in `$cascade_duplicates` must NOT be walked, even
+     * though `walk()` follows the identical relation under `$owns`.
+     *
+     * `DataObject::duplicateManyManyRelation()` copies the relation *links*
+     * (`$dest->add($item)`) — the clone points at the very same pre-existing
+     * records — where every other relation type clones the record itself
+     * (`$item->duplicate(false)`). Publishing a link-copied target would push
+     * records live that the duplicate never created, and would newly
+     * `403 FORBIDDEN_CLASS` on shared classes no project allowlists.
+     */
+    public function testWalkDuplicatesSkipsManyManyWhileWalkStillFollowsIt(): void
+    {
+        [$root, $shared] = $this->duplicateFixture();
+
+        $duplicated = $this->inDraft(fn () => $this->walker()->walkDuplicates($root));
+
+        $this->assertNotContains(
+            $this->key($shared),
+            array_map(fn ($e) => $this->key($e['record']), $duplicated),
+            'a many_many is link-copied, not cloned — walkDuplicates() must skip it'
+        );
+
+        // The same relation under $owns is still walked: skipping many_many
+        // belongs to the duplicate question, not to the walker generally.
+        $owned = $this->inDraft(fn () => $this->walker()->walk($root));
+
+        $this->assertSame(
+            [$this->key($shared)],
+            array_map(fn ($e) => $this->key($e['record']), $owned),
+            'walk() must be unaffected by the many_many skip'
+        );
+    }
+
+    /**
+     * The #174 regression that a naive `$cascade_duplicates` read would
+     * reintroduce: `ApiTestDuplicateChildObject` declares NO
+     * `$cascade_duplicates`, so `RecursivePublishable::onBeforeDuplicate()`
+     * substitutes `$owns ∩ (many_many + belongs_to + has_many)` and
+     * `duplicate()` clones `Leaves` anyway.
+     *
+     * Nothing else covers those grandchildren — a page-level `$owns` walk
+     * stops at an element declaring no `$owns` — so losing them here loses
+     * them entirely, silently, which is the exact failure mode #174 is about.
+     *
+     * Also pins that the fallback excludes has_one: `Note` is in the child's
+     * `$owns` but must not be treated as duplicated, matching the framework's
+     * own deliberate exclusion (an owned has_one can be shared
+     * non-exclusively by clone and original).
+     */
+    public function testWalkDuplicatesFollowsTheOwnsFallbackIntoGrandchildren(): void
+    {
+        [$root, , $child, $leaf, $note] = $this->duplicateFixture();
+
+        $result = $this->inDraft(fn () => $this->walker()->walkDuplicates($root));
+
+        // Keyed by class AND id: these stubs each start their own table, so
+        // the child and the leaf both have ID 1 and an id-only map would
+        // silently collapse them.
+        $depths = [];
+        foreach ($result as $entry) {
+            $depths[$this->key($entry['record'])] = $entry['depth'];
+        }
+
+        $this->assertArrayHasKey($this->key($child), $depths);
+        $this->assertSame(1, $depths[$this->key($child)]);
+
+        $this->assertArrayHasKey(
+            $this->key($leaf),
+            $depths,
+            'the depth-2 grandchild duplicate() creates via the $owns fallback must be walked'
+        );
+        $this->assertSame(2, $depths[$this->key($leaf)]);
+
+        $this->assertArrayNotHasKey(
+            $this->key($note),
+            $depths,
+            'the fallback excludes has_one, matching RecursivePublishable::onBeforeDuplicate()'
+        );
+    }
+
+    private function key(\SilverStripe\ORM\DataObject $record): string
+    {
+        return get_class($record) . ':' . (int) $record->ID;
+    }
+
+    /**
+     * `cascade_duplicates: false` means "duplicate nothing" — a supported
+     * value both `duplicate()` and `onBeforeDuplicate()` honour explicitly.
+     * It must not fall through to the `$owns` fallback (which is for an
+     * *empty* list, a different statement) and must not be cast to `[false]`.
+     */
+    public function testCascadeDuplicatesFalseMeansNothingRatherThanTheOwnsFallback(): void
+    {
+        $child = $this->inDraft(function () {
+            $child = ApiTestDuplicateChildObject::create(['Title' => 'Child']);
+            $child->write();
+
+            $leaf = ApiTestDuplicateLeafObject::create(['Title' => 'Leaf', 'ChildID' => $child->ID]);
+            $leaf->write();
+
+            return $child;
+        });
+
+        // Without the override the $owns fallback finds 'Leaves'.
+        $this->assertCount(1, $this->inDraft(fn () => $this->walker()->walkDuplicates($child)));
+
+        Config::modify()->set(ApiTestDuplicateChildObject::class, 'cascade_duplicates', false);
+
+        $this->assertSame(
+            [],
+            $this->inDraft(fn () => $this->walker()->walkDuplicates($child)),
+            'false is "duplicate nothing", not "fall back to $owns"'
+        );
+    }
+
+    /**
+     * The duplicates-mode counterpart of
+     * {@see testAnUnversionedIntermediateIsWalkedThroughNotPrunedAt}.
+     *
+     * `RecursivePublishable` is attached to `DataObject` itself
+     * (`versioned/_config/versionedownership.yml`), so its
+     * `onBeforeDuplicate()` `$owns` fallback fires for unversioned records
+     * too — `duplicate()` really does clone an unversioned intermediate's
+     * owned has_many children. Gating that fallback on `Versioned` (an
+     * earlier cut did) pruned the branch here and silently lost the
+     * versioned leaf below it, which is #174's own failure mode one node
+     * type over.
+     */
+    public function testWalkDuplicatesFollowsTheFallbackThroughAnUnversionedIntermediate(): void
+    {
+        [$root, $leaf] = $this->inDraft(function () {
+            $root = ApiTestDuplicateRootObject::create(['Title' => 'Root']);
+            $root->write();
+
+            $wrapper = ApiTestDuplicateUnversionedObject::create(['Title' => 'Wrapper', 'RootID' => $root->ID]);
+            $wrapper->write();
+
+            $leaf = ApiTestDuplicateLeafObject::create(['Title' => 'Wrapped leaf', 'WrapperID' => $wrapper->ID]);
+            $leaf->write();
+
+            return [$root, $leaf];
+        });
+
+        $result = $this->inDraft(fn () => $this->walker()->walkDuplicates($root));
+        $keys = array_map(fn ($e) => $this->key($e['record']), $result);
+
+        $this->assertContains(
+            $this->key($leaf),
+            $keys,
+            'a versioned record below an unversioned intermediate must still be walked'
+        );
+
+        // The intermediate itself is walked through, never emitted — it has
+        // no draft/live state to publish.
+        foreach ($result as $entry) {
+            $this->assertNotInstanceOf(ApiTestDuplicateUnversionedObject::class, $entry['record']);
+        }
+    }
+
+    /**
+     * The misconfigured-entry warning names the config it actually read.
+     * Without this, a typo in `$cascade_duplicates` would send someone
+     * hunting through `$owns` instead.
+     */
+    public function testTheMisconfiguredEntryWarningNamesCascadeDuplicates(): void
+    {
+        $element = $this->inDraft(function () {
+            $element = ApiTestElement::create(['Title' => 'Element']);
+            $element->write();
+
+            return $element;
+        });
+
+        Config::modify()->set(ApiTestElement::class, 'cascade_duplicates', ['NoSuchRelation']);
+
+        $logger = new class implements \Psr\Log\LoggerInterface {
+            use \Psr\Log\LoggerTrait;
+
+            public array $messages = [];
+
+            public function log($level, $message, array $context = []): void
+            {
+                $this->messages[] = (string) $message;
+            }
+        };
+
+        $walker = OwnedTreeWalker::create();
+        $walker->logger = $logger;
+
+        $this->inDraft(fn () => $walker->walkDuplicates($element));
+
+        $this->assertNotEmpty($logger->messages);
+        $this->assertStringContainsString('cascade_duplicates', $logger->messages[0]);
+        $this->assertStringNotContainsString('in $owns', $logger->messages[0]);
     }
 }
