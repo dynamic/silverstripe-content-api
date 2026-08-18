@@ -5,6 +5,19 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#115, #118)** Backport of branch `2`'s `sake dev/tasks/GenerateContentApiExposure`
+  (`GenerateContentApiExposureTask`/`ExposureScaffolder`), introspecting one or more `root=`
+  FQCNs (comma-separated for more than one) and every concrete subclass into starting-point
+  `api_access`/`api_writable_fields`/`api_writable_relations`/`extensions` YAML — printed to
+  stdout by default, or written wholesale to a dedicated AUTO-GENERATED file via `write=`. Same
+  shared `ExposureScaffolder` business logic as branch `2` (2.2.0); only the entry point differs,
+  this branch's legacy `run($request)` adapter translating `key=value` request vars instead of
+  Symfony Console `--flag` options. `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer names
+  either branch's invocation syntax directly, so the file no longer has a reason to differ once
+  the pending merge-up resolves the add/add conflict this backport creates on branch `2` (which
+  still carries the old branch-2-specific banner text until then).
+
 ### Fixed
 - **(#186)** `ContentApiTestCase` now pins `SilverStripe\Assets\File`/`Image` to
   `api_access: false` in `setUp()`. Two `AssetsTest` cases failed on the SS6 testbed only: the
