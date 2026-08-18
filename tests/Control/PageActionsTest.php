@@ -491,6 +491,13 @@ class PageActionsTest extends ContentApiTestCase
      * evaluated — a half-installed integration (or a typo in one of the two
      * config values) would otherwise be covered by nothing.
      *
+     * The doc-comment `@dataProvider` is deliberate, not overlooked
+     * modernization: PHPUnit deprecates it in favour of `#[DataProvider]`,
+     * but attributes need PHPUnit 10+ and branch `1` runs 9.6 (branch `2`
+     * runs 11.5). The attribute form would break this branch outright, so the
+     * deprecation notice stays until branch `1`'s PHPUnit floor moves.
+     * `EnvironmentGateTest` has the same constraint.
+     *
      * @dataProvider provideMissingTemplateClassConfig
      */
     public function testApplyTemplateWithoutThePackageIsFeatureUnavailable(
