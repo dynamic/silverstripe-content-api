@@ -5,6 +5,70 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **(#89)** `PublishOrchestrator::findDescendantIDs()`'s descendant-cascade guard used to key on
+  `hasExtension(Hierarchy::class)`, but the cascade it protects against
+  (`SiteTree::onBeforeDelete()` deleting every current `AllChildren()`) only fires on `SiteTree`
+  itself, and only when `SiteTree::config()->get('enforce_strict_hierarchy')` is true (`Hierarchy`
+  declares no `onBeforeDelete`/`onAfterDelete`; `Versioned` only has `onAfterDelete`). A project
+  that sets `enforce_strict_hierarchy: false`, or a `Hierarchy`-extended non-`SiteTree` model, was
+  refused with `409 UNPUBLISH_STRANDS_DESCENDANTS` on every ordinary unpublish/archive and had to
+  pass `force: true` — whose entire meaning is "accept the loss" — for a cascade that was never
+  actually going to happen. The guard now checks `$record instanceof SiteTree &&
+  SiteTree::config()->get('enforce_strict_hierarchy')` instead.
+- **(#80)** `POST records/$Class/$ID/unpublish` with `{"force": true}` bypasses the
+  stranded-descendants guard, and the resulting cascade is delete-shaped — the same live-subtree
+  loss `archive` produces — but was gated on the `action` verb alone, unlike every other
+  delete-shaped path in the module (`archive`; the batch `delete` op with `mode: "unpublish"`,
+  which already required `delete` via `RecordWriter::delete()`). `RecordActionsHandler` now also
+  requires the `delete` verb, at both the class and record level, whenever `force: true` is
+  passed to `unpublish` — plain, non-forced `unpublish` is unchanged and still needs only
+  `action`. New `PublishOrchestrator::forceCouldStrandDescendants()` gates this: per #89, `force`
+  can only ever bypass a real cascade risk on a `SiteTree` class with `enforce_strict_hierarchy`
+  enabled — on every other class the bypass is already a no-op, and demanding `delete` for it
+  there would itself be a breaking change for a client that defensively always sends
+  `force: true`. Exposing this as one shared method, rather than duplicating the
+  `instanceof`/config check in the handler, keeps the guard (#89) and this verb gate from being
+  able to silently drift apart the next time either is rescoped.
+- **(#114) BREAKING.** A payload write's root record could publish — including
+  `"publish": "subtree"`, turning one authorized write into a whole-tree publish — without ever
+  having its `action` verb checked. `RecordWriter::upsert()`/`update()` only ever checked
+  `update`/`create`; a class granting `update` but withholding `action` still had its root
+  published. `PageHandler::convert()` and `CompositionService::convertPage()` were worse: both
+  checked only the *pre-conversion* record's `update` verb, never the *target* class's verbs at
+  all, before publishing the converted instance as root.
+
+  `RecordWriter::write()` now also requires the class-level `action` verb whenever its payload's
+  `publish` key is anything other than `none` on a `Versioned` class — matching
+  `PublishOrchestrator::publish()`'s own no-op for a non-versioned record, so a class that can
+  never actually be published isn't newly required to grant a verb for it. This is the same
+  class-level check
+  `PublishOrchestrator::collectSubtreeTargets()` already runs for every *descendant* of a
+  `subtree` publish (#90), now also covering the root. `PageHandler::convert()` and
+  `CompositionService::convertPage()` now check the *target* class's `update` verb
+  unconditionally, plus its `action` verb whenever the request's publish mode isn't `none`.
+  `PageHandler::applyTemplate()` gets the equivalent class-level `action` check for its own
+  `"publish": "recursive"` option, since it bypasses `PublishOrchestrator` entirely
+  (`publishSingle()`/`publishRecursive()` called directly) and so isn't covered by the
+  `RecordWriter` fix either. `CompositionService::compose()` had a third, non-conversion path to
+  the same gap: `publishAll()` calls `$page->publishRecursive()` directly, reachable with no
+  `page.convertTo` in the payload at all, and the page's own field write (if any) never carries a
+  `publish` key, so `RecordWriter`'s fix above never reaches it either — `compose()` now checks
+  the page's own `action` verb before `publishAll()` runs, whenever the composition's top-level
+  `publish` is `"recursive"`.
+
+  **Breaking**: any class whose `api_access` grants `update`/`create` but not `action`, and that
+  receives writes carrying a `publish` key other than `"none"` — including a composition's page,
+  whether or not `convertTo` is used — now 403s `FORBIDDEN_CLASS` where it previously succeeded.
+
+  **Not covered, and deliberately out of scope**: `publishAll()` also publishes the composition's
+  *area* and every *element* (and element child) via `PublishOrchestrator::publish($record,
+  'single', $member)` — `single` mode performs no authorization at all, and nothing upstream
+  checks `action` for those classes either, since element writes always pass `"publish": "none"`
+  explicitly. This is the owned-relation publish cascade #119 exists to formalize with real
+  authorization across a whole `$owns` tree, not a single root record's own verb — closing it
+  here would be scope creep onto that issue. Filed as #168.
+
 ## [2.2.0] - 2026-08-17
 
 ### Added

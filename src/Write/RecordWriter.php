@@ -13,6 +13,7 @@ use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Validation\ValidationException;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Member;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * Request-independent write pipeline shared by the single-record endpoints,
@@ -194,6 +195,25 @@ class RecordWriter
         $publishMode = (string) ($payload['publish'] ?? 'none');
 
         $this->publisher->assertValidMode($publishMode);
+
+        // #114: this class's own checkClassAccess() calls above (in
+        // upsert()/update()) only ever check 'update'/'create' — 'update'
+        // and 'action' are independently configurable verbs
+        // (ClassRegistry::VERBS), so a class granting 'update' but
+        // withholding 'action' could still have its root record published
+        // via a "publish" key in the payload, including "publish":
+        // "subtree" turning one authorized field write into a whole-tree
+        // publish. Checked once here, class-level only — checkRecordAccess()
+        // maps both 'update' and 'action' to the same canEdit() call
+        // (PermissionPolicy::checkRecordAccess()), so a record-level
+        // 'action' check would just repeat the 'update'/'create' check the
+        // caller already ran. No-op for "publish": "none" or a
+        // non-versioned class, matching PublishOrchestrator::publish()'s
+        // own no-op for both — a class that can never actually be
+        // published has nothing here for 'action' to gate.
+        if ($publishMode !== 'none' && $record->hasExtension(Versioned::class)) {
+            $this->policy->checkClassAccess(get_class($record), 'action', $member);
+        }
 
         $requestedUrlSegment = $fields['URLSegment'] ?? null;
 

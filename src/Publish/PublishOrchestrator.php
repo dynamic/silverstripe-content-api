@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Psr\Log\LoggerInterface;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
@@ -165,16 +166,32 @@ class PublishOrchestrator
      *
      * The root assumption itself holds precisely at `RecordActionsHandler`,
      * which checks `canEdit()` (`action` verb) on the exact record before
-     * calling {@see publish()}. It's weaker at `RecordWriter` (checks
-     * `update`, not `action` — a class granting `update` but withholding
-     * `action` could still have its root published via `subtree` through a
-     * write) and at `PageHandler::convert()` (checks the *pre-conversion*
-     * record's `update`, never the *target* class's verbs at all before
-     * publishing the converted instance as root). Both gaps predate this
-     * method and apply equally to every mode, not just `subtree` — but
-     * `subtree` raises the stakes from one record to a whole tree. Tracked
-     * as #114; not one this method can close on its own since it only ever
-     * sees the root after that decision has already been made.
+     * calling {@see publish()}. It used to be weaker everywhere else a
+     * root could reach `publish()` without an explicit `action` check —
+     * `RecordWriter::write()` only checked `update`, and
+     * `PageHandler::convert()`/`CompositionService::convertPage()` checked
+     * the *pre-conversion* record's `update`, never the *target* class's
+     * verbs at all before publishing the converted instance as root. Fixed
+     * in #114 for those three call sites, plus `CompositionService::compose()`'s
+     * own page-level publish (`publishAll()`'s direct `$page->publishRecursive()`
+     * call, reachable with no `convertTo` at all): `RecordWriter::write()`
+     * now also checks the class-level `action` verb whenever its payload's
+     * `publish` key isn't `none`; both conversion paths and `compose()`
+     * itself now check the relevant class's `action` verb under the same
+     * condition. This method itself still can't close the gap on its own —
+     * it only ever sees the root after the caller's own decision has
+     * already been made — so those checks live at each call site, not here.
+     *
+     * NOT covered by #114, and deliberately out of its scope: `publishAll()`
+     * also publishes the composition's *area* and every *element* (and
+     * element child) via `publish($record, 'single', $member)` — 'single'
+     * mode performs no authorization at all, and nothing upstream checks
+     * `action` for those classes either (their own writes always pass
+     * `"publish": "none"` explicitly, so `RecordWriter::write()`'s #114
+     * check never fires for them). This is the owned-relation cascade #119
+     * exists to formalize with real authorization, not a single root
+     * record's own verb — closing it here would be scope creep onto that
+     * issue, not a #114 fix. Tracked separately as #168.
      *
      * `$liveOnly` (#102) skips a descendant branch entirely — no
      * collecting it as a target, no recursing into its own children, no
@@ -237,6 +254,29 @@ class PublishOrchestrator
             'id' => (int) $record->ID,
             'className' => get_class($record),
         ];
+    }
+
+    /**
+     * Whether `force: true` on `unpublish`/`archive` for this class could
+     * possibly bypass a real cascade risk — i.e. whether
+     * `findDescendantIDs()`'s own `SiteTree` + `enforce_strict_hierarchy`
+     * scoping (#89) could ever find something to strand for it. Class-level
+     * only (no record needed), so callers can use it before fetching one.
+     *
+     * Exposed specifically so `RecordActionsHandler`'s force-unpublish
+     * `delete`-verb gate (#80) can't drift out of sync with this scoping
+     * the next time either is rescoped — a hardcoded copy of the same
+     * `instanceof`/config check here and there would silently diverge if
+     * this one ever changes. On a non-`SiteTree` class, or a project that
+     * has turned `enforce_strict_hierarchy` off, `force: true` is already a
+     * no-op (see #89) — requiring `delete` to use it there would demand a
+     * verb for a bypass that was never going to happen, the same mistake
+     * #89 fixed in the other direction.
+     */
+    public function forceCouldStrandDescendants(string $className): bool
+    {
+        return is_a($className, SiteTree::class, true)
+            && (bool) SiteTree::config()->get('enforce_strict_hierarchy');
     }
 
     /**
@@ -366,8 +406,23 @@ class PublishOrchestrator
 
     /**
      * IDs of every `Hierarchy` descendant of $record in the given stage.
-     * Empty for a non-hierarchical class, one with no extension at all, or
-     * a record that doesn't exist in that stage.
+     * Empty when {@see forceCouldStrandDescendants()} says this class has
+     * no real cascade risk to begin with, or the record doesn't exist in
+     * that stage.
+     *
+     * The scope check (#89) is intentionally narrower than "any
+     * `Hierarchy` class": the cascade this guard exists to prevent —
+     * `SiteTree::onBeforeDelete()` deleting every current `AllChildren()`
+     * when a page is deleted from a stage — only fires on `SiteTree`
+     * itself, and only when `SiteTree.enforce_strict_hierarchy` is enabled
+     * (the framework default). `Hierarchy` itself declares no
+     * `onBeforeDelete`/`onAfterDelete`, and `Versioned` only has
+     * `onAfterDelete` — so a `Hierarchy`-extended non-`SiteTree` class, or
+     * a project that has turned the config off, was previously refused
+     * here (and required `force`) for a cascade that was never actually
+     * going to happen. `forceCouldStrandDescendants()` is the one place
+     * this decision is made — shared with `RecordActionsHandler`'s #80
+     * force-unpublish `delete`-verb gate, so the two can't drift apart.
      *
      * Deliberately queries by $record's own concrete class
      * (`get_class($record)`), not `Hierarchy::getHierarchyBaseClass()` —
@@ -388,7 +443,7 @@ class PublishOrchestrator
      */
     protected function findDescendantIDs(DataObject $record, string $stage): array
     {
-        if (!$record->hasExtension(Hierarchy::class)) {
+        if (!$this->forceCouldStrandDescendants(get_class($record))) {
             return [];
         }
 
@@ -404,8 +459,9 @@ class PublishOrchestrator
             }
 
             // getDescendantIDList() is a Hierarchy mixin method, confirmed
-            // present by the hasExtension() check above — PHPStan can't see
-            // that guard applies to this freshly-fetched instance too.
+            // present by the instanceof SiteTree check above — SiteTree
+            // declares the Hierarchy extension, and PHPStan can't see that
+            // this freshly-fetched instance carries it too.
             /** @var DataObject&Hierarchy $staged */
             return $staged->getDescendantIDList();
         });

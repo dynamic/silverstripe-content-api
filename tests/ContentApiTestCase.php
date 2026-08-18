@@ -14,6 +14,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedDeniedSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRestrictedRelatedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestForceUnpublishPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestHierarchyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
@@ -71,6 +73,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestFingerprintNonVersionedRelatedObject::class,
         ApiTestFingerprintRestrictedRelatedObject::class,
         ApiTestFingerprintRelatedDeniedSubclassObject::class,
+        ApiTestHierarchyObject::class,
     ];
 
     protected function setUp(): void
@@ -83,6 +86,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestTag' => ApiTestTag::class,
             'ApiTestVersioned' => ApiTestVersionedObject::class,
             'ApiTestPage' => ApiTestPage::class,
+            'ApiTestForceUnpublishPage' => ApiTestForceUnpublishPage::class,
             'BlockPageStub' => ApiTestBlockPage::class,
             'ApiTestElement' => ApiTestElement::class,
             'ElementContent' => \DNADesign\Elemental\Models\ElementContent::class,
