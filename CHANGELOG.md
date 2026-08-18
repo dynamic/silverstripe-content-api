@@ -118,10 +118,11 @@ All notable changes to this project are documented here. Format loosely follows
   bookkeeping engages for) correctly rolls back both levels and leaves `transactionDepth()`
   balanced when an `Error` escapes the inner call.
 - **(#111)** `dnadesign/silverstripe-elemental` require-dev floor bumped `^6` → `^6.2`.
-  `tests/ResetsElementalTypesCacheTrait.php` calls `ElementalAreasExtension::reset()`, which
-  doesn't exist before 6.2 — `^6` let a project resolve an older 6.x where that method is
-  missing, a broken installable state. Branch `2` (SS6) only; branch `1`'s own `^5.2` floor is
-  unaffected.
+  `tests/ResetsElementalTypesCacheTrait.php` calls `ElementalAreasExtension::reset()`, which only
+  exists from 6.2 — `^6` let a project resolve an older 6.x lacking it, a floor-vs-actual-
+  constraint gap rather than a live break (the trait's `method_exists()` guard, kept deliberately
+  for branch `1`'s older line, no-ops there). Branch `2` (SS6) only; branch `1`'s own `^5.2` floor
+  is unaffected.
 
 ### Docs
 - **(#147)** `docs/en/15_testing-and-contributing.md` now documents the actual pre-push gate:
