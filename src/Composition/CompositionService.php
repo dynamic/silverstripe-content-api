@@ -93,7 +93,7 @@ class CompositionService
         }
 
         // 1. Page
-        [$page, $pageOperation] = $this->resolvePage($pageSpec, $member);
+        [$page, $pageOperation] = $this->resolvePage($pageSpec, $member, $publishMode);
 
         $pageWarnings = [];
 
@@ -168,7 +168,7 @@ class CompositionService
     /**
      * @return array{0: SiteTree, 1: string} page + operation performed
      */
-    protected function resolvePage(array $pageSpec, Member $member): array
+    protected function resolvePage(array $pageSpec, Member $member, string $publishMode = 'none'): array
     {
         $match = (array) ($pageSpec['match'] ?? []);
 
@@ -201,7 +201,8 @@ class CompositionService
                 $page,
                 (string) $pageSpec['convertTo'],
                 !empty($pageSpec['force']),
-                $member
+                $member,
+                $publishMode
             );
 
             if ($converted) {
@@ -290,8 +291,13 @@ class CompositionService
         return $page;
     }
 
-    protected function convertPage(SiteTree $page, string $targetRef, bool $force, Member $member): ?SiteTree
-    {
+    protected function convertPage(
+        SiteTree $page,
+        string $targetRef,
+        bool $force,
+        Member $member,
+        string $publishMode = 'none'
+    ): ?SiteTree {
         $targetClass = $this->registry->resolve($targetRef);
 
         if (!is_a($targetClass, SiteTree::class, true)) {
@@ -315,6 +321,17 @@ class CompositionService
         }
 
         $this->policy->checkRecordAccess($page, 'update', $member);
+
+        // #114: same gap as PageHandler::convert() — only the
+        // *pre-conversion* record's 'update' verb was ever checked, never
+        // the *target* class's own verbs, before the converted instance is
+        // written and (with publishMode "recursive") published as root via
+        // publishAll() below.
+        $this->policy->checkClassAccess($targetClass, 'update', $member);
+
+        if ($publishMode !== 'none') {
+            $this->policy->checkClassAccess($targetClass, 'action', $member);
+        }
 
         /** @var SiteTree $converted */
         $converted = $page->newClassInstance($targetClass);

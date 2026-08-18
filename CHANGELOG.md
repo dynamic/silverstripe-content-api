@@ -30,6 +30,33 @@ All notable changes to this project are documented here. Format loosely follows
   `force: true`. Exposing this as one shared method, rather than duplicating the
   `instanceof`/config check in the handler, keeps the guard (#89) and this verb gate from being
   able to silently drift apart the next time either is rescoped.
+- **(#114) BREAKING.** A payload write's root record could publish — including
+  `"publish": "subtree"`, turning one authorized write into a whole-tree publish — without ever
+  having its `action` verb checked. `RecordWriter::upsert()`/`update()` only ever checked
+  `update`/`create`; a class granting `update` but withholding `action` still had its root
+  published. `PageHandler::convert()` and `CompositionService::convertPage()` were worse: both
+  checked only the *pre-conversion* record's `update` verb, never the *target* class's verbs at
+  all, before publishing the converted instance as root.
+
+  `RecordWriter::write()` now also requires the class-level `action` verb whenever its payload's
+  `publish` key is anything other than `none` on a `Versioned` class — matching
+  `PublishOrchestrator::publish()`'s own no-op for a non-versioned record, so a class that can
+  never actually be published isn't newly required to grant a verb for it. This is the same
+  class-level check
+  `PublishOrchestrator::collectSubtreeTargets()` already runs for every *descendant* of a
+  `subtree` publish (#90), now also covering the root. `PageHandler::convert()` and
+  `CompositionService::convertPage()` now check the *target* class's `update` verb
+  unconditionally, plus its `action` verb whenever the request's publish mode isn't `none`.
+  `PageHandler::applyTemplate()` gets the equivalent class-level `action` check for its own
+  `"publish": "recursive"` option, since it bypasses `PublishOrchestrator` entirely
+  (`publishSingle()`/`publishRecursive()` called directly) and so isn't covered by the
+  `RecordWriter` fix either.
+
+  **Breaking**: any class whose `api_access` grants `update`/`create` but not `action`, and that
+  receives writes carrying a `publish` key other than `"none"`, now 403s `FORBIDDEN_CLASS` where
+  it previously succeeded. Compositions are unaffected — `CompositionService::compose()` publishes
+  elements via direct `PublishOrchestrator::publish($record, 'single', $member)` calls, never
+  through `RecordWriter`.
 
 ## [1.7.0] - 2026-08-17
 

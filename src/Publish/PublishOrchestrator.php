@@ -166,16 +166,19 @@ class PublishOrchestrator
      *
      * The root assumption itself holds precisely at `RecordActionsHandler`,
      * which checks `canEdit()` (`action` verb) on the exact record before
-     * calling {@see publish()}. It's weaker at `RecordWriter` (checks
-     * `update`, not `action` — a class granting `update` but withholding
-     * `action` could still have its root published via `subtree` through a
-     * write) and at `PageHandler::convert()` (checks the *pre-conversion*
-     * record's `update`, never the *target* class's verbs at all before
-     * publishing the converted instance as root). Both gaps predate this
-     * method and apply equally to every mode, not just `subtree` — but
-     * `subtree` raises the stakes from one record to a whole tree. Tracked
-     * as #114; not one this method can close on its own since it only ever
-     * sees the root after that decision has already been made.
+     * calling {@see publish()}. It used to be weaker everywhere else a
+     * root could reach `publish()` without an explicit `action` check —
+     * `RecordWriter::write()` only checked `update`, and
+     * `PageHandler::convert()`/`CompositionService::convertPage()` checked
+     * the *pre-conversion* record's `update`, never the *target* class's
+     * verbs at all before publishing the converted instance as root. Fixed
+     * in #114: `RecordWriter::write()` now also checks the class-level
+     * `action` verb whenever its payload's `publish` key isn't `none`, and
+     * both conversion paths now check the target class's `action` verb
+     * under the same condition. This method itself still can't close the
+     * gap on its own — it only ever sees the root after the caller's own
+     * decision has already been made — so those checks live at each call
+     * site, not here.
      *
      * `$liveOnly` (#102) skips a descendant branch entirely — no
      * collecting it as a target, no recursing into its own children, no

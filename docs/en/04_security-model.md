@@ -184,6 +184,19 @@ carried over from an earlier tenant-scoped `can*()` implementation that 403'd on
 were never loaded (see the class doc on `PermissionPolicy`). Record checks (below) always run
 on a real, loaded record.
 
+**A payload write's `publish` key requires the class-level `action` verb, not just `update`
+(#114).** `RecordWriter::write()` (`upsert()`/`update()`, and therefore every batch op and
+composition field write that routes through it) checks `update`/`create`, but `update` and
+`action` are independently configurable — a class granting `update` while withholding `action`
+previously had its root record published anyway, including `"publish": "subtree"` turning one
+authorized field write into a whole-tree publish. Checked once, class-level, whenever the
+payload's `publish` key isn't `none`, on a `Versioned` class (matching
+`PublishOrchestrator::publish()`'s own no-op for a non-versioned record — a class that can never
+be published has nothing here for `action` to gate). `PageHandler::convert()` and
+`CompositionService::convertPage()` have the analogous gap closed the same way: both now check
+the *target* class's `update` verb unconditionally, plus `action` whenever the request's publish
+mode isn't `none` — previously only the *pre-conversion* record's `update` verb was ever checked.
+
 ## Record-level gate
 
 `PermissionPolicy::checkRecordAccess()` calls the model's own permission method for the verb:

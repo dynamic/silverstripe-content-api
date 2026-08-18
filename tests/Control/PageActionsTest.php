@@ -118,6 +118,66 @@ class PageActionsTest extends ContentApiTestCase
         $this->assertSame(200, $forced->getStatusCode(), (string) $forced->getBody());
     }
 
+    /**
+     * #114: only the *pre-conversion* record's `update` verb was ever
+     * checked — the *target* class's own verbs were never checked at all
+     * before publishing the converted instance as root. Narrowing
+     * ApiTestPage's own api_access (normally `true`, granted in
+     * ContentApiTestCase::setUp) to omit `update` must now refuse the
+     * conversion, even though the source class (`SiteTree`, this test
+     * file's own setUp) grants everything.
+     */
+    public function testConvertRequiresTargetClassUpdateVerb(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'api_access', 'read');
+
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost("pages/{$about->ID}/convert", [
+            'className' => 'ApiTestPage',
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertSame(
+            SiteTree::class,
+            SiteTree::get()->byID($about->ID)->ClassName,
+            'nothing should have converted'
+        );
+    }
+
+    /**
+     * The `action` half of the same gap: a target class granting `update`
+     * but not `action` must refuse a conversion that also wants to
+     * publish, but must still allow one that doesn't ("publish": "none",
+     * the default).
+     */
+    public function testConvertWithPublishModeRequiresTargetClassActionVerb(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'api_access', 'read,update');
+
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost("pages/{$about->ID}/convert", [
+            'className' => 'ApiTestPage',
+            'publish' => 'recursive',
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+    }
+
+    public function testConvertWithoutAPublishModeDoesNotRequireTargetClassActionVerb(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'api_access', 'read,update');
+
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost("pages/{$about->ID}/convert", [
+            'className' => 'ApiTestPage',
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+    }
+
     public function testConvertToNonPageClassRejected(): void
     {
         $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
