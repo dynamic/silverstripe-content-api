@@ -39,6 +39,14 @@ All notable changes to this project are documented here. Format loosely follows
   `populationEnabled` flag, so checking that flag on `GET schema/site` can never itself trigger
   the "population blocked" warning meant for an actual blocked write.
 
+### Removed
+- **(#150)** `ContentApiController.cors_enabled` — configured and documented but never read
+  anywhere in PHP; the controller emitted no `Access-Control-*` headers and had no `OPTIONS`
+  handling regardless of its value. Removed the dead property, its `_config/config.yml` default,
+  and the docs paragraph, and replaced the paragraph with an explicit statement of the actual
+  position: `/content-api/v1` is server-to-server/agent-only and has no CORS surface at all.
+  Colymba's own `cors.Enabled` (governing the separate `/api` surface) is unaffected.
+
 ### Docs
 - **(#66)** `docs/en/upstream-issues.md` now states upfront that response time on the
   silverstripeltd-maintained line has been slow to nonexistent (their own
