@@ -226,8 +226,14 @@ class ClassRegistry
      * The mandatory denylist plus any project-configured `discovery_exclude`
      * entries — an excluded root (mandatory or configured) also excludes its
      * subclasses.
+     *
+     * Public (not just used internally by `discoveredModels()`/
+     * `isDiscoveredOnly()`): {@see \Dynamic\ContentApi\Tasks\Support\ExposureScaffolder}
+     * (#115/#118) reuses this rather than re-deriving its own denylist, so
+     * `Member`/`Group`/etc. can never be scaffolded for write exposure by
+     * either code path independently drifting out of sync with the other.
      */
-    protected function discoveryDenylist(): array
+    public function discoveryDenylist(): array
     {
         $configured = (array) static::config()->get('discovery_exclude');
         $roots = array_merge(self::MANDATORY_DISCOVERY_DENYLIST, $configured);
