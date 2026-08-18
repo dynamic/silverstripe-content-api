@@ -120,8 +120,9 @@ actions](#publishunpublisharchive-actions) for how to pass them):
   verb before `publishAll()`, whether or not `convertTo` was used. See
   `PublishOrchestrator::collectSubtreeTargets()`'s docblock — including the paragraph naming
   what's still **not** covered: a composition's *area* and *elements* publish via `publish()`'s
-  `single` mode with no authorization check at all, a gap #119's owned-relation cascade work is
-  scoped to close, not this issue.
+  `single` mode with no authorization check at all (the same gap exists in
+  `PageHandler::applyTemplate()`'s own `publishSingle()` calls), tracked as #168, a gap #119's
+  owned-relation cascade work is scoped to close, not this issue.
 - **`liveOnly`**: skip a descendant branch — no publish, no recursing into its own children —
   when it isn't already live. See the resurrection-risk warning below.
 - **`dryRun`**: run the full authorization-checked walk (so the same error a real call would

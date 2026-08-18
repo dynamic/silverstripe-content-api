@@ -209,7 +209,9 @@ area and every element (and element child) via `PublishOrchestrator::publish($re
 — `single` mode performs no authorization at all, and nothing upstream checks `action` for those
 classes either, since element writes always pass `"publish": "none"` explicitly. This is the
 owned-relation publish cascade #119 exists to formalize with real authorization, not a single
-root record's own verb.
+root record's own verb. The identical cascade, with the identical gap, also exists in
+`PageHandler::applyTemplate()`'s own `publishSingle()` calls on the area and its elements.
+Tracked as #168.
 
 ## Record-level gate
 
