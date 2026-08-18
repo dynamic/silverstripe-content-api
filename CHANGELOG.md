@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-08-18
+
 ### Fixed
 - **(#174, closing the known gap 1.9.0 left open)** `pages/$ID/apply-template` with
   `{"publish": "recursive"}` now publishes each element's own duplicated descendants, not just the
@@ -864,6 +866,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.10.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.9.0...1.10.0
 [1.9.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.8.0...1.9.0
 [1.8.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.7.0...1.8.0
 [1.7.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.6.0...1.7.0
