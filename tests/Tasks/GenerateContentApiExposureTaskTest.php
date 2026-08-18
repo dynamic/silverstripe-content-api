@@ -26,6 +26,8 @@ class GenerateContentApiExposureTaskTest extends SapphireTest
 
     private array $writtenDirs = [];
 
+    private mixed $originalArgv = null;
+
     protected function tearDown(): void
     {
         // write= with no explicit path writes into the HOST project's own
@@ -44,6 +46,10 @@ class GenerateContentApiExposureTaskTest extends SapphireTest
             if (is_dir($dir)) {
                 rmdir($dir);
             }
+        }
+
+        if ($this->originalArgv !== null) {
+            $_SERVER['argv'] = $this->originalArgv;
         }
 
         parent::tearDown();
@@ -112,6 +118,75 @@ class GenerateContentApiExposureTaskTest extends SapphireTest
 
         $this->assertStringContainsString('Unknown exclude class', $output);
         $this->assertStringNotContainsString('--exclude', $output);
+    }
+
+    /**
+     * A bare `write` flag (no `=`) never reaches getVar('write') at all —
+     * CLIRequestBuilder routes it into 'args' instead — so without this
+     * guard the task would silently fall through to printing YAML on
+     * stdout rather than writing a file, the opposite of what the operator
+     * asked for. Simulating the request shape CLIRequestBuilder would have
+     * produced (getVar('args') carrying the stray token), since the test
+     * harness builds HTTPRequest directly rather than through a real CLI
+     * invocation.
+     */
+    public function testBareArgIsRefusedRatherThanSilentlyIgnored(): void
+    {
+        $output = $this->runTask(['root' => ApiTestElement::class, 'args' => ['write']]);
+
+        $this->assertStringContainsString('Unrecognized argument(s): write', $output);
+        $this->assertStringNotContainsString(ApiTestElement::class . ':', $output);
+    }
+
+    /**
+     * `root=A, B` — a stray space after the comma — gets split by the shell
+     * into two argv tokens before this task ever sees it, so "B" lands in
+     * 'args' and would otherwise silently vanish rather than being scaffolded.
+     */
+    public function testStraySpaceInCommaListIsRefusedRatherThanSilentlyDroppingAValue(): void
+    {
+        $output = $this->runTask([
+            'root' => ApiTestElement::class . ',',
+            'args' => [Member::class],
+        ]);
+
+        $this->assertStringContainsString('Unrecognized argument(s): ' . Member::class, $output);
+    }
+
+    /**
+     * Repeating root= (carrying over branch 2's repeatable --root) is, on
+     * its own, indistinguishable from a single root= at the HTTPRequest
+     * level — CLIRequestBuilder's array_merge() keeps only the last one,
+     * with no trace in getVar('args'). The only place this is still visible
+     * is the raw $_SERVER['argv'] the real `sake` invocation left behind,
+     * which is what this guard reads directly.
+     */
+    public function testRepeatedRootArgvIsRefusedRatherThanSilentlyKeepingOnlyTheLast(): void
+    {
+        $this->originalArgv = $_SERVER['argv'] ?? [];
+        $_SERVER['argv'] = ['sake', 'dev/tasks/GenerateContentApiExposure', 'root=A', 'root=B'];
+
+        // What CLIRequestBuilder would have actually produced: only "B" in
+        // the merged request vars, matching the argv array above.
+        $output = $this->runTask(['root' => 'B']);
+
+        $this->assertStringContainsString('root= was passed 2 times', $output);
+    }
+
+    /**
+     * The same argv-based guard must not fire for a normal single-value
+     * invocation — confirms it's counting repeats, not merely reacting to
+     * argv being present at all.
+     */
+    public function testSingleRootArgvDoesNotTriggerTheRepeatGuard(): void
+    {
+        $this->originalArgv = $_SERVER['argv'] ?? [];
+        $_SERVER['argv'] = ['sake', 'dev/tasks/GenerateContentApiExposure', 'root=' . ApiTestElement::class];
+
+        $output = $this->runTask(['root' => ApiTestElement::class]);
+
+        $this->assertStringNotContainsString('was passed', $output);
+        $this->assertStringContainsString(ApiTestElement::class . ':', $output);
     }
 
     /**

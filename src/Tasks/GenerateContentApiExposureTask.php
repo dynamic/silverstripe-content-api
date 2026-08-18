@@ -16,10 +16,14 @@ use SilverStripe\Dev\BuildTask;
  * `ExposureScaffolder` (shared) rather than either adapter.
  *
  * Usage: `sake dev/tasks/GenerateContentApiExposure root=DNADesign\Elemental\Models\BaseElement`
- * (comma-separate for more than one root, e.g. `root=Page\Foo,Page\Bar`; add
- * `exclude=` the same way to skip one or more subtrees; add `write=1` to write
- * the output to the default generated-config path, or `write=<path>` for a
- * specific one, instead of printing to stdout).
+ * (comma-separate for more than one root — `root=Page\Foo,Page\Bar`, no space
+ * after the comma; add `exclude=` the same way to skip one or more subtrees;
+ * add `write=1` to write the output to the default generated-config path, or
+ * `write=<path>` for a specific one, instead of printing to stdout). Every
+ * value must be `key=value` — a bare flag, a repeated `root=`/`exclude=`, or
+ * a stray space in a comma list are all refused loudly rather than silently
+ * dropping part of what was asked for; see `run()`'s own comments for why
+ * each one is a real hazard, not just a style preference.
  */
 class GenerateContentApiExposureTask extends BuildTask
 {
@@ -45,6 +49,53 @@ class GenerateContentApiExposureTask extends BuildTask
 
     public function run($request)
     {
+        // Any CLI argument without a `key=value` shape lands in the
+        // framework's own 'args' bucket instead of a named var (confirmed
+        // against CLIRequestBuilder::cleanEnvironment()) — silently, with no
+        // error of its own. Two ways an operator hits this: a bare `write`
+        // flag carried over from branch 2's --write habit (never reaches
+        // getVar('write') at all, so the task would otherwise fall through
+        // to printing YAML instead of writing it); or a stray space in
+        // root=A, B (the shell splits it into two argv tokens, so only "A"
+        // reaches root= and "B" would otherwise be silently dropped). Refuse
+        // loudly rather than risk a scaffold that's silently missing a class
+        // the operator asked for — the whole safety model here is "a human
+        // reviews this diff," which only works if the diff is actually
+        // complete.
+        $strayArgs = (array) $request->getVar('args');
+
+        if ($strayArgs !== []) {
+            echo "Unrecognized argument(s): " . implode(', ', $strayArgs) . "\n";
+            echo "Every value must be key=value — use write=1 (not a bare write), and no space "
+                . "after a comma in root=/exclude= (root=A,B, not root=A, B).\n";
+
+            return;
+        }
+
+        // A THIRD way to hit the same silent-narrowing hazard: repeating
+        // root= or exclude= entirely, carrying over branch 2's repeatable
+        // --root/--exclude. Every repeat is individually well-formed
+        // key=value, so none of it lands in 'args' above — CLIRequestBuilder
+        // just array_merge()s them, and only the last survives with no
+        // signal at all. $_GET['args'] doesn't exist for a plain HTTP
+        // request, so this only ever fires for a real `sake` CLI invocation.
+        $rawArgv = (array) ($_SERVER['argv'] ?? []);
+
+        foreach (['root', 'exclude'] as $key) {
+            $count = count(array_filter(
+                $rawArgv,
+                fn ($arg) => is_string($arg) && str_starts_with($arg, $key . '=')
+            ));
+
+            if ($count > 1) {
+                echo "{$key}= was passed {$count} times — only the last one would be used, the "
+                    . "rest silently dropped. Comma-separate multiple values instead: "
+                    . "{$key}=A,B (not {$key}=A {$key}=B).\n";
+
+                return;
+            }
+        }
+
         $roots = $this->splitVar($request->getVar('root'));
         $excludes = $this->splitVar($request->getVar('exclude'));
 

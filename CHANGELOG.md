@@ -14,8 +14,9 @@ All notable changes to this project are documented here. Format loosely follows
   shared `ExposureScaffolder` business logic as branch `2` (2.2.0); only the entry point differs,
   this branch's legacy `run($request)` adapter translating `key=value` request vars instead of
   Symfony Console `--flag` options. `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer names
-  either branch's invocation syntax directly, so the shared class stays byte-identical across
-  both branches.
+  either branch's invocation syntax directly, so the file no longer has a reason to differ once
+  the pending merge-up resolves the add/add conflict this backport creates on branch `2` (which
+  still carries the old branch-2-specific banner text until then).
 
 ## [1.11.0] - 2026-08-18
 
