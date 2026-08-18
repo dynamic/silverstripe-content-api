@@ -14,6 +14,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedDeniedSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRestrictedRelatedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestHierarchyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
@@ -71,6 +72,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestFingerprintNonVersionedRelatedObject::class,
         ApiTestFingerprintRestrictedRelatedObject::class,
         ApiTestFingerprintRelatedDeniedSubclassObject::class,
+        ApiTestHierarchyObject::class,
     ];
 
     protected function setUp(): void

@@ -5,6 +5,18 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **(#89)** `PublishOrchestrator::findDescendantIDs()`'s descendant-cascade guard used to key on
+  `hasExtension(Hierarchy::class)`, but the cascade it protects against
+  (`SiteTree::onBeforeDelete()` deleting every current `AllChildren()`) only fires on `SiteTree`
+  itself, and only when `SiteTree::config()->get('enforce_strict_hierarchy')` is true (`Hierarchy`
+  declares no `onBeforeDelete`/`onAfterDelete`; `Versioned` only has `onAfterDelete`). A project
+  that sets `enforce_strict_hierarchy: false`, or a `Hierarchy`-extended non-`SiteTree` model, was
+  refused with `409 UNPUBLISH_STRANDS_DESCENDANTS` on every ordinary unpublish/archive and had to
+  pass `force: true` — whose entire meaning is "accept the loss" — for a cascade that was never
+  actually going to happen. The guard now checks `$record instanceof SiteTree &&
+  SiteTree::config()->get('enforce_strict_hierarchy')` instead.
+
 ## [1.7.0] - 2026-08-17
 
 ### Added
