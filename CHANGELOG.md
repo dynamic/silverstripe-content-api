@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-18
+
 ### Added
 - **(#119)** New `owns` publish mode on `PublishOrchestrator`, `records/$ClassRef/$ID/publish`
   (`{"mode": "owns"}`), `pages/$ID/convert`, and batch's `publish`/`defaultPublish`: publishes a
@@ -799,6 +801,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.9.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.8.0...1.9.0
 [1.8.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.7.0...1.8.0
 [1.7.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.6.0...1.7.0
 [1.6.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.5.0...1.6.0
