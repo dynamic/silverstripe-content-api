@@ -38,6 +38,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
 use Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\Assets\File;
+use SilverStripe\Assets\Image;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\FunctionalTest;
@@ -145,11 +147,35 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedChildSubclassObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedGrandchildObject::class, 'api_access', true);
-        // Deliberately NO api_access grant on SilverStripe\Assets\Image
-        // here — the #119 unpublish-owns shared-asset test
-        // (ApiTestOwnedAssetOwnerObject) only passes if the walk excludes
-        // Image before it's ever authorization-checked, not merely
-        // alongside a grant that happens to also be present.
+        // #186: the suite runs inside a host testbed whose own exposure YAML
+        // is loaded alongside this config (the SS6 testbed grants
+        // SilverStripe\Assets\Image its own api_access; the SS5 testbed
+        // doesn't) — a real class, unlike the ApiTest* stubs above, so a host
+        // project's grant leaks in and silently decides asset-permission
+        // assertions instead of the test. Pin both real asset classes here so
+        // AssetHandler::governingAssetClass()'s ancestry walk starts from a
+        // known state against a host's own `api_access` specifically —
+        // Config::modify() always overrides a host's YAML at runtime,
+        // regardless of load order. This does NOT neutralize a host that
+        // instead grants via `content_api_access` (checked first, wins over
+        // `api_access` unconditionally — see ClassRegistry::accessVerbs()) or
+        // via `discovery_roots`/`discovery_write_policy`; neither testbed
+        // does either for File/Image today, but a future one could reproduce
+        // #186 again through one of those paths instead. Also note:
+        // ContentApiGrantExtension reads api_access UNINHERITED for
+        // record-level grants, so this pin also zeroes File's/Image's own
+        // record-level canView/canEdit/canCreate grant for any test that
+        // doesn't set its own — invisible today (every asset test either
+        // re-grants or authenticates as adminUser), but a future test against
+        // a CONTENT_API_ACCESS-only service account would 403 FORBIDDEN_RECORD
+        // here, one step past the FORBIDDEN_CLASS this comment already
+        // explains. Individual tests then set their own grant when they need
+        // one (AssetsTest); the #119 unpublish-owns shared-asset test in
+        // PublishOrchestratorTest relies on the opposite — Image having NO
+        // grant at all, so the walk excludes it before authorization is ever
+        // checked.
+        Config::modify()->set(File::class, 'api_access', false);
+        Config::modify()->set(Image::class, 'api_access', false);
         Config::modify()->set(ApiTestOwnedAssetOwnerObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedPageObject::class, 'api_access', 'action');
         Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);

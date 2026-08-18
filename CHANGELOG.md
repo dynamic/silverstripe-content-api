@@ -18,6 +18,16 @@ All notable changes to this project are documented here. Format loosely follows
   the pending merge-up resolves the add/add conflict this backport creates on branch `2` (which
   still carries the old branch-2-specific banner text until then).
 
+### Fixed
+- **(#186)** `ContentApiTestCase` now pins `SilverStripe\Assets\File`/`Image` to
+  `api_access: false` in `setUp()`. Two `AssetsTest` cases failed on the SS6 testbed only: the
+  testbed's own exposure config grants `Image` its own `api_access` (added while closing #174),
+  which short-circuits `AssetHandler::governingAssetClass()`'s ancestry walk before either test's
+  `File`-only `Config::modify()` override was ever consulted — a host-config leak into the
+  module's own suite, not a `silverstripe/assets` version regression as originally suspected. The
+  same pin also restores the strength of the #119 unpublish-owns shared-asset regression test,
+  which previously depended on an absence `ContentApiTestCase` never actually enforced.
+
 ## [1.11.0] - 2026-08-18
 
 ### Added
