@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-17
+
 ### Added
 - **(#115, #118)** New `sake tasks:GenerateContentApiExposure` (`GenerateContentApiExposureTask`/
   `ExposureScaffolder`), introspecting one or more `--root` FQCNs (repeatable) and every concrete
@@ -115,6 +117,11 @@ All notable changes to this project are documented here. Format loosely follows
   opening another inside it per op — the exact shape `NestedTransactionManager`'s savepoint
   bookkeeping engages for) correctly rolls back both levels and leaves `transactionDepth()`
   balanced when an `Error` escapes the inner call.
+- **(#111)** `dnadesign/silverstripe-elemental` require-dev floor bumped `^6` → `^6.2`.
+  `tests/ResetsElementalTypesCacheTrait.php` calls `ElementalAreasExtension::reset()`, which
+  doesn't exist before 6.2 — `^6` let a project resolve an older 6.x where that method is
+  missing, a broken installable state. Branch `2` (SS6) only; branch `1`'s own `^5.2` floor is
+  unaffected.
 
 ### Docs
 - **(#147)** `docs/en/15_testing-and-contributing.md` now documents the actual pre-push gate:
@@ -740,6 +747,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[2.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.4.0...2.0.0
 [1.4.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.3.0...1.4.0
