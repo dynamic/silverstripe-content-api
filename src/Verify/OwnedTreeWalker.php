@@ -44,6 +44,11 @@ use SilverStripe\Versioned\Versioned;
  *   exists. Re-processing when a shallower path is found is still
  *   guaranteed to terminate: depth only ever decreases on a re-visit,
  *   bounded below by 0.
+ *
+ * The relation-list config it walks is a {@see walk()} parameter rather than
+ * hardcoded to `$owns` (#174) — `$cascade_duplicates` has the same shape and
+ * needs the same cycle/depth/diamond handling, and re-deriving this walk a
+ * second time for it is exactly the duplication #119 exists to stop.
  */
 class OwnedTreeWalker
 {
@@ -64,16 +69,26 @@ class OwnedTreeWalker
     public ?LoggerInterface $logger = null;
 
     /**
-     * @return array<int, array{record: DataObject, depth: int}> every owned
-     *   descendant, in walk order — the root itself is never included
+     * @param string $relationConfigKey which relation-list config to walk.
+     *   Defaults to `owns` — the publish/unpublish-cascade question this
+     *   class was built for. `cascade_duplicates` is the other real caller
+     *   (#174): `DataObject::duplicate()` consults exactly that config to
+     *   decide which relations to copy, so walking it answers "what did a
+     *   duplicate() just create underneath this record" with no risk of
+     *   drifting from what was actually created. The walk is otherwise
+     *   identical — both configs are `[relationName, ...]` lists over the
+     *   same relation types.
+     * @return array<int, array{record: DataObject, depth: int}> every
+     *   descendant reachable via that config, in walk order — the root
+     *   itself is never included
      */
-    public function walk(DataObject $root, ?int $maxDepth = null): array
+    public function walk(DataObject $root, ?int $maxDepth = null, string $relationConfigKey = 'owns'): array
     {
         $maxDepth ??= (int) static::config()->get('max_depth');
         $visited = [];
         $result = [];
 
-        $this->collect($root, 0, $maxDepth, $visited, $result);
+        $this->collect($root, 0, $maxDepth, $relationConfigKey, $visited, $result);
 
         return array_values($result);
     }
@@ -86,8 +101,14 @@ class OwnedTreeWalker
      *   a shallower path replaces a deeper entry for the same node —
      *   walk() re-indexes with array_values() once collection finishes
      */
-    protected function collect(DataObject $record, int $depth, int $maxDepth, array &$visited, array &$result): void
-    {
+    protected function collect(
+        DataObject $record,
+        int $depth,
+        int $maxDepth,
+        string $relationConfigKey,
+        array &$visited,
+        array &$result
+    ): void {
         $key = get_class($record) . ':' . $record->ID;
 
         if (isset($visited[$key]) && $visited[$key] <= $depth) {
@@ -121,17 +142,18 @@ class OwnedTreeWalker
             return;
         }
 
-        foreach ((array) $record->config()->get('owns') as $relationName) {
+        foreach ((array) $record->config()->get($relationConfigKey) as $relationName) {
             if (!$record->hasMethod($relationName)) {
-                // A misconfigured $owns entry (a typo, a relation that was
+                // A misconfigured entry (a typo, a relation that was
                 // renamed/removed) would otherwise silently prune this
                 // branch of the tree with no indication anything was
                 // wrong — worth a warning even though it isn't fatal to
                 // the walk itself.
                 $this->logger->warning(sprintf(
-                    '%s declares "%s" in $owns, but has no such method — that branch cannot be walked.',
+                    '%s declares "%s" in $%s, but has no such method — that branch cannot be walked.',
                     get_class($record),
-                    $relationName
+                    $relationName,
+                    $relationConfigKey
                 ));
 
                 continue;
@@ -141,7 +163,7 @@ class OwnedTreeWalker
 
             if ($related instanceof DataObject) {
                 if ($related->exists()) {
-                    $this->collect($related, $depth + 1, $maxDepth, $visited, $result);
+                    $this->collect($related, $depth + 1, $maxDepth, $relationConfigKey, $visited, $result);
                 }
 
                 continue;
@@ -150,7 +172,7 @@ class OwnedTreeWalker
             if (is_iterable($related)) {
                 foreach ($related as $child) {
                     if ($child instanceof DataObject) {
-                        $this->collect($child, $depth + 1, $maxDepth, $visited, $result);
+                        $this->collect($child, $depth + 1, $maxDepth, $relationConfigKey, $visited, $result);
                     }
                 }
             }

@@ -31,6 +31,19 @@ class ApiTestElement extends BaseElement implements TestOnly
         'PlainItems' => ApiTestPlainChildObject::class,
     ];
 
+    /**
+     * Mirrors real elements (ElementStatCounters => Stats,
+     * ElementPhotoGallery => Images, ElementCard => ElementLink): the config
+     * `DataObject::duplicate()` consults when no relation list is passed, and
+     * therefore the config that decides which children a template application
+     * creates. `Items` is versioned and `PlainItems` isn't, so #174's cascade
+     * gets both cases from one element.
+     */
+    private static array $cascade_duplicates = [
+        'Items',
+        'PlainItems',
+    ];
+
     private static array $extensions = [
         ExternalIdentifierExtension::class,
     ];

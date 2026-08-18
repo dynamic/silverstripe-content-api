@@ -3,10 +3,13 @@
 namespace Dynamic\ContentApi\Tests\Verify;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnsCycleObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Verify\OwnedTreeWalker;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Versioned\Versioned;
@@ -398,5 +401,43 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
             'a misconfigured $owns entry must not prevent a valid sibling from being walked'
         );
         $this->assertSame((int) $child->ID, (int) $result[0]['record']->ID);
+    }
+
+    /**
+     * #174: the relation-list config is a parameter, not hardcoded to
+     * `$owns`. `ApiTestElement` is the discriminating fixture — it declares
+     * `$cascade_duplicates` and no `$owns` at all, so the same record walks
+     * to nothing under the default key and to its children under the other.
+     * Everything else about the walk (cycle guard, depth cap, dropping
+     * unversioned records) is shared code and is covered above.
+     */
+    public function testWalksAnAlternateRelationConfigKey(): void
+    {
+        [$element, $item] = $this->inDraft(function () {
+            $element = ApiTestElement::create(['Title' => 'Element']);
+            $element->write();
+
+            $item = ApiTestElementItem::create(['Title' => 'Child', 'ElementID' => $element->ID]);
+            $item->write();
+
+            $plain = ApiTestPlainChildObject::create(['Title' => 'Unversioned', 'ElementID' => $element->ID]);
+            $plain->write();
+
+            return [$element, $item];
+        });
+
+        $this->assertCount(
+            0,
+            $this->inDraft(fn () => $this->walker()->walk($element)),
+            'ApiTestElement declares no $owns — the default key must find nothing'
+        );
+
+        $result = $this->inDraft(fn () => $this->walker()->walk($element, null, 'cascade_duplicates'));
+
+        // Only the versioned child: PlainItems is walked but, like any
+        // unversioned record, never emitted.
+        $this->assertCount(1, $result);
+        $this->assertSame((int) $item->ID, (int) $result[0]['record']->ID);
+        $this->assertSame(1, $result[0]['depth']);
     }
 }

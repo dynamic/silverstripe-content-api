@@ -291,10 +291,11 @@ class PublishOrchestrator
      * `CompositionService::publishAll()` uses this to pass the exact
      * area/elements/children it just wrote, so the walk's own coverage gap
      * can't silently regress what its old hand-rolled loop used to publish.
-     * `PageHandler::applyTemplate()` also passes the area/elements here, but
-     * for a narrower reason — see that method's own docblock for why its
-     * `$additional` isn't equivalent to `publishAll()`'s (it doesn't track
-     * writes, and doesn't include element children; #174). Deduplicated
+     * `PageHandler::applyTemplate()` passes an equivalent set, reached
+     * differently: it can't ask `TemplateApplicator` what it wrote, so it
+     * re-reads the area/elements from the page and walks each element's
+     * `$cascade_duplicates` — the same config `duplicate()` used to create
+     * those children (#174). Deduplicated
      * against the walked set, against itself, and against `$root` (a caller
      * passing the root here is very unlikely given the two current call
      * sites, but would otherwise both double-authorize and double-publish

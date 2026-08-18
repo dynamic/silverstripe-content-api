@@ -120,7 +120,14 @@ without error.
 ## `POST pages/$ID/apply-template`
 
 Applies an `elemental-templates` `Template`'s element composition to a page. Requires
-`dynamic/silverstripe-elemental-templates` (`501 FEATURE_UNAVAILABLE` otherwise).
+`dynamic/silverstripe-elemental-templates` (`501 FEATURE_UNAVAILABLE` otherwise). Body:
+`{"templateId": 3, "publish": "none|recursive"}`.
+
+`"recursive"` publishes the page, its elemental area, every element, and each element's own
+has_many children — the children `duplicate()` created via `$cascade_duplicates` (#174). Every one
+of those classes is authorization-checked (`action` verb + `canEdit()`) before anything is
+written, and the whole call, template write included, rolls back if one is refused. See
+[Publishing and stages](10_publishing-and-stages.md).
 
 ## `POST batch`, `POST compositions/page`
 

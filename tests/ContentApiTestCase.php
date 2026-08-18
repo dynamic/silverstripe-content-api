@@ -28,6 +28,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
+use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
 use Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
@@ -74,6 +75,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestFingerprintRestrictedRelatedObject::class,
         ApiTestFingerprintRelatedDeniedSubclassObject::class,
         ApiTestHierarchyObject::class,
+        ApiTestTemplateModel::class,
     ];
 
     protected function setUp(): void
