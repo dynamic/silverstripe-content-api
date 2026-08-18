@@ -49,7 +49,11 @@ class ApiTestTemplateApplicator implements TestOnly
         $sourceArea = $template->Elements();
 
         if (!$targetArea->exists() || !$sourceArea->exists()) {
-            return ['success' => false, 'message' => 'No elemental area.'];
+            return ['success' => false, 'message' => sprintf(
+                'No elemental area (target: %s, source: %s).',
+                $targetArea->exists() ? 'ok' : 'missing',
+                $sourceArea->exists() ? 'ok' : 'missing'
+            )];
         }
 
         $sort = (int) $targetArea->Elements()->max('Sort');

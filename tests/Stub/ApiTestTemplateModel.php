@@ -10,10 +10,12 @@ use SilverStripe\Versioned\Versioned;
 /**
  * Stand-in for `Dynamic\ElementalTemplates\Models\Template` (#174).
  *
- * That package is `suggest`ed, never installed in this module's test
- * environment, so `apply-template`'s publish behavior had no test coverage of
- * any kind before this stub existed. `PageHandler.template_class` points here
- * for the duration of those tests.
+ * That package is `suggest`ed — absent from the environment this module's SS5
+ * suite runs in, present in the SS6 testbed — so `apply-template`'s publish
+ * behavior had no test coverage of any kind before this stub existed.
+ * `PageHandler.template_class` points here for the duration of those tests,
+ * regardless of whether the real package is installed, so the tests don't
+ * vary with the environment.
  *
  * Mirrors only what the endpoint touches: a `has_one` `Elements` ElementalArea
  * holding the source elements to be duplicated onto a page. Field-for-field

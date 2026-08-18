@@ -15,6 +15,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateApplicator;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Versioned\Versioned;
 
 class PageActionsTest extends ContentApiTestCase
 {
@@ -252,11 +253,24 @@ class PageActionsTest extends ContentApiTestCase
     }
 
     /**
-     * Points `apply-template` at the test stubs. The real
-     * dynamic/silverstripe-elemental-templates package is `suggest`ed and
-     * never installed here, so without this the endpoint short-circuits on
-     * its own `class_exists()` gate and nothing below it has ever run under
-     * test (#174).
+     * Points `apply-template` at the test stubs unconditionally, so these
+     * tests behave the same wherever they run (#174).
+     *
+     * That matters more than it looks: `dynamic/silverstripe-elemental-
+     * templates` is `suggest`ed, absent from the environment this module's
+     * SS5 suite runs in but present in the SS6 testbed. Before the config
+     * seam existed the endpoint short-circuited on its own `class_exists()`
+     * gate wherever the package was missing, which is why none of its
+     * publish behavior had ever been exercised by any test.
+     *
+     * Overriding the class names does NOT make the two branches' environments
+     * identical, and shouldn't be read as doing so: where the package IS
+     * installed, its `_config/skeleton-config.yml` also attaches
+     * `BaseElementDataExtension` to `BaseElement` and its own `SiteTreeExtension`
+     * to `SiteTree`, both of which these stubs inherit. That surface is real on
+     * such a project, so it's left in place rather than stripped — but it means
+     * a failure seen on one branch and not the other is worth checking against
+     * those extensions before assuming the difference is Elemental's.
      */
     private function useTemplateStubs(): void
     {
@@ -269,39 +283,72 @@ class PageActionsTest extends ContentApiTestCase
      * (`Items`) and an unversioned (`PlainItems`) has_many child, both
      * listed in `ApiTestElement::$cascade_duplicates` — so applying it
      * duplicates the children too, which is the shape #174 is about.
+     *
+     * The draft wrap isn't strictly required here — `ApiTestTemplateModel`
+     * carries no `ElementalAreasExtension`, so the stage guard described on
+     * {@see blockPage()} never runs for it and its area is hand-assigned. Kept
+     * for consistency with every other write in this file.
      */
     private function templateWithChildBearingElement(): ApiTestTemplateModel
     {
-        $template = ApiTestTemplateModel::create(['Title' => 'Hero template']);
-        $template->write();
+        return $this->inDraft(function () {
+            $template = ApiTestTemplateModel::create(['Title' => 'Hero template']);
+            $template->write();
 
-        $area = ElementalArea::create();
-        $area->write();
+            $area = ElementalArea::create();
+            $area->write();
 
-        $template->ElementsID = $area->ID;
-        $template->write();
+            $template->ElementsID = $area->ID;
+            $template->write();
 
-        $element = ApiTestElement::create(['Title' => 'Source element', 'Intro' => 'Hello']);
-        $element->ParentID = $area->ID;
-        $element->write();
+            $element = ApiTestElement::create(['Title' => 'Source element', 'Intro' => 'Hello']);
+            $element->ParentID = $area->ID;
+            $element->write();
 
-        $item = ApiTestElementItem::create(['Title' => 'Versioned child']);
-        $item->ElementID = $element->ID;
-        $item->write();
+            $item = ApiTestElementItem::create(['Title' => 'Versioned child']);
+            $item->ElementID = $element->ID;
+            $item->write();
 
-        $plain = ApiTestPlainChildObject::create(['Title' => 'Unversioned child']);
-        $plain->ElementID = $element->ID;
-        $plain->write();
+            $plain = ApiTestPlainChildObject::create(['Title' => 'Unversioned child']);
+            $plain->ElementID = $element->ID;
+            $plain->write();
 
-        return $template;
+            return $template;
+        });
     }
 
+    /**
+     * Written in an explicit DRAFT stage, which Elemental 6 requires before
+     * it will create the page's `ElementalArea` at all:
+     * `ElementalAreasExtension::allowAlteringElementalArea()` gates
+     * `ensureElementalAreasExist()` on `Versioned::get_stage() === DRAFT`.
+     *
+     * Under PHPUnit the ambient stage isn't Live, it's *unset* —
+     * `SapphireTest` never sets one and `Versioned::$reading_mode` defaults
+     * to null — so the guard is simply false and the page is written with no
+     * area, no error, and nothing to point at. Elemental 5 has no such guard,
+     * so a bare `write()` happens to work there and this looks unnecessary
+     * until the suite is run on the other branch.
+     *
+     * Also just accurate: every content-api write path operates in draft.
+     */
     private function blockPage(): ApiTestBlockPage
     {
-        $page = ApiTestBlockPage::create(['Title' => 'Template target']);
-        $page->write();
+        return $this->inDraft(function () {
+            $page = ApiTestBlockPage::create(['Title' => 'Template target']);
+            $page->write();
 
-        return $page;
+            return $page;
+        });
+    }
+
+    private function inDraft(callable $callback): mixed
+    {
+        return Versioned::withVersionedMode(function () use ($callback) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            return $callback();
+        });
     }
 
     /**
@@ -432,9 +479,34 @@ class PageActionsTest extends ContentApiTestCase
      * The `class_exists()` gate is unchanged by making the class names
      * config — a project without the package still gets FEATURE_UNAVAILABLE
      * rather than a fatal on a missing class.
+     *
+     * Points the config at deliberately absent classes rather than relying on
+     * the real package being uninstalled: it isn't installed alongside this
+     * module's SS5 test run, but it IS present in the SS6 testbed, where
+     * relying on its absence made this test assert nothing at all.
+     *
+     * Both operands get their own case. The gate is
+     * `!class_exists($templateClass) || !class_exists($applicatorClass)`, so
+     * absenting only the first short-circuits and the second is never
+     * evaluated — a half-installed integration (or a typo in one of the two
+     * config values) would otherwise be covered by nothing.
+     *
+     * The doc-comment `@dataProvider` is deliberate, not overlooked
+     * modernization: PHPUnit deprecates it in favour of `#[DataProvider]`,
+     * but attributes need PHPUnit 10+ and branch `1` runs 9.6 (branch `2`
+     * runs 11.5). The attribute form would break this branch outright, so the
+     * deprecation notice stays until branch `1`'s PHPUnit floor moves.
+     * `EnvironmentGateTest` has the same constraint.
+     *
+     * @dataProvider provideMissingTemplateClassConfig
      */
-    public function testApplyTemplateWithoutThePackageIsFeatureUnavailable(): void
-    {
+    public function testApplyTemplateWithoutThePackageIsFeatureUnavailable(
+        string $configKey,
+        string $missingClass
+    ): void {
+        $this->useTemplateStubs();
+        Config::modify()->set(PageHandler::class, $configKey, $missingClass);
+
         $page = $this->blockPage();
 
         $response = $this->apiPost("pages/{$page->ID}/apply-template", [
@@ -442,6 +514,14 @@ class PageActionsTest extends ContentApiTestCase
         ], $this->adminToken);
 
         $this->assertErrorCode($response, 'FEATURE_UNAVAILABLE', 501);
+    }
+
+    public static function provideMissingTemplateClassConfig(): array
+    {
+        return [
+            'template model missing' => ['template_class', 'Dynamic\\ContentApi\\Tests\\NoSuchTemplate'],
+            'applicator missing' => ['template_applicator_class', 'Dynamic\\ContentApi\\Tests\\NoSuchApplicator'],
+        ];
     }
 
     /**
@@ -462,13 +542,22 @@ class PageActionsTest extends ContentApiTestCase
 
         $page = $this->blockPage();
 
-        $existing = ApiTestElement::create(['Title' => 'Already here']);
-        $existing->ParentID = $page->ElementalArea()->ID;
-        $existing->write();
+        // In draft for the same reason every other write in this file is —
+        // the stage guard currently lives only in ElementalAreasExtension,
+        // but writing elemental records at the ambient (unset) stage is the
+        // exact thing that broke on branch 2, and leaving one place doing it
+        // invites the next silent divergence.
+        $existingChild = $this->inDraft(function () use ($page) {
+            $existing = ApiTestElement::create(['Title' => 'Already here']);
+            $existing->ParentID = $page->ElementalArea()->ID;
+            $existing->write();
 
-        $existingChild = ApiTestElementItem::create(['Title' => 'Pre-existing child']);
-        $existingChild->ElementID = $existing->ID;
-        $existingChild->write();
+            $child = ApiTestElementItem::create(['Title' => 'Pre-existing child']);
+            $child->ElementID = $existing->ID;
+            $child->write();
+
+            return $child;
+        });
 
         $this->assertFalse($existingChild->isPublished(), 'precondition: draft only');
 
