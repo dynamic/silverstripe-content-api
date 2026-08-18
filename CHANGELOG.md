@@ -5,6 +5,47 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#119)** New `owns` publish mode on `PublishOrchestrator`, `records/$ClassRef/$ID/publish`
+  (`{"mode": "owns"}`), `pages/$ID/convert`, and batch's `publish`/`defaultPublish`: publishes a
+  record plus every descendant reachable through its `$owns` config
+  (`Dynamic\ContentApi\Verify\OwnedTreeWalker`, built for #120's parity endpoint), authorization-
+  checking every one of them (class `action` verb + `canEdit()`) before writing anything — the
+  same check-everything-first contract `subtree` already has, over an owned-relation graph
+  instead of a `Hierarchy` tree. Takes `dryRun` (preview the would-publish set); `liveOnly` is
+  `subtree`-only and refused with `400 PAYLOAD_INVALID` on `owns`. Spec bumped to `v1.14`.
+
+### Fixed
+- **(#168, closing the last gap #114 left open, see #119)** `CompositionService::publishAll()`
+  and `PageHandler::applyTemplate()` used to publish a composition's/template's elemental area,
+  every element, and every element child via `publish($record, 'single', $member)` — `single`
+  mode performs no authorization at all, and nothing upstream checked the `action` verb for those
+  classes either, since element writes always pass `"publish": "none"` explicitly. Both call
+  sites now route through the new `PublishOrchestrator::publishOwnedTree()` instead of their own
+  hand-rolled publish loops, closing the gap the same way #114 closed it for each cascade's root
+  record. `PageHandler::applyTemplate()` is now also wrapped in a `DbTransaction` — previously its
+  publish step could never fail, so nothing rolled it back; now that it can (the same
+  authorization check as everywhere else), a mid-cascade refusal rolls back the template write
+  too, matching how `compose()` already behaves. `publishOwnedTree()`'s `$additional` parameter
+  also now refuses a non-`DataObject`/not-yet-written entry loudly (`400 PAYLOAD_INVALID`) instead
+  of silently dropping it, and logs a warning for the one genuinely expected drop case (an
+  unversioned owned relation, e.g. a plain-`DataObject` has_many child).
+
+  **Behavior change**: any class in the walked `$owns` cascade — not just elements — that grants
+  `create`/`update` in `api_access` but withholds `action` now gets `403 FORBIDDEN_CLASS` on a
+  composition or apply-template publish, where it previously published silently with no error at
+  all. This reaches further than "elements": `File`/`Image` are versioned, so an owned image
+  relation (a common pattern for image-bearing elements) is checked too, and asset classes are the
+  ones most likely to be configured read/create-only today, since publishing an asset was never
+  previously something this module authorization-checked. Fix: grant `action` on every affected
+  class, or pass `publish: "none"` if the cascade was never meant to publish it.
+
+  **Known gap, not fixed here (#174)**: `PageHandler::applyTemplate()`'s cascade doesn't include
+  each element's own has_many children the way `CompositionService::publishAll()`'s does — if
+  `dynamic/silverstripe-elemental-templates`' `TemplateApplicator` duplicates such children, they
+  can stay on draft after a `"recursive"` apply. Not verified either way: that package is optional
+  and isn't a dev dependency of this module, so its actual output shape can't be checked here.
+
 ## [1.8.0] - 2026-08-18
 
 ### Fixed

@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Publish;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\PermissionPolicy;
+use Dynamic\ContentApi\Verify\OwnedTreeWalker;
 use Psr\Log\LoggerInterface;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Injector\Injectable;
@@ -22,18 +23,24 @@ use SilverStripe\Versioned\Versioned;
  * Publish modes: `none` (leave on draft), `single` (publishSingle),
  * `recursive` (publishRecursive — does NOT cascade into a page's owned
  * elemental blocks, confirmed identical on branches `1` and `2` (#91), so
- * composition-level cascades publish each written element explicitly in
- * M4), `subtree` (publishes the record, then every draft tree child,
+ * composition-level cascades used to publish each written element
+ * explicitly by hand instead — see `owns` below, which replaced that),
+ * `subtree` (publishes the record, then every draft tree child,
  * depth-first — publishRecursive() does NOT cascade to `Hierarchy` tree
  * children either; it does cascade to other owned relations, just not the
  * Elemental one per above; a caller restructuring a 30-page subtree needs
- * `subtree` instead of 30 individual `single` calls). See #71 and
- * `docs/en/10_publishing-and-stages.md`.
+ * `subtree` instead of 30 individual `single` calls), `owns` (publishes
+ * every {@see OwnedTreeWalker}-reachable descendant, then the record
+ * itself — #119's publish half, see {@see publishOwnedTree()}). See #71
+ * and `docs/en/10_publishing-and-stages.md`.
  *
- * `subtree` alone also authorization-checks every descendant it visits
- * (#90), and takes `$liveOnly` (skip a descendant branch — no publish, no
- * further recursion — that isn't already live, #102) and `$dryRun`
- * (preview the would-publish set without writing) via {@see publish()}.
+ * `subtree` authorization-checks every descendant it visits (#90), and
+ * takes `$liveOnly` (skip a descendant branch — no publish, no further
+ * recursion — that isn't already live, #102) and `$dryRun` (preview the
+ * would-publish set without writing) via {@see publish()}. `owns`
+ * authorization-checks every owned descendant the same way (#168) and
+ * also takes `$dryRun`, but not `$liveOnly` — meaningless for an owned
+ * (non-tree) cascade.
  */
 class PublishOrchestrator
 {
@@ -41,11 +48,14 @@ class PublishOrchestrator
 
     private static array $dependencies = [
         'policy' => '%$' . PermissionPolicy::class,
+        'ownedTreeWalker' => '%$' . OwnedTreeWalker::class,
     ];
 
     public ?PermissionPolicy $policy = null;
 
-    public const MODES = ['none', 'single', 'recursive', 'subtree'];
+    public ?OwnedTreeWalker $ownedTreeWalker = null;
+
+    public const MODES = ['none', 'single', 'recursive', 'subtree', 'owns'];
 
     /**
      * Publish modes valid at the whole-composition level. `single` is
@@ -73,22 +83,27 @@ class PublishOrchestrator
 
     /**
      * Apply a publish mode to a freshly written record. No-op for `none` and
-     * for unversioned classes. `$member` gates `subtree`'s per-descendant
-     * authorization (see {@see publishSubtree()}) — unused by the other
-     * modes, whose target record the caller has already checked before
-     * calling here, but required uniformly so every call site states who's
-     * publishing rather than only the ones that currently need it.
+     * for unversioned classes. `$member` gates `subtree`'s and `owns`'s
+     * per-descendant authorization (see {@see publishSubtree()},
+     * {@see publishOwnedTree()}) — unused by the other modes, whose target
+     * record the caller has already checked before calling here, but
+     * required uniformly so every call site states who's publishing rather
+     * than only the ones that currently need it.
      *
-     * `$liveOnly` and `$dryRun` apply to `subtree` only; both are ignored
-     * for the single-record modes, where they'd be meaningless (a mode
-     * that publishes exactly the one already-checked record you asked for
-     * has no descendants to filter or preview).
+     * `$dryRun` applies to `subtree` and `owns`; ignored for the other
+     * modes, where it'd be meaningless (a mode that publishes exactly the
+     * one already-checked record you asked for has no descendants to
+     * preview). `$liveOnly` applies to `subtree` only — `owns` walks an
+     * owned-relation graph, not a `Hierarchy` tree, so "skip a branch
+     * that isn't already live" doesn't translate; a caller who passes it
+     * with `owns` is refused at the handler level rather than silently
+     * ignored (see `RecordActionsHandler`).
      *
      * @return array<int, array{id: int, className: string}>|null a preview
      *   entry per record touched (or, under `dryRun`, would be touched)
-     *   when `$mode` is `subtree`; `null` for every other mode
+     *   when `$mode` is `subtree` or `owns`; `null` for every other mode
      * @throws ApiError FORBIDDEN_CLASS | FORBIDDEN_RECORD if `$member` may
-     *   not act on a descendant `subtree` would otherwise publish
+     *   not act on a descendant `subtree`/`owns` would otherwise publish
      */
     public function publish(
         DataObject $record,
@@ -105,6 +120,10 @@ class PublishOrchestrator
 
         if ($mode === 'subtree') {
             return $this->publishSubtree($record, $member, $liveOnly, $dryRun);
+        }
+
+        if ($mode === 'owns') {
+            return $this->publishOwnedTree($record, $member, [], $dryRun);
         }
 
         if ($mode === 'recursive') {
@@ -183,15 +202,16 @@ class PublishOrchestrator
      * already been made — so those checks live at each call site, not here.
      *
      * NOT covered by #114, and deliberately out of its scope: `publishAll()`
-     * also publishes the composition's *area* and every *element* (and
-     * element child) via `publish($record, 'single', $member)` — 'single'
-     * mode performs no authorization at all, and nothing upstream checks
-     * `action` for those classes either (their own writes always pass
-     * `"publish": "none"` explicitly, so `RecordWriter::write()`'s #114
-     * check never fires for them). This is the owned-relation cascade #119
-     * exists to formalize with real authorization, not a single root
-     * record's own verb — closing it here would be scope creep onto that
-     * issue, not a #114 fix. Tracked separately as #168.
+     * used to also publish the composition's *area* and every *element*
+     * (and element child) via `publish($record, 'single', $member)` —
+     * 'single' mode performs no authorization at all, and nothing upstream
+     * checked `action` for those classes either (their own writes always
+     * pass `"publish": "none"` explicitly, so `RecordWriter::write()`'s
+     * #114 check never fired for them). That was the owned-relation
+     * cascade #119 formalizes with real authorization — tracked as #168,
+     * closed by routing both `CompositionService::publishAll()` and
+     * `PageHandler::applyTemplate()` through {@see publishOwnedTree()}
+     * instead of their own hand-rolled loops.
      *
      * `$liveOnly` (#102) skips a descendant branch entirely — no
      * collecting it as a target, no recursing into its own children, no
@@ -254,6 +274,141 @@ class PublishOrchestrator
             'id' => (int) $record->ID,
             'className' => get_class($record),
         ];
+    }
+
+    /**
+     * Publish `$root` plus every {@see OwnedTreeWalker}-reachable owned
+     * descendant, with every one of them authorization-checked first —
+     * #119's publish half, closing #168.
+     *
+     * `$additional` names records outside the walked `$owns` graph that
+     * should be published (and authorization-checked) alongside it. This is
+     * load-bearing, not defensive padding: Elemental's `ElementalPageExtension`
+     * declares `$owns = ['ElementalArea']` and `ElementalArea` declares
+     * `$owns = ['Elements']`, but `BaseElement` itself declares no `$owns`
+     * at all — so an element's own has_many children (e.g. `ElementFeatures`
+     * → `FeatureObject`) are unreachable by walk unless a project opts in.
+     * `CompositionService::publishAll()` uses this to pass the exact
+     * area/elements/children it just wrote, so the walk's own coverage gap
+     * can't silently regress what its old hand-rolled loop used to publish.
+     * `PageHandler::applyTemplate()` also passes the area/elements here, but
+     * for a narrower reason — see that method's own docblock for why its
+     * `$additional` isn't equivalent to `publishAll()`'s (it doesn't track
+     * writes, and doesn't include element children; #174). Deduplicated
+     * against the walked set, against itself, and against `$root` (a caller
+     * passing the root here is very unlikely given the two current call
+     * sites, but would otherwise both double-authorize and double-publish
+     * it) — all on `ClassName:ID`.
+     *
+     * Every non-`$root` entry in `$additional` must be a `DataObject` that
+     * `exists()` — anything else means the caller passed something it
+     * shouldn't have (a wrong array shape, or a record it thinks it wrote
+     * but didn't), and is refused loudly (`PAYLOAD_INVALID`) rather than
+     * silently dropped, so that kind of bug can't masquerade as "nothing to
+     * publish." An unversioned entry is the one genuinely expected case
+     * (e.g. Essentials' `StatCounter`, a plain `DataObject` has_many child)
+     * — dropped with a logged warning, matching {@see OwnedTreeWalker}'s
+     * own handling of a misconfigured `$owns` entry.
+     *
+     * Same check-everything-before-writing-anything shape as
+     * {@see publishSubtree()}: every target is authorization-checked
+     * (class `action` verb + `canEdit()`, {@see assertDescendantPublishable()})
+     * before any `publishSingle()` call, so a gap discovered on target #12
+     * can't leave #1-11 live with no way to undo it. `$root` itself is
+     * NOT checked here — same contract as {@see collectSubtreeTargets()}:
+     * the root is assumed to be the caller's own already-authorized
+     * target (checked at the call site, e.g. `RecordWriter::write()`'s
+     * #114 `action`-verb gate, or `CompositionService::compose()`'s own
+     * page-level check). Callers should wrap the whole call in a
+     * transaction if a mid-cascade authorization failure shouldn't leave
+     * an earlier, unrelated write persisted — see `CompositionHandler`
+     * and `PageHandler::applyTemplate()`, both of which do.
+     *
+     * Descendants publish first, in walk order, then `$root` itself last
+     * via `publishSingle()` — never `publishRecursive()`, since the walk
+     * is already a superset of what `publishRecursive()` reaches (#71
+     * established `publishRecursive()` misses Elemental entirely) and
+     * mixing the two would double-publish with ambiguous ordering.
+     *
+     * `$root` itself must be `Versioned`. `RecordActionsHandler`/
+     * `PageHandler::convert()` reach this via `publish()`'s own dispatch,
+     * which already guards on that before ever reaching the `owns` branch —
+     * but `CompositionService::publishAll()` and `PageHandler::applyTemplate()`
+     * call this method directly, bypassing that guard entirely, so it is
+     * load-bearing for them, not merely repeated for a hypothetical future
+     * caller.
+     *
+     * @param DataObject[] $additional
+     * @return array<int, array{id: int, className: string}> every record
+     *   published (or, under `dryRun`, that would be published) — `$root`
+     *   included, last
+     * @throws ApiError PAYLOAD_INVALID | FORBIDDEN_CLASS | FORBIDDEN_RECORD
+     */
+    public function publishOwnedTree(
+        DataObject $root,
+        Member $member,
+        array $additional = [],
+        bool $dryRun = false
+    ): array {
+        $this->assertVersioned($root, 'publish the owned tree of');
+
+        $targets = [];
+
+        foreach ($this->ownedTreeWalker->walk($root) as $entry) {
+            $key = get_class($entry['record']) . ':' . $entry['record']->ID;
+            $targets[$key] = $entry['record'];
+        }
+
+        foreach ($additional as $record) {
+            if (!$record instanceof DataObject) {
+                throw new ApiError(
+                    ErrorCode::PAYLOAD_INVALID,
+                    sprintf(
+                        '$additional must contain only DataObject instances, got %s.',
+                        is_object($record) ? get_class($record) : gettype($record)
+                    )
+                );
+            }
+
+            if (!$record->exists()) {
+                throw new ApiError(
+                    ErrorCode::PAYLOAD_INVALID,
+                    sprintf('$additional contains an unsaved %s — every target must already exist.', get_class($record))
+                );
+            }
+
+            if (!$record->hasExtension(Versioned::class)) {
+                Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+                    '%s #%d passed to publishOwnedTree() via $additional is not Versioned — skipped.',
+                    get_class($record),
+                    $record->ID
+                ));
+
+                continue;
+            }
+
+            $key = get_class($record) . ':' . $record->ID;
+            $targets[$key] ??= $record;
+        }
+
+        unset($targets[get_class($root) . ':' . $root->ID]);
+
+        foreach ($targets as $target) {
+            $this->assertDescendantPublishable($target, $member);
+        }
+
+        if (!$dryRun) {
+            foreach ($targets as $target) {
+                $target->publishSingle();
+            }
+
+            $root->publishSingle();
+        }
+
+        $entries = array_map(fn (DataObject $target) => $this->subtreeEntry($target), array_values($targets));
+        $entries[] = $this->subtreeEntry($root);
+
+        return $entries;
     }
 
     /**

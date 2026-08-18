@@ -39,11 +39,13 @@ Two independent checks, both against the same draft read:
   itself.
 - **Owned tree** (`?include=owned`, the default — `?include=none` skips it; `?depth=N` caps how
   far it recurses, and rejects a non-numeric value rather than silently disabling the whole walk)
-  — every record this one `$owns`, recursively, via the new
-  `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the module's first `$owns` walker; no class in
-  `src/` declares `$owns` anywhere else — Elemental's own publish cascade is hand-rolled, not
-  `$owns`-driven — see "`publishRecursive()` does not cascade to elements" below). Reports each
-  owned descendant's live/draft status and
+  — every record this one `$owns`, recursively, via `Dynamic\ContentApi\Verify\OwnedTreeWalker`
+  (the module's first `$owns` walker, built for this endpoint; no class in `src/` declares `$owns`
+  itself). The `owns` publish mode (see [Publish modes](#publish-modes)) now walks the same
+  `$owns` chain to publish it, so Elemental's page→area→elements cascade *is* `$owns`-driven for
+  that part — only an element's own has_many children still aren't (`BaseElement` declares no
+  `$owns`; see [Publish modes](#publish-modes) for how the publish side works around that with
+  `$additional`). Reports each owned descendant's live/draft status and
   depth, **not** a field-level diff of each one (only the root gets that). Walks *through* an
   unversioned intermediate record without reporting it (it has no draft/live state of its own),
   matching `RecursivePublishable`'s real recursion behavior rather than pruning the whole branch
@@ -86,7 +88,7 @@ compositions endpoints when you need explicit, predictable draft-first publish s
 
 ## Publish modes
 
-Four modes, used by batch ops and (with a restriction — see below) compositions:
+Five modes, used by batch ops and (with a restriction — see below) compositions:
 
 | Mode | Effect |
 |---|---|
@@ -94,44 +96,75 @@ Four modes, used by batch ops and (with a restriction — see below) composition
 | `single` | `publishSingle()` |
 | `recursive` | `publishRecursive()` |
 | `subtree` | `publishSingle()`, then every draft `Hierarchy` tree child, depth-first (see below) |
+| `owns` | `publishSingle()` on every `$owns`-reachable descendant, then the record itself (see below) |
 
 Applied via `PublishOrchestrator`, the single place every stage transition in the module goes
 through — publish/unpublish/archive/delete all route through it rather than duck-typing
 `hasMethod('publishSingle')` at each call site, so "is this record publishable" can't diverge
 between call sites. No-op for `none` and for unversioned classes. `subtree` walks tree children
 only for a class that carries the `Hierarchy` extension (`SiteTree` and its subclasses) — for
-anything else it's equivalent to `single`.
+anything else it's equivalent to `single`. `owns` walks the class's own `$owns` config (via
+`OwnedTreeWalker`, the same primitive [draft/live parity](#draftlive-parity) uses) — for a class
+with nothing declared there, it's likewise equivalent to `single`.
 
-`subtree` alone also takes two options (see [Publish/unpublish/archive
-actions](#publishunpublisharchive-actions) for how to pass them):
+`subtree` and `owns` both take `dryRun` (see [Publish/unpublish/archive
+actions](#publishunpublisharchive-actions) for how to pass it); `subtree` alone also takes
+`liveOnly`:
 
-- **Authorization**: every descendant `subtree` visits is checked (class `action` verb +
+- **Authorization**: every descendant either mode visits is checked (class `action` verb +
   `canEdit()`) — a token scoped to `Page` can't reach a descendant of a subclass whose own
   `api_access` only grants `read`, and a member without CMS access to a specific child page can't
-  publish it by publishing an ancestor they can edit instead. The whole subtree is checked
-  *before* anything is written — a permission gap on descendant #12 refuses the entire call
-  rather than leaving descendants #1-11 live with no way to undo it. The *root* record itself is
-  assumed to already be authorized by whichever call site is invoking `publish()`. Fixed for
-  every root-record call site (#114): `RecordActionsHandler` checks `action` directly;
+  publish it by publishing an ancestor they can edit instead. The whole walk is checked *before*
+  anything is written — a permission gap on descendant #12 refuses the entire call rather than
+  leaving descendants #1-11 live with no way to undo it. The *root* record itself is assumed to
+  already be authorized by whichever call site is invoking `publish()`. Fixed for every
+  root-record call site (#114): `RecordActionsHandler` checks `action` directly;
   `RecordWriter::write()` checks the class-level `action` verb whenever the payload's `publish`
   key isn't `none`; `PageHandler::convert()`/`CompositionService::convertPage()` check the
   *target* class's `action` verb under the same condition, not just the *pre-conversion*
   record's `update`; and `CompositionService::compose()` itself checks the page's own `action`
-  verb before `publishAll()`, whether or not `convertTo` was used. See
-  `PublishOrchestrator::collectSubtreeTargets()`'s docblock — including the paragraph naming
-  what's still **not** covered: a composition's *area* and *elements* publish via `publish()`'s
-  `single` mode with no authorization check at all (the same gap exists in
-  `PageHandler::applyTemplate()`'s own `publishSingle()` calls), tracked as #168, a gap #119's
-  owned-relation cascade work is scoped to close, not this issue.
-- **`liveOnly`**: skip a descendant branch — no publish, no recursing into its own children —
-  when it isn't already live. See the resurrection-risk warning below.
+  verb before `publishAll()`, whether or not `convertTo` was used. `owns`' own descendant
+  authorization (#119/#168) closed the last gap in this family: `CompositionService::publishAll()`
+  and `PageHandler::applyTemplate()` used to publish a composition's area/elements/children via
+  `publish($record, 'single', $member)`, which performs no authorization at all — nothing upstream
+  checked the `action` verb for those classes either, since their own writes always pass
+  `"publish": "none"` explicitly. Both call sites now route through
+  `PublishOrchestrator::publishOwnedTree()` instead, the same authorized primitive `owns` mode
+  itself dispatches to.
+
+  **Behavior change, not a compatibility knob.** The walk checks every `$owns`-reachable class,
+  not just elements — the blast radius is wider than "element type" alone. `File`/`Image` are
+  versioned, so any page or element declaring `private static $owns = ['SomeImageRelation']` (a
+  common pattern for image-bearing elements, and the standard Elemental "add an asset" wiring)
+  pulls `SilverStripe\Assets\File`/`Image` into the checked set too — and asset classes are the
+  ones most likely to be configured `read`/`create`-only in a project's exposure config, since
+  publishing an asset was never previously a thing this module authorization-checked. A project
+  whose element, area, page, or **owned asset** classes grant `create`/`update` in `api_access`
+  but withhold `action` will start getting `403 FORBIDDEN_CLASS` on a composition or
+  apply-template call with a publishing mode, where it previously published silently. Grant
+  `action` on every affected class, or pass `publish: "none"` if the cascade was never intended to
+  publish them.
+- **`liveOnly`** (`subtree` only): skip a descendant branch — no publish, no recursing into its
+  own children — when it isn't already live. See the resurrection-risk warning below. Meaningless
+  for `owns` — an owned-relation graph isn't a `Hierarchy` tree, so "already live" isn't a
+  branch-skip signal the same way — and refused with `400 PAYLOAD_INVALID` rather than silently
+  ignored if passed with `owns`.
 - **`dryRun`**: run the full authorization-checked walk (so the same error a real call would
   throw still surfaces) and return the would-publish set, without calling `publishSingle()` on
   anything.
 
-`liveOnly`/`dryRun` are rejected with `400 PAYLOAD_INVALID` on any mode other than `subtree` —
-they don't merely no-op, since silently ignoring `dryRun` would perform a real write while the
-caller reasonably expected a preview.
+`liveOnly` is rejected with `400 PAYLOAD_INVALID` on any mode other than `subtree`; `dryRun` on
+any mode other than `subtree` or `owns` — neither merely no-ops, since silently ignoring `dryRun`
+would perform a real write while the caller reasonably expected a preview.
+
+`owns` additionally accepts a caller-known set of records outside the `$owns` graph itself when
+called via `PublishOrchestrator::publishOwnedTree()` directly (not exposed as a request
+parameter — `CompositionService`/`PageHandler` use it internally). This matters because
+Elemental's own `$owns` chain stops at the area: `ElementalPageExtension` declares
+`$owns = ['ElementalArea']` and `ElementalArea` declares `$owns = ['Elements']`, but `BaseElement`
+itself declares no `$owns` at all, so an element's own has_many children aren't walk-reachable
+unless a project opts in. Both call sites pass the area/elements/children they just wrote
+explicitly rather than relying on the walk alone.
 
 ## What actually needs an explicit publish call
 
@@ -161,10 +194,11 @@ way during a real IA restructure — see #71):
 **A page's `publishRecursive()` does not cascade into owned elemental blocks — confirmed
 identical on branches `1` and `2` (#91), not an SS6-specific gap.** This is
 the specific gap `CompositionService::publishAll()` exists to close: a `recursive` composition
-publish explicitly publishes the elemental area, then every written element (and its children)
-individually via `PublishOrchestrator::publish($record, 'single')`, and only then calls
-`page->publishRecursive()`. Relying on the page-level cascade alone would leave elements
-stranded on draft behind a live page.
+publish routes the elemental area, every written element (and its children), and the page itself
+through `PublishOrchestrator::publishOwnedTree()` (`owns` mode's underlying primitive) — every one
+of them authorization-checked before anything is written, then published together. Relying on the
+page-level cascade alone would leave elements stranded on draft behind a live page.
+`PageHandler::applyTemplate()`'s own `recursive` publish does the same for its area/elements.
 
 ## Stage actions
 

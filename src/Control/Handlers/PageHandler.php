@@ -10,6 +10,7 @@ use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
+use Dynamic\ContentApi\Write\DbTransaction;
 use SilverStripe\CMS\Controllers\RootURLController;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Control\HTTPRequest;
@@ -101,81 +102,146 @@ class PageHandler
             );
         }
 
-        return Versioned::withVersionedMode(function () use (
-            $request,
-            $templateClass,
-            $applicatorClass,
-            $templateId,
-            $publishMode,
-            $context
-        ) {
-            Versioned::set_stage(Versioned::DRAFT);
+        // #119/#168: publishOwnedTree() below can now throw mid-cascade
+        // (a descendant class withholding `action`) — a failure that used
+        // to be impossible here, since the old direct publishSingle() calls
+        // never authorization-checked anything. Without a transaction, that
+        // throw would leave the template's draft write persisted with a
+        // bare 403 response and no indication the page changed. Wrapped the
+        // same way CompositionHandler wraps compose().
+        $data = null;
 
-            $id = (string) $request->param('ID');
+        try {
+            DbTransaction::run(function () use (
+                $request,
+                $templateClass,
+                $applicatorClass,
+                $templateId,
+                $publishMode,
+                $context,
+                &$data
+            ) {
+                $data = Versioned::withVersionedMode(function () use (
+                    $request,
+                    $templateClass,
+                    $applicatorClass,
+                    $templateId,
+                    $publishMode,
+                    $context
+                ) {
+                    return $this->doApplyTemplate(
+                        $request,
+                        $templateClass,
+                        $applicatorClass,
+                        $templateId,
+                        $publishMode,
+                        $context
+                    );
+                });
+            });
+        } catch (ApiError $error) {
+            throw new ApiError(
+                $error->getErrorCode(),
+                $error->getMessage() . ' (apply-template rolled back)',
+                $error->getDetails(),
+                $error->getStatus()
+            );
+        }
 
-            if (!ctype_digit($id)) {
-                throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'apply-template requires a numeric page id.');
-            }
+        return $data;
+    }
 
-            $page = DataObject::get_by_id(SiteTree::class, (int) $id);
+    /**
+     * @throws ApiError
+     */
+    protected function doApplyTemplate(
+        HTTPRequest $request,
+        string $templateClass,
+        string $applicatorClass,
+        int $templateId,
+        string $publishMode,
+        AuthContext $context
+    ): array {
+        Versioned::set_stage(Versioned::DRAFT);
 
-            if (!$page) {
-                throw new ApiError(ErrorCode::NOT_FOUND, sprintf('No page found with id %d.', (int) $id));
-            }
+        $id = (string) $request->param('ID');
 
-            $this->policy->checkRecordAccess($page, 'update', $context->member);
+        if (!ctype_digit($id)) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'apply-template requires a numeric page id.');
+        }
 
-            // #114: same gap as convert() above, applied to this action —
-            // 'update' was checked, but 'action' never was before the
-            // recursive publish below (which bypasses PublishOrchestrator
-            // entirely and calls publishSingle()/publishRecursive()
-            // directly, so it isn't covered by RecordWriter::write()'s own
-            // fix either).
-            if ($publishMode === 'recursive') {
-                $this->policy->checkClassAccess(get_class($page), 'action', $context->member);
-            }
+        $page = DataObject::get_by_id(SiteTree::class, (int) $id);
 
-            $template = DataObject::get_by_id($templateClass, $templateId);
+        if (!$page) {
+            throw new ApiError(ErrorCode::NOT_FOUND, sprintf('No page found with id %d.', (int) $id));
+        }
 
-            if (!$template) {
-                throw new ApiError(
-                    ErrorCode::NOT_FOUND,
-                    sprintf('No template found with id %d.', $templateId)
-                );
-            }
+        $this->policy->checkRecordAccess($page, 'update', $context->member);
 
-            $result = Injector::inst()->get($applicatorClass)->applyTemplateToRecord($page, $template);
+        // #114: same gap as convert() above, applied to this action —
+        // 'update' was checked, but 'action' never was before the page
+        // itself gets published below.
+        if ($publishMode === 'recursive') {
+            $this->policy->checkClassAccess(get_class($page), 'action', $context->member);
+        }
 
-            if (empty($result['success'])) {
-                throw new ApiError(
-                    ErrorCode::VALIDATION_FAILED,
-                    'Template application failed: ' . ($result['message'] ?? 'unknown error')
-                );
-            }
+        $template = DataObject::get_by_id($templateClass, $templateId);
 
-            if ($publishMode === 'recursive') {
-                $area = $page->hasMethod('ElementalArea') ? $page->ElementalArea() : null;
+        if (!$template) {
+            throw new ApiError(
+                ErrorCode::NOT_FOUND,
+                sprintf('No template found with id %d.', $templateId)
+            );
+        }
 
-                if ($area && $area->exists()) {
-                    $area->publishSingle();
+        $result = Injector::inst()->get($applicatorClass)->applyTemplateToRecord($page, $template);
 
-                    foreach ($area->Elements() as $element) {
-                        $element->publishSingle();
-                    }
-                }
+        if (empty($result['success'])) {
+            throw new ApiError(
+                ErrorCode::VALIDATION_FAILED,
+                'Template application failed: ' . ($result['message'] ?? 'unknown error')
+            );
+        }
 
-                $page->publishRecursive();
-            }
+        if ($publishMode === 'recursive') {
+            $area = $page->hasMethod('ElementalArea') ? $page->ElementalArea() : null;
 
-            return [
-                'data' => [
-                    'page' => $this->serializer->serialize($page),
-                    'templateId' => $templateId,
-                    'message' => $result['message'] ?? 'Template applied.',
-                ],
-                'meta' => ['operation' => 'template-applied'],
-            ];
-        });
+            // #119/#168: routed through publishOwnedTree() rather than the
+            // area's/elements' own publishSingle() calls this used to make
+            // directly — those performed no authorization at all.
+            //
+            // Unlike CompositionService::publishAll(), this $additional is
+            // NOT tracking "known written targets" — TemplateApplicator
+            // isn't asked what it wrote, so the area/elements are simply
+            // re-read from the page after the fact. In practice this makes
+            // $additional here fully redundant with the walk itself
+            // (ElementalPageExtension declares $owns = ['ElementalArea'],
+            // ElementalArea declares $owns = ['Elements']), kept only for
+            // symmetry with the composition path. KNOWN GAP: unlike
+            // publishAll(), this does NOT include each element's own
+            // has_many children (BaseElement declares no $owns, same
+            // reachability problem publishAll() solves by walking
+            // $result['children']) — if TemplateApplicator duplicates such
+            // children, they stay on draft after a "recursive" apply. Not
+            // fixed here: this whole action requires the optional
+            // dynamic/silverstripe-elemental-templates package, which isn't
+            // available to verify TemplateApplicator's actual output shape
+            // against. Tracked as #174.
+            $additional = ($area && $area->exists())
+                ? array_merge([$area], iterator_to_array($area->Elements()))
+                : [];
+
+            $this->publisher->publishOwnedTree($page, $context->member, $additional);
+        }
+
+        return [
+            'data' => [
+                'page' => $this->serializer->serialize($page),
+                'templateId' => $templateId,
+                'message' => $result['message'] ?? 'Template applied.',
+            ],
+            'meta' => ['operation' => 'template-applied'],
+        ];
     }
 
     protected function convert(HTTPRequest $request, AuthContext $context): array

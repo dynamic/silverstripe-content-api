@@ -114,6 +114,13 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestElementItem::class, 'api_access', true);
         Config::modify()->set(ApiTestPlainChildObject::class, 'api_access', true);
         Config::modify()->set(\DNADesign\Elemental\Models\ElementContent::class, 'api_access', true);
+        // #119/#168: publishOwnedTree() now authorization-checks the area
+        // itself (not just elements) before a composition/apply-template
+        // publish — previously unchecked, since the old publish($area,
+        // 'single', $member) call performed no authorization at all. A
+        // real project needs the equivalent grant in its own exposure
+        // config; see docs/en/08_page-compositions.md.
+        Config::modify()->set(\DNADesign\Elemental\Models\ElementalArea::class, 'api_access', true);
         Config::modify()->set(ApiTestPolyObject::class, 'api_access', true);
         Config::modify()->set(ApiTestMultiRelationalPolyObject::class, 'api_access', true);
         Config::modify()->set(ApiTestDeprecatingObject::class, 'api_access', true);

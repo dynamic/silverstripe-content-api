@@ -204,14 +204,26 @@ all — the page's own field write, if any, never carries a `publish` key, so `R
 check above never fires for it either. `compose()` now checks the page's own `action` verb
 before `publishAll()` runs, whenever the composition's own top-level `publish` is `recursive`.
 
-**Not covered by #114, and out of its scope**: `publishAll()` also publishes the composition's
-area and every element (and element child) via `PublishOrchestrator::publish($record, 'single', $member)`
-— `single` mode performs no authorization at all, and nothing upstream checks `action` for those
-classes either, since element writes always pass `"publish": "none"` explicitly. This is the
-owned-relation publish cascade #119 exists to formalize with real authorization, not a single
-root record's own verb. The identical cascade, with the identical gap, also exists in
-`PageHandler::applyTemplate()`'s own `publishSingle()` calls on the area and its elements.
-Tracked as #168.
+**#119/#168 closed the last gap in this family.** `publishAll()` used to also publish the
+composition's area and every element (and element child) via
+`PublishOrchestrator::publish($record, 'single', $member)` — `single` mode performs no
+authorization at all, and nothing upstream checked `action` for those classes either, since
+element writes always pass `"publish": "none"` explicitly. The identical cascade, with the
+identical gap, also existed in `PageHandler::applyTemplate()`'s own `publishSingle()` calls on the
+area and its elements. Both call sites now route through
+`PublishOrchestrator::publishOwnedTree()` (the primitive the `owns` publish mode itself
+dispatches to — see [Publishing & stages](10_publishing-and-stages.md#publish-modes)) instead of
+their own hand-rolled loops: every area/element/child is now authorization-checked (class
+`action` verb + `canEdit()`) before anything is written, the whole cascade refusing on the first
+one the caller can't publish rather than leaving earlier ones live with no way to undo it.
+
+**Behavior change**: any class in the walked `$owns` cascade — not just elements — granting
+`create`/`update` but withholding `action` now gets `403 FORBIDDEN_CLASS` on a composition or
+apply-template publish, where it previously published silently. This reaches further than
+elements/areas: `File`/`Image` are versioned, so an owned image relation (a common pattern for
+image-bearing elements) is checked too, and asset classes are the ones most likely to be
+configured read/create-only today. See
+[Publishing & stages](10_publishing-and-stages.md#publish-modes) for the full note.
 
 ## Record-level gate
 
