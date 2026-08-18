@@ -5,32 +5,24 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
-## [2.6.0] - 2026-08-18
-
-### Added
-- **(#115, #118)** Backport of branch `2`'s `sake dev/tasks/GenerateContentApiExposure`
-  (`GenerateContentApiExposureTask`/`ExposureScaffolder`), introspecting one or more `root=`
-  FQCNs (comma-separated for more than one) and every concrete subclass into starting-point
-  `api_access`/`api_writable_fields`/`api_writable_relations`/`extensions` YAML — printed to
-  stdout by default, or written wholesale to a dedicated AUTO-GENERATED file via `write=`. Same
-  shared `ExposureScaffolder` business logic as branch `2` (2.2.0); only the entry point differs,
-  this branch's legacy `run($request)` adapter translating `key=value` request vars instead of
-  Symfony Console `--flag` options. `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer names
-  either branch's invocation syntax directly, so the file no longer has a reason to differ once
-  the pending merge-up resolves the add/add conflict this backport creates on branch `2` (which
-  still carries the old branch-2-specific banner text until then).
-
 ### Fixed
 - **(#186)** `ContentApiTestCase` now pins `SilverStripe\Assets\File`/`Image` to
-  `api_access: false` in `setUp()`. Two `AssetsTest` cases failed on the SS6 testbed only: the
-  testbed's own exposure config grants `Image` its own `api_access` (added while closing #174),
-  which short-circuits `AssetHandler::governingAssetClass()`'s ancestry walk before either test's
-  `File`-only `Config::modify()` override was ever consulted — a host-config leak into the
+  `api_access: false` in `setUp()`. Two `AssetsTest` cases failed on this branch's testbed
+  specifically: its own exposure config grants `Image` its own `api_access` (added while closing
+  #174), which short-circuits `AssetHandler::governingAssetClass()`'s ancestry walk before either
+  test's `File`-only `Config::modify()` override was ever consulted — a host-config leak into the
   module's own suite, not a `silverstripe/assets` version regression as originally suspected. The
   same pin also restores the strength of the #119 unpublish-owns shared-asset regression test,
-  which previously depended on an absence `ContentApiTestCase` never actually enforced.
+  which previously depended on an absence `ContentApiTestCase` never actually enforced. Landed on
+  branch `1` first, merged up here.
+- **(#115, #118)** Merge-up of branch `1`'s backport of this branch's own `GenerateContentApiExposure`
+  task (shipped here in 2.2.0) — no new capability on this branch, but the shared
+  `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer hardcodes this branch's `sake tasks:`
+  invocation syntax directly into the generated YAML's own header comment (it needed to stop
+  doing that so branch `1`'s `key=value` adapter could reuse the same class); the emitted banner
+  text is worded generically now instead.
 
-## [1.11.0] - 2026-08-18
+## [2.6.0] - 2026-08-18
 
 ### Added
 - **(#119)** New `owns` unpublish mode — `records/$ClassRef/$ID/unpublish` (`{"mode": "owns"}`):

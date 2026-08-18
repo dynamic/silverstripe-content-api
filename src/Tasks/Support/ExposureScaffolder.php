@@ -55,10 +55,10 @@ use SilverStripe\Core\Injector\Injectable;
  * branch `2`'s own console-flag invocation string literally, until
  * #115/#118's backport to branch `1` made that wrong on half the branches
  * that ship this file (see the class's own `--root`/`--exclude` docblock
- * references above, which are fine to keep as-is: each adapter translates
- * that flag wording before it reaches the operator — see
- * `SetupServiceAccountTask`'s `str_replace()` pattern — the same mechanism
- * `GenerateContentApiExposureTask` now applies here on branch `1`).
+ * references above, which are fine to keep as-is: branch `2`'s console
+ * options already match that wording verbatim, and branch `1`'s adapter
+ * translates it to its own `key=value` syntax via its own
+ * `translateFlagSyntax()` before it reaches the operator).
  */
 class ExposureScaffolder
 {
