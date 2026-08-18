@@ -6,7 +6,9 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Verify\OwnedTreeWalker;
+use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
+use SilverStripe\Assets\File;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
@@ -41,6 +43,18 @@ use SilverStripe\Versioned\Versioned;
  * authorization-checks every owned descendant the same way (#168) and
  * also takes `$dryRun`, but not `$liveOnly` — meaningless for an owned
  * (non-tree) cascade.
+ *
+ * Unpublish has its own, smaller mode set ({@see UNPUBLISH_MODES}):
+ * `single` (the pre-existing behavior — {@see unpublish()}) and `owns`
+ * ({@see unpublishOwnedTree()}, #119's unpublish half). It is NOT a
+ * mirror of the publish modes — there is no unpublish `recursive` or
+ * `subtree`, since a `Hierarchy` tree cascade is exactly the stranded-
+ * descendants hazard {@see assertNoDescendants()} already guards
+ * against, not a feature to add more of. `owns` composes with that guard
+ * rather than replacing it, and excludes `File`/`Image` from whatever it
+ * reaches — see {@see unpublishOwnedTree()}'s docblock for why a shared
+ * asset can't safely follow the same cascade a page's other owned
+ * content does.
  */
 class PublishOrchestrator
 {
@@ -69,6 +83,21 @@ class PublishOrchestrator
     public const DELETE_MODES = ['archive', 'unpublish', 'hard'];
 
     /**
+     * Unpublish modes — a deliberately smaller, non-mirrored set of
+     * {@see MODES}. See the class docblock.
+     */
+    public const UNPUBLISH_MODES = ['single', 'owns'];
+
+    /**
+     * A record whose class `is_a()` one of these is never unpublished by
+     * an `owns`-mode cascade, no matter how it's reached — see
+     * {@see unpublishOwnedTree()}. `File` covers `Image` via inheritance,
+     * and `is_a()` matching means a project's own `File` subclass is
+     * covered too, not just the two framework classes by name.
+     */
+    public const UNPUBLISH_EXCLUDED_CLASSES = [File::class];
+
+    /**
      * @throws ApiError PAYLOAD_INVALID on an unknown mode
      */
     public function assertValidMode(string $mode): void
@@ -77,6 +106,23 @@ class PublishOrchestrator
             throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
                 sprintf('Publish mode "%s" must be one of: %s.', $mode, implode(', ', PublishOrchestrator::MODES))
+            );
+        }
+    }
+
+    /**
+     * @throws ApiError PAYLOAD_INVALID on an unknown mode
+     */
+    public function assertValidUnpublishMode(string $mode): void
+    {
+        if (!in_array($mode, PublishOrchestrator::UNPUBLISH_MODES, true)) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf(
+                    'Unpublish mode "%s" must be one of: %s.',
+                    $mode,
+                    implode(', ', PublishOrchestrator::UNPUBLISH_MODES)
+                )
             );
         }
     }
@@ -436,10 +482,13 @@ class PublishOrchestrator
     }
 
     /**
-     * Remove the record from the live stage, keeping the draft.
+     * Remove the record from the live stage, keeping the draft (`single`
+     * mode — the original behavior), or the record plus its `$owns`-owned
+     * tree, minus shared assets (`owns` mode, #119 — see
+     * {@see unpublishOwnedTree()}).
      *
-     * Guards against a real, confirmed-live SilverStripe framework
-     * behavior (#71, found during a real IA restructure — see
+     * `single` guards against a real, confirmed-live SilverStripe
+     * framework behavior (#71, found during a real IA restructure — see
      * `docs/en/10_publishing-and-stages.md`): `SiteTree::onBeforeDelete()`
      * cascades to `AllChildren()` and deletes them too, whenever
      * `SiteTree.enforce_strict_hierarchy` is enabled (the framework
@@ -453,13 +502,41 @@ class PublishOrchestrator
      * that hasn't moved at all is cascade-deleted exactly the same way,
      * confirmed by a test written to prove the narrower guard sufficient,
      * which failed.) `$force` bypasses the guard for the case where the
-     * cascade is actually intended.
+     * cascade is actually intended. `owns` mode runs the same guard on
+     * the root — see {@see unpublishOwnedTree()}.
      *
-     * @throws ApiError UNPUBLISH_STRANDS_DESCENDANTS unless $force
+     * `$mode` dispatches the same way {@see publish()} does. `$member`
+     * and `$dryRun` are only meaningful for `owns` — `single` has no
+     * descendants to authorization-check or preview, same reasoning as
+     * {@see publish()}'s docblock for its other modes.
+     *
+     * @return array{
+     *   unpublished: array<int, array{id: int, className: string}>,
+     *   skipped: array<int, array{id: int, className: string, reason: string}>
+     * }|null null for `single`; the cascade result for `owns`
+     * @throws ApiError PAYLOAD_INVALID | FORBIDDEN_CLASS | FORBIDDEN_RECORD
+     *   | UNPUBLISH_STRANDS_DESCENDANTS
      */
-    public function unpublish(DataObject $record, bool $force = false): void
-    {
+    public function unpublish(
+        DataObject $record,
+        bool $force = false,
+        string $mode = 'single',
+        ?Member $member = null,
+        bool $dryRun = false
+    ): ?array {
+        $this->assertValidUnpublishMode($mode);
         $this->assertVersioned($record, 'unpublish');
+
+        if ($mode === 'owns') {
+            if ($member === null) {
+                // Every real caller (RecordActionsHandler) always has a
+                // member — this is a programming error, not something an
+                // API caller can trigger, so it isn't an ApiError.
+                throw new InvalidArgumentException('unpublish() requires $member when $mode is "owns".');
+            }
+
+            return $this->unpublishOwnedTree($record, $member, $force, $dryRun);
+        }
 
         if (!$force) {
             $this->assertNoDescendants($record, [Versioned::LIVE], 'Unpublishing');
@@ -468,6 +545,111 @@ class PublishOrchestrator
         }
 
         $record->doUnpublish();
+
+        return null;
+    }
+
+    /**
+     * Unpublish `$root` plus every {@see OwnedTreeWalker}-reachable owned
+     * descendant, except a shared asset — #119's unpublish half.
+     *
+     * Deliberately NOT a mirror of {@see publishOwnedTree()}, in three
+     * ways the issue's own design-constraint section calls for:
+     *
+     * - **Assets are excluded, not walked.** `$owns` routinely names
+     *   `File`/`Image`, and a single file is routinely owned by more than
+     *   one live record at once (a hero slide, a CTA card, and a page's
+     *   own product image, all pointing at the same upload). Unpublishing
+     *   it out from under a page that never asked to be touched would
+     *   403 that page via `AssetControlExtension`, with no way to see why
+     *   from the caller that triggered it. {@see OwnedTreeWalker
+     *   ::walkOwnedExcluding()} prunes {@see UNPUBLISH_EXCLUDED_CLASSES}
+     *   at the node itself, not by filtering the result afterwards — so
+     *   nothing reachable only through an excluded node leaks into the
+     *   target set either. Every excluded node is still reported back
+     *   (`skipped`), not silently dropped, so a caller can see exactly
+     *   what stayed live and why.
+     * - **Root first, descendants after — the opposite of
+     *   {@see publishOwnedTree()}'s order.** Publishing writes leaves
+     *   before the root so nothing is ever live with an unpublished
+     *   parent. A page that still points at draft elements is a normal,
+     *   harmless in-progress state; elements that vanish from live while
+     *   the page above them is still fully live is not the same kind of
+     *   safe — so the root is unpublished first here.
+     * - **The `Hierarchy` stranded-descendants guard still runs on the
+     *   root**, exactly as it does for a plain `single` unpublish —
+     *   `owns` composes with that guard (and its `$force` bypass), it
+     *   does not replace it. A `$owns` relation graph and a `Hierarchy`
+     *   tree are different graphs entirely; this method only ever
+     *   touches the former.
+     *
+     * Same check-everything-before-writing-anything shape as
+     * {@see publishOwnedTree()}: every non-excluded target is
+     * authorization-checked before any `doUnpublish()` call, reusing
+     * {@see assertDescendantPublishable()} — its checks are the `action`
+     * verb + `canEdit()`, generic despite the method's name, and the same
+     * verb `RecordActionsHandler` already uses for a plain unpublish
+     * (#80 reserves the extra `delete` verb specifically for the
+     * force-bypass that reaches records the caller never named; a
+     * caller-owned `$owns` walk with assets already excluded isn't that).
+     *
+     * `$dryRun` runs the guard and the full authorization-checked walk,
+     * returning the same shape a real call would, without ever calling
+     * `doUnpublish()`.
+     *
+     * @return array{
+     *   unpublished: array<int, array{id: int, className: string}>,
+     *   skipped: array<int, array{id: int, className: string, reason: string}>
+     * }
+     * @throws ApiError FORBIDDEN_CLASS | FORBIDDEN_RECORD | UNPUBLISH_STRANDS_DESCENDANTS
+     */
+    protected function unpublishOwnedTree(DataObject $root, Member $member, bool $force, bool $dryRun = false): array
+    {
+        if (!$force) {
+            $this->assertNoDescendants($root, [Versioned::LIVE], 'Unpublishing');
+        } else {
+            $this->logForcedBypass($root, [Versioned::LIVE], 'Unpublishing');
+        }
+
+        $walked = $this->ownedTreeWalker->walkOwnedExcluding($root, PublishOrchestrator::UNPUBLISH_EXCLUDED_CLASSES);
+
+        $targets = [];
+
+        foreach ($walked['targets'] as $entry) {
+            $record = $entry['record'];
+            $targets[get_class($record) . ':' . $record->ID] = $record;
+        }
+
+        foreach ($targets as $target) {
+            $this->assertDescendantPublishable($target, $member);
+        }
+
+        if (!$dryRun) {
+            // Root first — the opposite order from publishOwnedTree() — so
+            // there is never a window where the root is live but points at
+            // elements that have already been pulled. See the docblock.
+            $root->doUnpublish();
+
+            foreach ($targets as $target) {
+                $target->doUnpublish();
+            }
+        }
+
+        $unpublished = [$this->subtreeEntry($root)];
+
+        foreach ($targets as $target) {
+            $unpublished[] = $this->subtreeEntry($target);
+        }
+
+        $skipped = array_map(
+            fn (array $entry) => $this->subtreeEntry($entry['record']) + ['reason' => 'SHARED_ASSET_CLASS'],
+            $walked['skipped']
+        );
+
+        return [
+            'unpublished' => $unpublished,
+            'skipped' => $skipped,
+        ];
     }
 
     /**

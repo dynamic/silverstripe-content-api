@@ -225,6 +225,14 @@ image-bearing elements) is checked too, and asset classes are the ones most like
 configured read/create-only today. See
 [Publishing & stages](10_publishing-and-stages.md#publish-modes) for the full note.
 
+**The unpublish side (#119) does not have this exception.** `unpublish`'s `owns` mode excludes
+`File`/`Image` from the walk entirely rather than authorization-checking and cascading to them
+(see [Unpublish modes](10_publishing-and-stages.md#unpublish-modes)) — an owned asset is never
+unpublished by this cascade, whether or not a project's exposure config grants `action` on it.
+Practical effect: adopting `unpublish`'s `owns` mode never requires the `File`/`Image` `action`
+grant the publish side does, and shortens the grant checklist for a project that only needs the
+unpublish half.
+
 ## Record-level gate
 
 `PermissionPolicy::checkRecordAccess()` calls the model's own permission method for the verb:

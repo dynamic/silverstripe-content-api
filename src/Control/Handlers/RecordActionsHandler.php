@@ -90,21 +90,40 @@ class RecordActionsHandler
             $this->policy->checkClassAccess($className, 'delete', $context->member);
         }
 
-        // #130: dryRun is meaningful here only for publish mode "subtree"
-        // (checked below, alongside liveOnly, once the mode is known).
-        // unpublish/archive have no dry-run support at all — reject
-        // outright rather than silently performing the real action, same
-        // reasoning as #102's dryRun/liveOnly rejection just below: a
-        // caller who set "dryRun": true reasonably believes nothing will
-        // be written.
-        if ($action !== 'publish' && !empty($body['dryRun'])) {
-            throw new ApiError(
-                ErrorCode::PAYLOAD_INVALID,
-                sprintf('"dryRun" is not supported on "%s".', $action)
-            );
+        // #130/#119: dryRun is meaningful for publish mode "subtree"/"owns"
+        // and unpublish mode "owns" (all three walk a set of descendants
+        // before writing); everything else — archive, and a plain "single"
+        // unpublish — has no dry-run support at all. Reject outright rather
+        // than silently performing the real action, same reasoning as
+        // #102's dryRun/liveOnly rejection just below: a caller who set
+        // "dryRun": true reasonably believes nothing will be written. The
+        // unpublish mode has to be resolved here, ahead of the switch
+        // below, purely to decide this — it's resolved again inside
+        // inDraft() where the actual call happens, since $mode isn't
+        // otherwise in scope there.
+        $unpublishMode = $action === 'unpublish' ? $this->unpublishModeFromBody($body) : null;
+
+        if (!empty($body['dryRun'])) {
+            $dryRunAllowed = $action === 'publish' || ($action === 'unpublish' && $unpublishMode === 'owns');
+
+            if (!$dryRunAllowed) {
+                throw new ApiError(
+                    ErrorCode::PAYLOAD_INVALID,
+                    sprintf('"dryRun" is not supported on "%s".', $action)
+                );
+            }
         }
 
-        return $this->inDraft(function () use ($request, $className, $action, $body, $context, $verb, $forceUnpublish) {
+        return $this->inDraft(function () use (
+            $request,
+            $className,
+            $action,
+            $body,
+            $context,
+            $verb,
+            $forceUnpublish,
+            $unpublishMode
+        ) {
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
             $this->policy->checkRecordAccess($record, $verb, $context->member);
 
@@ -173,7 +192,35 @@ class RecordActionsHandler
                     }
                     break;
                 case 'unpublish':
-                    $this->publisher->unpublish($record, !empty($body['force']));
+                    $dryRun = !empty($body['dryRun']);
+
+                    $result = $this->publisher->unpublish(
+                        $record,
+                        !empty($body['force']),
+                        $unpublishMode,
+                        $context->member,
+                        $dryRun
+                    );
+
+                    // Same dryRun response-shape contract as publish above:
+                    // nothing was written, so replace rather than augment.
+                    if ($dryRun) {
+                        return [
+                            'data' => [
+                                'wouldUnpublish' => $result['unpublished'] ?? [],
+                                'skipped' => $result['skipped'] ?? [],
+                            ],
+                            'meta' => ['operation' => 'unpublishDryRun', 'mode' => $unpublishMode],
+                        ];
+                    }
+
+                    // Same "augment, don't replace" contract as a real
+                    // subtree publish — "single" mode returns null and adds
+                    // nothing here, matching its pre-#119 response exactly.
+                    if ($result !== null) {
+                        $extraMeta['unpublished'] = $result['unpublished'];
+                        $extraMeta['skipped'] = $result['skipped'];
+                    }
                     break;
                 case 'archive':
                     $this->publisher->archive($record, !empty($body['force']));
@@ -209,6 +256,22 @@ class RecordActionsHandler
         }
 
         return !empty($body['recursive']) ? 'recursive' : 'single';
+    }
+
+    /**
+     * `{"mode": "owns"}` mirrors `publishModeFromBody()`'s explicit form —
+     * no legacy boolean shorthand to carry forward here, since `owns` is
+     * unpublish's only cascade mode (#119) and there was never a prior
+     * flag for it. Not present defaults to `single`, unpublish's
+     * pre-existing (and only) behavior before this mode existed.
+     */
+    protected function unpublishModeFromBody(array $body): string
+    {
+        if (isset($body['mode'])) {
+            return (string) $body['mode'];
+        }
+
+        return 'single';
     }
 
     /**

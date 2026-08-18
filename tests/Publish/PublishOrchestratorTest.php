@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestHierarchyObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedAssetOwnerObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
@@ -17,6 +18,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
 use Psr\Log\LoggerInterface;
+use SilverStripe\Assets\Image;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
@@ -910,6 +912,214 @@ class PublishOrchestratorTest extends ContentApiTestCase
             ->filter('ID', $record->ID)->exists());
         $this->assertCount(1, $entries);
         $this->assertSame((int) $record->ID, $entries[0]['id']);
+    }
+
+    // ---- #119 unpublish half ------------------------------------------
+
+    public function testUnpublishSingleAndOwnsAreAcceptedByAssertValidUnpublishMode(): void
+    {
+        $this->orchestrator->assertValidUnpublishMode('single');
+        $this->orchestrator->assertValidUnpublishMode('owns');
+        $this->addToAssertionCount(2);
+    }
+
+    public function testUnpublishRejectsAnUnknownMode(): void
+    {
+        $record = ApiTestOwnedParentObject::create(['Title' => 'Unknown Mode']);
+        $record->write();
+
+        try {
+            $this->orchestrator->unpublish($record, mode: 'subtree');
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('PAYLOAD_INVALID', $error->toArray()['code']);
+        }
+    }
+
+    /**
+     * The parent/child/grandchild fixture, same as the publish-side
+     * coverage above. `unpublished[0]` must be the root — see
+     * {@see PublishOrchestrator::unpublishOwnedTree()}'s docblock for why
+     * unpublish writes root-first, the opposite order from publish.
+     */
+    public function testUnpublishOwnsUnpublishesTheFullOwnedTreeRootFirst(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Unpublish Owns Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Unpublish Owns Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        $grandchild = ApiTestOwnedGrandchildObject::create([
+            'Title' => 'Unpublish Owns Grandchild',
+            'ParentID' => $child->ID,
+        ]);
+        $grandchild->write();
+
+        $this->orchestrator->publish($parent, 'owns', $this->adminMember());
+        $this->assertTrue($this->isLiveRecord(ApiTestOwnedGrandchildObject::class, $grandchild->ID));
+
+        $result = $this->orchestrator->unpublish(
+            $parent,
+            mode: 'owns',
+            member: $this->adminMember()
+        );
+
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID));
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedChildObject::class, $child->ID));
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedGrandchildObject::class, $grandchild->ID));
+
+        $this->assertSame((int) $parent->ID, $result['unpublished'][0]['id'], 'the root must be unpublished first');
+        $touchedIDs = array_column($result['unpublished'], 'id');
+        $this->assertContains((int) $child->ID, $touchedIDs);
+        $this->assertContains((int) $grandchild->ID, $touchedIDs);
+        $this->assertSame([], $result['skipped']);
+    }
+
+    /**
+     * #119's own design constraint: a `File`/`Image` reached through the
+     * `$owns` walk is never unpublished, no matter how many independent
+     * roots own it — confirmed live on a real project (see the issue) as
+     * one file ID simultaneously serving a hero slide, a CTA card, and a
+     * page's own product image. Two separate `ApiTestOwnedAssetOwnerObject`
+     * roots point at the SAME `Image`; unpublishing one via `owns` must
+     * leave the Image live (so the other root's reference stays valid) and
+     * report it in `skipped` — and must succeed at all despite
+     * `SilverStripe\Assets\Image` carrying NO api_access grant in this test
+     * suite (see `ContentApiTestCase::setUp()`), which only holds if the
+     * exclusion prunes it before authorization ever runs.
+     */
+    public function testUnpublishOwnsExcludesASharedAssetAndReportsItSkipped(): void
+    {
+        $asset = Image::create();
+        $asset->setFromString('not-real-image-bytes', 'shared-asset.jpg');
+        $asset->Title = 'Shared Asset';
+        $asset->write();
+        $asset->publishSingle();
+
+        $ownerA = ApiTestOwnedAssetOwnerObject::create(['Title' => 'Owner A', 'AssetID' => $asset->ID]);
+        $ownerA->write();
+        $ownerA->publishSingle();
+
+        $ownerB = ApiTestOwnedAssetOwnerObject::create(['Title' => 'Owner B', 'AssetID' => $asset->ID]);
+        $ownerB->write();
+        $ownerB->publishSingle();
+
+        $result = $this->orchestrator->unpublish(
+            $ownerA,
+            mode: 'owns',
+            member: $this->adminMember()
+        );
+
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedAssetOwnerObject::class, $ownerA->ID));
+        $this->assertTrue(
+            (bool) Versioned::get_by_stage(Image::class, Versioned::LIVE)
+                ->filter('ID', $asset->ID)->exists(),
+            'the shared asset must stay live — owner B still needs it'
+        );
+        $this->assertTrue(
+            $this->isLiveRecord(ApiTestOwnedAssetOwnerObject::class, $ownerB->ID),
+            'unpublishing owner A must not touch owner B'
+        );
+
+        $this->assertSame(
+            [(int) $ownerA->ID],
+            array_column($result['unpublished'], 'id'),
+            'the excluded asset must not appear in unpublished — only the root, which owns nothing else'
+        );
+        $this->assertCount(1, $result['skipped']);
+        $this->assertSame((int) $asset->ID, $result['skipped'][0]['id']);
+        $this->assertSame(Image::class, $result['skipped'][0]['className']);
+        $this->assertSame('SHARED_ASSET_CLASS', $result['skipped'][0]['reason']);
+    }
+
+    public function testUnpublishOwnsRefusesWhenADescendantClassDoesNotGrantTheActionVerb(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Unpublish Owns Gated Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Unpublish Owns Gated Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        $this->orchestrator->publish($parent, 'owns', $this->adminMember());
+
+        Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', 'read');
+
+        try {
+            $this->orchestrator->unpublish($parent, mode: 'owns', member: $this->adminMember());
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('FORBIDDEN_CLASS', $error->toArray()['code']);
+        }
+
+        $this->assertTrue(
+            $this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID),
+            'the whole walk is authorization-checked before any write — root must not be unpublished either'
+        );
+        $this->assertTrue($this->isLiveRecord(ApiTestOwnedChildObject::class, $child->ID));
+    }
+
+    public function testUnpublishOwnsDryRunReturnsThePreviewSetWithoutWriting(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Unpublish Owns DryRun Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Unpublish Owns DryRun Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        $this->orchestrator->publish($parent, 'owns', $this->adminMember());
+
+        $result = $this->orchestrator->unpublish(
+            $parent,
+            mode: 'owns',
+            member: $this->adminMember(),
+            dryRun: true
+        );
+
+        $this->assertTrue(
+            $this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID),
+            'dryRun must never write'
+        );
+        $this->assertTrue($this->isLiveRecord(ApiTestOwnedChildObject::class, $child->ID));
+
+        $touchedIDs = array_column($result['unpublished'], 'id');
+        $this->assertContains((int) $parent->ID, $touchedIDs);
+        $this->assertContains((int) $child->ID, $touchedIDs);
+    }
+
+    /**
+     * `owns` mode composes with the existing #71 `Hierarchy`
+     * stranded-descendants guard on the root — it doesn't replace it. A
+     * `$owns` relation graph and a `Hierarchy` tree are different graphs;
+     * `ApiTestPage` (this test's root) declares no `$owns` at all, so this
+     * confirms the guard alone, independent of anything the owned-tree
+     * walk itself would have caught.
+     */
+    public function testUnpublishOwnsStillRunsTheHierarchyGuardOnTheRoot(): void
+    {
+        $wrapper = $this->publishedPage('Owns Guard Wrapper');
+        $child = $this->publishedPage('Owns Guard Child', $wrapper->ID);
+
+        try {
+            $this->orchestrator->unpublish($wrapper, mode: 'owns', member: $this->adminMember());
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('UNPUBLISH_STRANDS_DESCENDANTS', $error->toArray()['code']);
+        }
+
+        $this->assertTrue($this->isLive($wrapper->ID));
+        $this->assertTrue($this->isLive($child->ID));
+    }
+
+    public function testUnpublishOwnsForceBypassesTheHierarchyGuardTheSameAsSingleMode(): void
+    {
+        $wrapper = $this->publishedPage('Owns Guard Force Wrapper');
+        $child = $this->publishedPage('Owns Guard Force Child', $wrapper->ID);
+
+        $this->orchestrator->unpublish($wrapper, force: true, mode: 'owns', member: $this->adminMember());
+
+        $this->assertFalse($this->isLive($wrapper->ID));
+        $this->assertFalse($this->isLive($child->ID));
     }
 
     private function apiMember(): Member
