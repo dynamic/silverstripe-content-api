@@ -74,7 +74,17 @@ class RecordActionsHandler
         // 'action' check above: plain unpublish stays reachable on
         // 'action' alone, only the forced/cascading variant also needs
         // 'delete'.
-        $forceUnpublish = $action === 'unpublish' && !empty($body['force']);
+        //
+        // Gated by forceCouldStrandDescendants(), not just "$action ===
+        // 'unpublish' && force" — #89 scoped the guard force actually
+        // bypasses to SiteTree classes with enforce_strict_hierarchy on;
+        // requiring 'delete' unconditionally would demand a verb for a
+        // bypass that was never going to cascade anything on every other
+        // class, a real breaking change for a client that defensively
+        // always sends force:true.
+        $forceUnpublish = $action === 'unpublish'
+            && !empty($body['force'])
+            && $this->publisher->forceCouldStrandDescendants($className);
 
         if ($forceUnpublish) {
             $this->policy->checkClassAccess($className, 'delete', $context->member);

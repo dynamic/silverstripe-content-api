@@ -3,6 +3,7 @@
 namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestForceUnpublishPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
@@ -153,18 +154,26 @@ class RecordActionsTest extends ContentApiTestCase
      * class level too — not just 'action' — mirroring archive's existing
      * split (see testArchiveRequiresClassDeleteVerb above). Plain,
      * non-forced unpublish must stay reachable on 'action' alone.
+     *
+     * Uses ApiTestForceUnpublishPage (a SiteTree subclass), not
+     * ApiTestVersionedObject: PublishOrchestrator::forceCouldStrandDescendants()
+     * only ever returns true for a SiteTree class with
+     * enforce_strict_hierarchy on — on a non-SiteTree class, force is
+     * already a no-op (#89) and this gate must NOT fire for it, or a
+     * client that defensively always sends force:true would 403 on every
+     * other class for no reason.
      */
     public function testForceUnpublishRequiresClassDeleteVerb(): void
     {
         \SilverStripe\Core\Config\Config::modify()
-            ->set(ApiTestVersionedObject::class, 'api_access', 'read,action');
+            ->set(ApiTestForceUnpublishPage::class, 'api_access', 'read,action');
 
         $token = $this->mintTokenFor('adminUser');
-        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+        $page = ApiTestForceUnpublishPage::create(['Title' => 'Force Verb Page']);
+        $page->write();
+        $page->publishRecursive();
 
-        $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token);
-
-        $plainUnpublish = $this->apiPost("records/ApiTestVersioned/{$record->ID}/unpublish", [], $token);
+        $plainUnpublish = $this->apiPost("records/ApiTestForceUnpublishPage/{$page->ID}/unpublish", [], $token);
         $this->assertSame(
             200,
             $plainUnpublish->getStatusCode(),
@@ -172,29 +181,62 @@ class RecordActionsTest extends ContentApiTestCase
         );
 
         // Republish so the force call below has something to act on.
-        $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token);
+        $page->publishRecursive();
 
-        $forced = $this->apiPost("records/ApiTestVersioned/{$record->ID}/unpublish", ['force' => true], $token);
+        $forced = $this->apiPost(
+            "records/ApiTestForceUnpublishPage/{$page->ID}/unpublish",
+            ['force' => true],
+            $token
+        );
         $this->assertErrorCode($forced, 'FORBIDDEN_CLASS', 403);
     }
 
     /**
      * Record-level half of the same split (#80), mirroring
-     * testArchiveRequiresCanDeleteNotCanEdit: ApiTestVersionedObject's
-     * default api_access (set in ContentApiTestCase::setUp) grants the
-     * class-level 'delete' verb, but apiUser's own canDelete() is
-     * ADMIN-only — force-unpublish must still be refused at the record
-     * gate.
+     * testArchiveRequiresCanDeleteNotCanEdit: ApiTestForceUnpublishPage's
+     * canEdit() is always true but canDelete() is ADMIN-only —
+     * force-unpublish must still be refused at the record gate for a
+     * non-admin apiUser, even though its class-level 'delete' verb (via
+     * default api_access) is granted.
      */
     public function testForceUnpublishRequiresRecordDeleteVerb(): void
     {
         $token = $this->mintTokenFor('apiUser');
-        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+        $page = ApiTestForceUnpublishPage::create(['Title' => 'Force Record Page']);
+        $page->write();
+        $page->publishRecursive();
 
-        $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token);
+        $forced = $this->apiPost(
+            "records/ApiTestForceUnpublishPage/{$page->ID}/unpublish",
+            ['force' => true],
+            $token
+        );
+        $this->assertErrorCode($forced, 'FORBIDDEN_RECORD', 403);
+    }
+
+    /**
+     * The negative-space case #166's review caught: force:true on a class
+     * `forceCouldStrandDescendants()` returns false for (a non-SiteTree
+     * class, ApiTestVersionedObject) must NOT require 'delete' — the
+     * bypass is already a no-op there (#89), so demanding a verb for it
+     * would be a breaking change for a client that defensively always
+     * sends force:true.
+     */
+    public function testForceUnpublishOnANonSiteTreeClassDoesNotRequireDeleteVerb(): void
+    {
+        \SilverStripe\Core\Config\Config::modify()
+            ->set(ApiTestVersionedObject::class, 'api_access', 'read,action');
+
+        $token = $this->mintTokenFor('adminUser');
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+        $record->publishRecursive();
 
         $forced = $this->apiPost("records/ApiTestVersioned/{$record->ID}/unpublish", ['force' => true], $token);
-        $this->assertErrorCode($forced, 'FORBIDDEN_RECORD', 403);
+        $this->assertSame(
+            200,
+            $forced->getStatusCode(),
+            'force on a class the guard can never strand anything for must not need "delete"'
+        );
     }
 
     public function testActionRequiresVerb(): void

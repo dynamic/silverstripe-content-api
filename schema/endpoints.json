@@ -211,7 +211,7 @@
           "force": {
             "type": "boolean",
             "default": false,
-            "description": "unpublish/archive only: bypass the descendant-cascade guard. On unpublish, this additionally requires the 'delete' verb (not just 'action') — the resulting cascade is delete-shaped, the same as archive"
+            "description": "unpublish/archive only: bypass the descendant-cascade guard. On unpublish against a SiteTree class with enforce_strict_hierarchy enabled, this additionally requires the 'delete' verb (not just 'action') — the resulting cascade is delete-shaped, the same as archive. On any other class the bypass is already a no-op, so 'delete' is not required there"
           },
           "liveOnly": {
             "type": "boolean",
