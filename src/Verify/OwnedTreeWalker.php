@@ -167,7 +167,17 @@ class OwnedTreeWalker
     protected function duplicatedRelations(DataObject $record): array
     {
         $manyMany = (array) $record->manyMany();
-        $relations = (array) $record->config()->get('cascade_duplicates');
+        $configured = $record->config()->get('cascade_duplicates');
+
+        // `false` is a supported value meaning "duplicate nothing", honoured
+        // by both `duplicate()` and `onBeforeDuplicate()`'s own guard. Casting
+        // it would give `[false]` — no fallback, and a `hasMethod(false)`
+        // warning naming an empty relation.
+        if ($configured === false) {
+            return [];
+        }
+
+        $relations = (array) $configured;
 
         // No Versioned check: the framework's own guard is just
         // `if ($relations || $relations === false) return;` — see above.

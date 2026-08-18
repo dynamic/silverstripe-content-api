@@ -565,6 +565,36 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
     }
 
     /**
+     * `cascade_duplicates: false` means "duplicate nothing" — a supported
+     * value both `duplicate()` and `onBeforeDuplicate()` honour explicitly.
+     * It must not fall through to the `$owns` fallback (which is for an
+     * *empty* list, a different statement) and must not be cast to `[false]`.
+     */
+    public function testCascadeDuplicatesFalseMeansNothingRatherThanTheOwnsFallback(): void
+    {
+        $child = $this->inDraft(function () {
+            $child = ApiTestDuplicateChildObject::create(['Title' => 'Child']);
+            $child->write();
+
+            $leaf = ApiTestDuplicateLeafObject::create(['Title' => 'Leaf', 'ChildID' => $child->ID]);
+            $leaf->write();
+
+            return $child;
+        });
+
+        // Without the override the $owns fallback finds 'Leaves'.
+        $this->assertCount(1, $this->inDraft(fn () => $this->walker()->walkDuplicates($child)));
+
+        Config::modify()->set(ApiTestDuplicateChildObject::class, 'cascade_duplicates', false);
+
+        $this->assertSame(
+            [],
+            $this->inDraft(fn () => $this->walker()->walkDuplicates($child)),
+            'false is "duplicate nothing", not "fall back to $owns"'
+        );
+    }
+
+    /**
      * The duplicates-mode counterpart of
      * {@see testAnUnversionedIntermediateIsWalkedThroughNotPrunedAt}.
      *
