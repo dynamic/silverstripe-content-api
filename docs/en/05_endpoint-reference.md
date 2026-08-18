@@ -103,8 +103,11 @@ response. Full reference: [Verification](16_verification.md#fingerprint).
 `{action}` is `publish`, `unpublish`, or `archive`. `publish` accepts `{"mode": "..."}` to
 select a [publish mode](10_publishing-and-stages.md#publish-modes) (`{"recursive": true}`
 remains a legacy shorthand for `mode: "recursive"`) — `mode: "subtree"` alone also accepts
-`{"liveOnly": true}`; `mode: "subtree"` or `"owns"` accept `{"dryRun": true}`. See
-[Publishing & stages](10_publishing-and-stages.md).
+`{"liveOnly": true}`; `mode: "subtree"` or `"owns"` accept `{"dryRun": true}`. `unpublish`
+also accepts `{"mode": "owns"}` to select an [unpublish mode](10_publishing-and-stages.md#unpublish-modes)
+— `mode: "owns"` cascades to the record's owned tree minus shared assets, and alone accepts
+`{"dryRun": true}` too; a plain `single`-mode unpublish and `archive` have no dry-run support
+at all. See [Publishing & stages](10_publishing-and-stages.md).
 
 ## `POST assets` / `GET assets/$ID`
 

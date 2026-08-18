@@ -14,7 +14,7 @@ All notable changes to this project are documented here. Format loosely follows
   publish half shipped (1.9.0/2.4.0) — the issue itself flagged it as the harder, riskier half,
   not a symmetric mirror: `$owns` routinely names `File`/`Image`, and a single asset is routinely
   owned by more than one live record at once (one file ID simultaneously serving a hero slide, a
-  CTA card, and a page's own product image, confirmed live on a real project). Unpublishing a
+  CTA card, and a page's own product image is a realistic shape). Unpublishing a
   shared asset out from under a page that never asked to be touched would 403 that page via
   `AssetControlExtension`, with no way to see why.
 
@@ -35,10 +35,17 @@ All notable changes to this project are documented here. Format loosely follows
   call site with the same problem.
 
   Composes with, rather than replaces, the existing `Hierarchy` stranded-descendants guard (#71)
-  and its `force` bypass — a `$owns` relation graph and a `Hierarchy` tree remain different
-  graphs. Takes `dryRun` (previously `400 PAYLOAD_INVALID` on every unpublish call — narrowed to
-  permit `dryRun` with `mode: "owns"` specifically; a plain `single`-mode unpublish and `archive`
-  still reject it outright). Real (non-`dryRun`) response adds `meta.unpublished` (root first)
+  and its `force` bypass — checked on the root AND every walked target, not just the root: nothing
+  prevents an owned relation from itself being a `SiteTree` with its own live tree children, and
+  the guard is a per-record risk, not a per-call-site one (`/review-pr` caught the root-only cut
+  of this before merge). `RecordActionsHandler`'s `owns`-mode write now runs inside a `DbTransaction`
+  (matching how `PageHandler::applyTemplate()` wraps its own owned-tree cascade), so a
+  `doUnpublish()` hook throwing partway through the descendant loop rolls the whole cascade back
+  instead of leaving a live orphan (root unpublished, only some descendants following it) with no
+  way to tell from the response alone. Takes `dryRun` (previously `400 PAYLOAD_INVALID` on every
+  unpublish call — narrowed to permit `dryRun` with `mode: "owns"` specifically; a plain
+  `single`-mode unpublish and `archive` still reject it outright). Real (non-`dryRun`) response
+  adds `meta.unpublished` (root first)
   and `meta.skipped` alongside the existing serialized-record shape; `dryRun` responds with
   `{"data": {"wouldUnpublish": [...], "skipped": [...]}, "meta": {"operation": "unpublishDryRun",
   "mode": "owns"}}`. Spec bumped to `v1.15`.

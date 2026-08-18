@@ -27,6 +27,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedPageObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnsCycleObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
@@ -74,6 +75,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestOwnedChildSubclassObject::class,
         ApiTestOwnedGrandchildObject::class,
         ApiTestOwnedAssetOwnerObject::class,
+        ApiTestOwnedPageObject::class,
         ApiTestOwnsCycleObject::class,
         ApiTestUnversionedOwnedWrapperObject::class,
         ApiTestFingerprintRelatedObject::class,
@@ -149,6 +151,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         // Image before it's ever authorization-checked, not merely
         // alongside a grant that happens to also be present.
         Config::modify()->set(ApiTestOwnedAssetOwnerObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestOwnedPageObject::class, 'api_access', 'action');
         Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintRelatedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintNonVersionedRelatedObject::class, 'api_access', true);

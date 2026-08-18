@@ -576,25 +576,35 @@ class PublishOrchestrator
      *   harmless in-progress state; elements that vanish from live while
      *   the page above them is still fully live is not the same kind of
      *   safe — so the root is unpublished first here.
-     * - **The `Hierarchy` stranded-descendants guard still runs on the
-     *   root**, exactly as it does for a plain `single` unpublish —
-     *   `owns` composes with that guard (and its `$force` bypass), it
-     *   does not replace it. A `$owns` relation graph and a `Hierarchy`
-     *   tree are different graphs entirely; this method only ever
-     *   touches the former.
+     * - **The `Hierarchy` stranded-descendants guard runs on the root AND
+     *   every walked target**, exactly as it does for a plain `single`
+     *   unpublish — `owns` composes with that guard (and its `$force`
+     *   bypass), it does not replace it. Nothing about being reached via
+     *   `$owns` rather than being the caller's own named target changes
+     *   the risk: an owned relation can itself be a `SiteTree` (nothing
+     *   in the framework or this walker prevents one page owning
+     *   another), and `doUnpublish()` triggers the exact same
+     *   `enforce_strict_hierarchy` cascade on it as it would on any other
+     *   page — this guard is per-record, not per-call-site, so it must
+     *   run wherever `doUnpublish()` is about to. A `$owns` relation
+     *   graph and a `Hierarchy` tree remain two different graphs; this
+     *   method only ever walks the former, but every write it performs
+     *   is still subject to the latter's cascade risk.
      *
      * Same check-everything-before-writing-anything shape as
      * {@see publishOwnedTree()}: every non-excluded target is
-     * authorization-checked before any `doUnpublish()` call, reusing
-     * {@see assertDescendantPublishable()} — its checks are the `action`
-     * verb + `canEdit()`, generic despite the method's name, and the same
-     * verb `RecordActionsHandler` already uses for a plain unpublish
-     * (#80 reserves the extra `delete` verb specifically for the
-     * force-bypass that reaches records the caller never named; a
-     * caller-owned `$owns` walk with assets already excluded isn't that).
+     * authorization-checked AND guard-checked before any `doUnpublish()`
+     * call — reusing {@see assertDescendantPublishable()} (its checks are
+     * the `action` verb + `canEdit()`, generic despite the method's name,
+     * and the same verb `RecordActionsHandler` already uses for a plain
+     * unpublish — #80 reserves the extra `delete` verb specifically for
+     * the force-bypass that reaches records the caller never named; a
+     * caller-owned `$owns` walk with assets already excluded isn't that)
+     * and {@see assertNoDescendants()}/{@see logForcedBypass()}.
      *
-     * `$dryRun` runs the guard and the full authorization-checked walk,
-     * returning the same shape a real call would, without ever calling
+     * `$dryRun` runs every guard and the full authorization-checked walk,
+     * returning the same shape a real call would (including throwing the
+     * same errors a real call would), without ever calling
      * `doUnpublish()`.
      *
      * @return array{
@@ -605,12 +615,6 @@ class PublishOrchestrator
      */
     protected function unpublishOwnedTree(DataObject $root, Member $member, bool $force, bool $dryRun = false): array
     {
-        if (!$force) {
-            $this->assertNoDescendants($root, [Versioned::LIVE], 'Unpublishing');
-        } else {
-            $this->logForcedBypass($root, [Versioned::LIVE], 'Unpublishing');
-        }
-
         $walked = $this->ownedTreeWalker->walkOwnedExcluding($root, PublishOrchestrator::UNPUBLISH_EXCLUDED_CLASSES);
 
         $targets = [];
@@ -622,6 +626,24 @@ class PublishOrchestrator
 
         foreach ($targets as $target) {
             $this->assertDescendantPublishable($target, $member);
+        }
+
+        if (!$force) {
+            $this->assertNoDescendants($root, [Versioned::LIVE], 'Unpublishing');
+
+            foreach ($targets as $target) {
+                $this->assertNoDescendants($target, [Versioned::LIVE], 'Unpublishing');
+            }
+        } elseif (!$dryRun) {
+            // Not logged under dryRun — nothing is actually being bypassed
+            // yet, since doUnpublish() never runs below. Logging here would
+            // put a false "force=true, stranding N descendant(s)" audit
+            // entry against an operation that never touched the database.
+            $this->logForcedBypass($root, [Versioned::LIVE], 'Unpublishing');
+
+            foreach ($targets as $target) {
+                $this->logForcedBypass($target, [Versioned::LIVE], 'Unpublishing');
+            }
         }
 
         if (!$dryRun) {

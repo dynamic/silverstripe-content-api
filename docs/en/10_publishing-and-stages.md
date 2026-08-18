@@ -257,7 +257,7 @@ graphs — `owns` mode only ever touches the former.
 - **A `File`/`Image` reached through the walk is excluded, never unpublished — reported instead.**
   `$owns` routinely names an image relation, and a single file is routinely owned by more than one
   live record at once — a hero slide, a CTA card, and a page's own product image all pointing at
-  the same upload is a real, confirmed shape. Unpublishing that file out from under a page that
+  the same upload is a realistic shape. Unpublishing that file out from under a page that
   never asked to be touched would 403 that page via `AssetControlExtension`, with no way to see
   why from the caller that triggered it. Every excluded node still appears in the response's
   `skipped` list (`{id, className, reason: "SHARED_ASSET_CLASS"}`), not silently dropped, so a
