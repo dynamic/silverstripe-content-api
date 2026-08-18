@@ -8,6 +8,31 @@ All notable changes to this project are documented here. Format loosely follows
 ## [2.6.0] - 2026-08-18
 
 ### Added
+- **(#115, #118)** Backport of branch `2`'s `sake dev/tasks/GenerateContentApiExposure`
+  (`GenerateContentApiExposureTask`/`ExposureScaffolder`), introspecting one or more `root=`
+  FQCNs (comma-separated for more than one) and every concrete subclass into starting-point
+  `api_access`/`api_writable_fields`/`api_writable_relations`/`extensions` YAML — printed to
+  stdout by default, or written wholesale to a dedicated AUTO-GENERATED file via `write=`. Same
+  shared `ExposureScaffolder` business logic as branch `2` (2.2.0); only the entry point differs,
+  this branch's legacy `run($request)` adapter translating `key=value` request vars instead of
+  Symfony Console `--flag` options. `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer names
+  either branch's invocation syntax directly, so the file no longer has a reason to differ once
+  the pending merge-up resolves the add/add conflict this backport creates on branch `2` (which
+  still carries the old branch-2-specific banner text until then).
+
+### Fixed
+- **(#186)** `ContentApiTestCase` now pins `SilverStripe\Assets\File`/`Image` to
+  `api_access: false` in `setUp()`. Two `AssetsTest` cases failed on the SS6 testbed only: the
+  testbed's own exposure config grants `Image` its own `api_access` (added while closing #174),
+  which short-circuits `AssetHandler::governingAssetClass()`'s ancestry walk before either test's
+  `File`-only `Config::modify()` override was ever consulted — a host-config leak into the
+  module's own suite, not a `silverstripe/assets` version regression as originally suspected. The
+  same pin also restores the strength of the #119 unpublish-owns shared-asset regression test,
+  which previously depended on an absence `ContentApiTestCase` never actually enforced.
+
+## [1.11.0] - 2026-08-18
+
+### Added
 - **(#119)** New `owns` unpublish mode — `records/$ClassRef/$ID/unpublish` (`{"mode": "owns"}`):
   unpublishes the record, then every descendant reachable through its `$owns` config
   (`OwnedTreeWalker::walkOwnedExcluding()`, a new sibling of the walker's existing `walk()`),
@@ -976,6 +1001,7 @@ color tokens, and apply-template.
 [2.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.4.0...2.0.0
+[1.11.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.10.0...1.11.0
 [1.10.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.9.0...1.10.0
 [1.9.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.8.0...1.9.0
 [1.8.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.7.0...1.8.0

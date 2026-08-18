@@ -228,10 +228,11 @@ class ClassRegistry
      * subclasses.
      *
      * Public (not just used internally by `discoveredModels()`/
-     * `isDiscoveredOnly()`): {@see \Dynamic\ContentApi\Tasks\Support\ExposureScaffolder}
-     * (#115/#118) reuses this rather than re-deriving its own denylist, so
-     * `Member`/`Group`/etc. can never be scaffolded for write exposure by
-     * either code path independently drifting out of sync with the other.
+     * `isDiscoveredOnly()`/`findClassBasenameMatch()`):
+     * {@see \Dynamic\ContentApi\Tasks\Support\ExposureScaffolder} (#115/#118)
+     * reuses this rather than re-deriving its own denylist, so `Member`/
+     * `Group`/etc. can never be scaffolded for write exposure by either code
+     * path independently drifting out of sync with the other.
      */
     public function discoveryDenylist(): array
     {
