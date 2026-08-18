@@ -45,6 +45,23 @@ All notable changes to this project are documented here. Format loosely follows
   project-declared `scripts/check-doc-drift.sh` (`.local-ci.json`) — is the real test/lint gate,
   not a GitHub Actions workflow that was never going to run.
 
+### Changed
+- **(#125)** `ClassRegistry::resolve()`'s `UNKNOWN_CLASS` error now distinguishes the two ways a
+  class ref can fail, instead of one message covering both: a ref with no `models:` entry at all
+  now names the real, autoloadable class it most likely refers to when one exists (matched on
+  basename, case-insensitively) and says to add a `models:` entry, rather than reading like a
+  typo or routing problem — the exact miss that cost real investigation time on
+  `sheboygan-youth-sailing-installer`'s `SearchPage`. A `models:` entry pointing at an FQCN that
+  doesn't autoload (stale config, not a caller mistake) gets its own distinct message. Both cases
+  still throw `UNKNOWN_CLASS`/404 — introducing a second error code would be a breaking change to
+  any caller branching on `error.code` for what's purely a message-quality gap — but now carry
+  structured `details` (`CLASS_NOT_MAPPED` / `CLASS_NOT_FOUND` / `CLASS_ALREADY_MAPPED`) a caller
+  can act on programmatically. The suggestion never names a `discoveryDenylist()` class
+  (`Member`/`Group`/`Permission`/etc. — caught in review before merge: a first draft suggested
+  registering exactly the classes the module hardcodes as never-exposable), and when the matched
+  class is already registered under a different ref, says so (`CLASS_ALREADY_MAPPED`) instead of
+  wrongly suggesting a duplicate `models:` entry.
+
 ## [1.6.0] - 2026-08-07
 
 Numbered `1.6.0`/`1.5.0`, not `1.1.0`/`1.2.0`: `1.1.0`-`1.4.0` are already used below by real,
