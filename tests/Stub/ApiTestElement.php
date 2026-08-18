@@ -31,6 +31,26 @@ class ApiTestElement extends BaseElement implements TestOnly
         'PlainItems' => ApiTestPlainChildObject::class,
     ];
 
+    /**
+     * The config `DataObject::duplicate()` consults when passed no relation
+     * list, and therefore the config that decides which children a template
+     * application creates. `Items` is versioned and `PlainItems` isn't, so
+     * #174's cascade gets both cases from one element.
+     *
+     * Declared here WITHOUT a matching `$owns` on purpose — that combination
+     * is what #174 is about, and it's what makes this a discriminating
+     * fixture. Stock Dynamic elements don't currently hit it: the ones with
+     * versioned children (`ElementPhotoGallery => Images`,
+     * `ElementCard => ElementLink`) list those in `$owns` too, so the
+     * publish walk already reached them, and the one genuine cascade-only
+     * case (`ElementStatCounters => Stats`) has an unversioned child with
+     * nothing to publish.
+     */
+    private static array $cascade_duplicates = [
+        'Items',
+        'PlainItems',
+    ];
+
     private static array $extensions = [
         ExternalIdentifierExtension::class,
     ];

@@ -163,8 +163,18 @@ parameter — `CompositionService`/`PageHandler` use it internally). This matter
 Elemental's own `$owns` chain stops at the area: `ElementalPageExtension` declares
 `$owns = ['ElementalArea']` and `ElementalArea` declares `$owns = ['Elements']`, but `BaseElement`
 itself declares no `$owns` at all, so an element's own has_many children aren't walk-reachable
-unless a project opts in. Both call sites pass the area/elements/children they just wrote
-explicitly rather than relying on the walk alone.
+unless a project opts in. Both call sites cover those children explicitly rather than relying on
+the walk alone, by different routes: `CompositionService::publishAll()` passes the exact records
+it just wrote, while `PageHandler::applyTemplate()` can't ask `TemplateApplicator` what it wrote
+and instead walks each element's duplicated-relation tree via
+`OwnedTreeWalker::walkDuplicates()` (#174).
+
+That walk reproduces what `DataObject::duplicate()` creates rather than reading one config, which
+takes two corrections in opposite directions: an **empty** `$cascade_duplicates` on a `Versioned`
+record makes the framework fall back to `$owns ∩ (many_many + belongs_to + has_many)`
+(`RecursivePublishable::onBeforeDuplicate()`), and a **many_many** entry link-copies existing
+records rather than cloning new ones, so its targets pre-date the duplicate and must not be
+published on its behalf.
 
 ## What actually needs an explicit publish call
 

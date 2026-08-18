@@ -8,6 +8,10 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateLeafObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateRootObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateUnversionedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
@@ -28,6 +32,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
+use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
 use Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
@@ -74,6 +79,11 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestFingerprintRestrictedRelatedObject::class,
         ApiTestFingerprintRelatedDeniedSubclassObject::class,
         ApiTestHierarchyObject::class,
+        ApiTestTemplateModel::class,
+        ApiTestDuplicateRootObject::class,
+        ApiTestDuplicateChildObject::class,
+        ApiTestDuplicateLeafObject::class,
+        ApiTestDuplicateUnversionedObject::class,
     ];
 
     protected function setUp(): void
