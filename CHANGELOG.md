@@ -15,6 +15,8 @@ All notable changes to this project are documented here. Format loosely follows
   same pin also restores the strength of the #119 unpublish-owns shared-asset regression test,
   which previously depended on an absence `ContentApiTestCase` never actually enforced. Landed on
   branch `1` first, merged up here.
+
+### Changed
 - **(#115, #118)** Merge-up of branch `1`'s backport of this branch's own `GenerateContentApiExposure`
   task (shipped here in 2.2.0) — no new capability on this branch, but the shared
   `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer hardcodes this branch's `sake tasks:`
