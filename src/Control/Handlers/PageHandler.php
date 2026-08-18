@@ -10,10 +10,12 @@ use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
+use Dynamic\ContentApi\Verify\OwnedTreeWalker;
 use Dynamic\ContentApi\Write\DbTransaction;
 use SilverStripe\CMS\Controllers\RootURLController;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Control\HTTPRequest;
+use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\ValidationException;
@@ -32,7 +34,21 @@ use SilverStripe\Versioned\Versioned;
  */
 class PageHandler
 {
+    use Configurable;
     use Injectable;
+
+    /**
+     * The optional dynamic/silverstripe-elemental-templates classes
+     * `apply-template` drives. Config rather than hardcoded locals purely so
+     * the module's own test suite can point them at a stub (#174) — that
+     * package is `suggest`ed, not required, so `class_exists()` is false in
+     * every environment these tests run in and this endpoint's publish
+     * behavior had never been exercised by any test before. Not a
+     * documented extension point; projects have no reason to override it.
+     */
+    private static string $template_class = 'Dynamic\\ElementalTemplates\\Models\\Template';
+
+    private static string $template_applicator_class = 'Dynamic\\ElementalTemplates\\Service\\TemplateApplicator';
 
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
@@ -40,6 +56,7 @@ class PageHandler
         'serializer' => '%$' . RecordSerializer::class,
         'publisher' => '%$' . PublishOrchestrator::class,
         'environmentGate' => '%$' . EnvironmentGate::class,
+        'ownedTreeWalker' => '%$' . OwnedTreeWalker::class,
     ];
 
     public ?ClassRegistry $registry = null;
@@ -51,6 +68,8 @@ class PageHandler
     public ?PublishOrchestrator $publisher = null;
 
     public ?EnvironmentGate $environmentGate = null;
+
+    public ?OwnedTreeWalker $ownedTreeWalker = null;
 
     public function handle(HTTPRequest $request, AuthContext $context): array
     {
@@ -73,8 +92,8 @@ class PageHandler
      */
     protected function applyTemplate(HTTPRequest $request, AuthContext $context): array
     {
-        $templateClass = 'Dynamic\\ElementalTemplates\\Models\\Template';
-        $applicatorClass = 'Dynamic\\ElementalTemplates\\Service\\TemplateApplicator';
+        $templateClass = (string) static::config()->get('template_class');
+        $applicatorClass = (string) static::config()->get('template_applicator_class');
 
         if (!class_exists($templateClass) || !class_exists($applicatorClass)) {
             throw new ApiError(
@@ -213,24 +232,63 @@ class PageHandler
             // Unlike CompositionService::publishAll(), this $additional is
             // NOT tracking "known written targets" — TemplateApplicator
             // isn't asked what it wrote, so the area/elements are simply
-            // re-read from the page after the fact. In practice this makes
-            // $additional here fully redundant with the walk itself
+            // re-read from the page after the fact. The area and its
+            // top-level elements are redundant with the walk itself
             // (ElementalPageExtension declares $owns = ['ElementalArea'],
-            // ElementalArea declares $owns = ['Elements']), kept only for
-            // symmetry with the composition path. KNOWN GAP: unlike
-            // publishAll(), this does NOT include each element's own
-            // has_many children (BaseElement declares no $owns, same
-            // reachability problem publishAll() solves by walking
-            // $result['children']) — if TemplateApplicator duplicates such
-            // children, they stay on draft after a "recursive" apply. Not
-            // fixed here: this whole action requires the optional
-            // dynamic/silverstripe-elemental-templates package, which isn't
-            // available to verify TemplateApplicator's actual output shape
-            // against. Tracked as #174.
-            $additional = ($area && $area->exists())
-                ? array_merge([$area], iterator_to_array($area->Elements()))
-                : [];
+            // ElementalArea declares $owns = ['Elements']) and are kept for
+            // symmetry with the composition path; the per-element walk below
+            // is not redundant, and is the whole point of this block.
+            //
+            // (publishAll() has it easier: it passes the exact records it
+            // just wrote, one flat level deep, because it did the writing.)
+            //
+            // #174: an element's own children are only $owns-reachable if
+            // that element declares $owns itself — BaseElement doesn't, and
+            // an element is free to declare $cascade_duplicates without a
+            // matching $owns entry. TemplateApplicator creates exactly those
+            // records: TemplateElementDuplicator::duplicateElements()
+            // duplicates each template element with a bare
+            // $element->duplicate(). Anything duplicate() creates but $owns
+            // doesn't name used to stay on draft after a "recursive" apply —
+            // unpublished and, because nothing reached it, unauthorized —
+            // with no error and no signal.
+            //
+            // walkDuplicates() rather than a generic has_many sweep, and
+            // rather than a bare $cascade_duplicates read: it reproduces what
+            // duplicate() actually creates, including the $owns fallback the
+            // framework substitutes for a Versioned record with an empty
+            // $cascade_duplicates, and excluding many_many (link-copied, not
+            // cloned). See that method — both corrections are load-bearing,
+            // in opposite directions.
+            //
+            // No stock Dynamic element hits this today: the ones with
+            // versioned children list them in $owns as well, and the one
+            // cascade-only case (ElementStatCounters => Stats) has an
+            // unversioned child. The gap is structural, not hypothetical —
+            // nothing stops an element declaring one without the other.
+            //
+            // Deliberately unchanged: $area->Elements() is every element on
+            // the page, not only the ones this template just added, so this
+            // reaches pre-existing elements' children too. That breadth is
+            // this endpoint's pre-existing behavior and narrowing it would be
+            // its own change.
+            $additional = [];
 
+            if ($area && $area->exists()) {
+                $additional[] = $area;
+
+                foreach ($area->Elements() as $element) {
+                    $additional[] = $element;
+
+                    foreach ($this->ownedTreeWalker->walkDuplicates($element) as $entry) {
+                        $additional[] = $entry['record'];
+                    }
+                }
+            }
+
+            // No dedupe needed here: publishOwnedTree() already dedupes
+            // $additional against the walked $owns set, against itself, and
+            // against $root, all on ClassName:ID.
             $this->publisher->publishOwnedTree($page, $context->member, $additional);
         }
 

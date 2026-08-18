@@ -2,9 +2,17 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use DNADesign\Elemental\Models\ElementalArea;
+use Dynamic\ContentApi\Control\Handlers\PageHandler;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateApplicator;
+use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
 
@@ -241,5 +249,241 @@ class PageActionsTest extends ContentApiTestCase
         // text (#21).
         $this->assertSame('Page conversion: 1 field(s) failed validation.', $body['error']['message']);
         $this->assertSame('Title', $body['error']['details'][0]['field']);
+    }
+
+    /**
+     * Points `apply-template` at the test stubs. The real
+     * dynamic/silverstripe-elemental-templates package is `suggest`ed and
+     * never installed here, so without this the endpoint short-circuits on
+     * its own `class_exists()` gate and nothing below it has ever run under
+     * test (#174).
+     */
+    private function useTemplateStubs(): void
+    {
+        Config::modify()->set(PageHandler::class, 'template_class', ApiTestTemplateModel::class);
+        Config::modify()->set(PageHandler::class, 'template_applicator_class', ApiTestTemplateApplicator::class);
+    }
+
+    /**
+     * A template holding one element that carries both a versioned
+     * (`Items`) and an unversioned (`PlainItems`) has_many child, both
+     * listed in `ApiTestElement::$cascade_duplicates` — so applying it
+     * duplicates the children too, which is the shape #174 is about.
+     */
+    private function templateWithChildBearingElement(): ApiTestTemplateModel
+    {
+        $template = ApiTestTemplateModel::create(['Title' => 'Hero template']);
+        $template->write();
+
+        $area = ElementalArea::create();
+        $area->write();
+
+        $template->ElementsID = $area->ID;
+        $template->write();
+
+        $element = ApiTestElement::create(['Title' => 'Source element', 'Intro' => 'Hello']);
+        $element->ParentID = $area->ID;
+        $element->write();
+
+        $item = ApiTestElementItem::create(['Title' => 'Versioned child']);
+        $item->ElementID = $element->ID;
+        $item->write();
+
+        $plain = ApiTestPlainChildObject::create(['Title' => 'Unversioned child']);
+        $plain->ElementID = $element->ID;
+        $plain->write();
+
+        return $template;
+    }
+
+    private function blockPage(): ApiTestBlockPage
+    {
+        $page = ApiTestBlockPage::create(['Title' => 'Template target']);
+        $page->write();
+
+        return $page;
+    }
+
+    /**
+     * The #174 regression test, and the first test of any kind to exercise
+     * `apply-template`'s publish behavior.
+     *
+     * `TemplateElementDuplicator` duplicates each template element with a
+     * bare `$element->duplicate()`, and `DataObject::duplicate()` falls back
+     * to `$cascade_duplicates` when given no relation list — so the element's
+     * own has_many children come along. `BaseElement` declares no `$owns`,
+     * so those children are not reachable by `publishOwnedTree()`'s walk;
+     * before the fix they stayed on draft after a `"publish": "recursive"`
+     * apply, with no error and no signal that anything had been missed.
+     */
+    public function testApplyTemplateRecursivePublishesElementChildren(): void
+    {
+        $this->useTemplateStubs();
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'recursive',
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $copied = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements()->first();
+        $this->assertInstanceOf(ApiTestElement::class, $copied);
+        $this->assertTrue($copied->isPublished(), 'the duplicated element itself publishes');
+
+        $child = $copied->Items()->first();
+        $this->assertInstanceOf(
+            ApiTestElementItem::class,
+            $child,
+            'duplicate() should have cascaded the has_many child onto the copy'
+        );
+        $this->assertTrue(
+            $child->isPublished(),
+            'the element child duplicate() created must publish too — this is #174'
+        );
+    }
+
+    /**
+     * `ApiTestElement::$cascade_duplicates` also names `PlainItems`, whose
+     * class isn't Versioned.
+     *
+     * Note what this does and does not cover: `OwnedTreeWalker` never emits
+     * an unversioned record, so the child never even reaches
+     * `publishOwnedTree()` — its own drop-with-a-warning branch is exercised
+     * by the composition tests, not here. What this pins is that an
+     * unversioned child neither fails the call nor goes missing from the
+     * duplicate.
+     */
+    public function testApplyTemplateToleratesUnversionedElementChildren(): void
+    {
+        $this->useTemplateStubs();
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'recursive',
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $copied = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements()->first();
+        $this->assertCount(1, $copied->PlainItems(), 'the unversioned child still gets duplicated');
+    }
+
+    /**
+     * The new targets go through the same authorization as every other
+     * cascade member, and the whole action still rolls back when one is
+     * refused — the `DbTransaction` wrapper has to cover the element
+     * children, not just the area and elements.
+     */
+    public function testApplyTemplateRollsBackWhenAnElementChildWithholdsAction(): void
+    {
+        $this->useTemplateStubs();
+
+        Config::modify()->set(ApiTestElementItem::class, 'api_access', 'read,update');
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'recursive',
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+
+        $this->assertCount(
+            0,
+            ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements(),
+            'the draft write must roll back with the refused publish'
+        );
+    }
+
+    /**
+     * Guard against the new per-element walk running unconditionally: with
+     * no publish mode the template is applied to draft and nothing is
+     * published at all.
+     */
+    public function testApplyTemplateWithoutPublishModePublishesNothing(): void
+    {
+        $this->useTemplateStubs();
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $copied = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements()->first();
+        $this->assertInstanceOf(ApiTestElement::class, $copied, 'the draft write still happens');
+        $this->assertFalse($copied->isPublished());
+        $this->assertFalse($copied->Items()->first()->isPublished());
+    }
+
+    /**
+     * The `class_exists()` gate is unchanged by making the class names
+     * config — a project without the package still gets FEATURE_UNAVAILABLE
+     * rather than a fatal on a missing class.
+     */
+    public function testApplyTemplateWithoutThePackageIsFeatureUnavailable(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => 1,
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FEATURE_UNAVAILABLE', 501);
+    }
+
+    /**
+     * The walk runs over `$area->Elements()` — every element on the page, not
+     * only the ones the template just added — so it reaches the children of
+     * pre-existing, untouched elements too, publishing them.
+     *
+     * That breadth is inherited from the endpoint's pre-existing behavior
+     * (which already published every element on the page, just not their
+     * children) and is deliberately not narrowed here. Pinning it so the
+     * decision is visible rather than incidental: it is the surface most
+     * likely to surprise an existing deployment, since an unrelated template
+     * application now pushes an untouched element's draft-only child live.
+     */
+    public function testApplyTemplateAlsoPublishesPreExistingElementsChildren(): void
+    {
+        $this->useTemplateStubs();
+
+        $page = $this->blockPage();
+
+        $existing = ApiTestElement::create(['Title' => 'Already here']);
+        $existing->ParentID = $page->ElementalArea()->ID;
+        $existing->write();
+
+        $existingChild = ApiTestElementItem::create(['Title' => 'Pre-existing child']);
+        $existingChild->ElementID = $existing->ID;
+        $existingChild->write();
+
+        $this->assertFalse($existingChild->isPublished(), 'precondition: draft only');
+
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'recursive',
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $this->assertTrue(
+            ApiTestElementItem::get()->byID($existingChild->ID)->isPublished(),
+            'a pre-existing element\'s child is published too — deliberate, see the handler comment'
+        );
     }
 }

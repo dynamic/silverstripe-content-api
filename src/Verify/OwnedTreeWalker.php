@@ -44,11 +44,29 @@ use SilverStripe\Versioned\Versioned;
  *   exists. Re-processing when a shallower path is found is still
  *   guaranteed to terminate: depth only ever decreases on a re-visit,
  *   bounded below by 0.
+ *
+ * {@see walkDuplicates()} reuses all of that to answer a different question
+ * — "what did a `duplicate()` just create here" (#174) — over the relations
+ * `DataObject::duplicate()` actually consults. Same shape, same
+ * cycle/depth/diamond hazards; re-deriving the walk a second time would
+ * duplicate the primitive #119 introduced precisely so there'd be one.
  */
 class OwnedTreeWalker
 {
     use Configurable;
     use Injectable;
+
+    /**
+     * Follow `$owns` — "everything this record's publish cascade is
+     * responsible for."
+     */
+    protected const MODE_OWNS = 'owns';
+
+    /**
+     * Follow what `DataObject::duplicate()` creates — see
+     * {@see duplicatedRelations()}, which is not simply `$cascade_duplicates`.
+     */
+    protected const MODE_DUPLICATES = 'duplicates';
 
     /**
      * Independent of the cycle guard — bounds a very deep (but acyclic)
@@ -69,13 +87,92 @@ class OwnedTreeWalker
      */
     public function walk(DataObject $root, ?int $maxDepth = null): array
     {
+        return $this->walkRelations($root, $maxDepth, self::MODE_OWNS);
+    }
+
+    /**
+     * Every record a `duplicate()` of `$root` just created beneath it — the
+     * publish-side counterpart to what `DataObject::duplicateRelations()`
+     * writes (#174).
+     *
+     * Same traversal as {@see walk()}; only the per-record relation list
+     * differs, and it is derived to match `duplicate()` rather than read off
+     * a single config — see {@see duplicatedRelations()} for the two ways a
+     * naive `$cascade_duplicates` read gets it wrong.
+     *
+     * @return array<int, array{record: DataObject, depth: int}>
+     */
+    public function walkDuplicates(DataObject $root, ?int $maxDepth = null): array
+    {
+        return $this->walkRelations($root, $maxDepth, self::MODE_DUPLICATES);
+    }
+
+    protected function walkRelations(DataObject $root, ?int $maxDepth, string $mode): array
+    {
         $maxDepth ??= (int) static::config()->get('max_depth');
         $visited = [];
         $result = [];
 
-        $this->collect($root, 0, $maxDepth, $visited, $result);
+        $this->collect($root, 0, $maxDepth, $mode, $visited, $result);
 
         return array_values($result);
+    }
+
+    /**
+     * The relations to follow out of `$record` for a given walk mode.
+     *
+     * `MODE_OWNS` is a plain `$owns` read. `MODE_DUPLICATES` reproduces what
+     * `DataObject::duplicate()` will actually have created, which is NOT the
+     * same as reading `$cascade_duplicates`:
+     *
+     * - **Empty `$cascade_duplicates` on a `Versioned` record falls back to
+     *   `$owns`.** `RecursivePublishable::onBeforeDuplicate()` replaces the
+     *   relation list with `$owns ∩ (many_many + belongs_to + has_many)` —
+     *   `duplicate()`'s own docblock calls this out ("If using versioned,
+     *   this will additionally failover to `owns` config"). has_one is
+     *   excluded there deliberately, since an owned has_one may be shared
+     *   non-exclusively by clone and original. Without this branch the walk
+     *   silently loses grandchildren: a page-level `$owns` walk stops at an
+     *   element that declares no `$owns`, so nothing else covers them.
+     * - **many_many relations create nothing.** Every other type is cloned
+     *   record-by-record (`duplicateHasManyRelation()` calls
+     *   `$item->duplicate(false)`), but `duplicateManyManyRelation()` copies
+     *   the relation *links* — `$dest->add($item)` attaches the very same
+     *   pre-existing records to the clone. Publishing those on the
+     *   duplicate's behalf would push shared, possibly deliberately-draft
+     *   records live, and — since `publishOwnedTree()` authorization-checks
+     *   every target — would newly `403 FORBIDDEN_CLASS` on classes no
+     *   project allowlists. `File` is the reachable case: it carries
+     *   `InheritedPermissionsExtension`, whose own `$cascade_duplicates` is
+     *   four many_manys to `Group`/`Member`.
+     *
+     * The fallback list is intersected the same way the framework does it,
+     * so a `$owns` entry naming a custom non-relation ownership (which
+     * `$owns` tolerates and `$cascade_duplicates` does not) is dropped here
+     * rather than reaching the `hasMethod()` warning below.
+     *
+     * @return array<int, string>
+     */
+    protected function duplicatedRelations(DataObject $record): array
+    {
+        $manyMany = (array) $record->manyMany();
+        $relations = (array) $record->config()->get('cascade_duplicates');
+
+        if ($relations === [] && $record->hasExtension(Versioned::class)) {
+            $relations = array_intersect(
+                array_merge(
+                    array_keys($manyMany),
+                    array_keys((array) $record->belongsTo()),
+                    array_keys((array) $record->hasMany())
+                ),
+                (array) $record->config()->get('owns')
+            );
+        }
+
+        return array_values(array_filter(
+            $relations,
+            fn ($relationName) => !array_key_exists($relationName, $manyMany)
+        ));
     }
 
     /**
@@ -86,8 +183,14 @@ class OwnedTreeWalker
      *   a shallower path replaces a deeper entry for the same node —
      *   walk() re-indexes with array_values() once collection finishes
      */
-    protected function collect(DataObject $record, int $depth, int $maxDepth, array &$visited, array &$result): void
-    {
+    protected function collect(
+        DataObject $record,
+        int $depth,
+        int $maxDepth,
+        string $mode,
+        array &$visited,
+        array &$result
+    ): void {
         $key = get_class($record) . ':' . $record->ID;
 
         if (isset($visited[$key]) && $visited[$key] <= $depth) {
@@ -121,17 +224,22 @@ class OwnedTreeWalker
             return;
         }
 
-        foreach ((array) $record->config()->get('owns') as $relationName) {
+        $relations = $mode === self::MODE_DUPLICATES
+            ? $this->duplicatedRelations($record)
+            : (array) $record->config()->get('owns');
+
+        foreach ($relations as $relationName) {
             if (!$record->hasMethod($relationName)) {
-                // A misconfigured $owns entry (a typo, a relation that was
+                // A misconfigured entry (a typo, a relation that was
                 // renamed/removed) would otherwise silently prune this
                 // branch of the tree with no indication anything was
                 // wrong — worth a warning even though it isn't fatal to
                 // the walk itself.
                 $this->logger->warning(sprintf(
-                    '%s declares "%s" in $owns, but has no such method — that branch cannot be walked.',
+                    '%s declares "%s" in $%s, but has no such method — that branch cannot be walked.',
                     get_class($record),
-                    $relationName
+                    $relationName,
+                    $mode === self::MODE_DUPLICATES ? 'cascade_duplicates' : 'owns'
                 ));
 
                 continue;
@@ -141,7 +249,7 @@ class OwnedTreeWalker
 
             if ($related instanceof DataObject) {
                 if ($related->exists()) {
-                    $this->collect($related, $depth + 1, $maxDepth, $visited, $result);
+                    $this->collect($related, $depth + 1, $maxDepth, $mode, $visited, $result);
                 }
 
                 continue;
@@ -150,7 +258,7 @@ class OwnedTreeWalker
             if (is_iterable($related)) {
                 foreach ($related as $child) {
                     if ($child instanceof DataObject) {
-                        $this->collect($child, $depth + 1, $maxDepth, $visited, $result);
+                        $this->collect($child, $depth + 1, $maxDepth, $mode, $visited, $result);
                     }
                 }
             }
