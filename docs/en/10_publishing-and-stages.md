@@ -166,8 +166,15 @@ itself declares no `$owns` at all, so an element's own has_many children aren't 
 unless a project opts in. Both call sites cover those children explicitly rather than relying on
 the walk alone, by different routes: `CompositionService::publishAll()` passes the exact records
 it just wrote, while `PageHandler::applyTemplate()` can't ask `TemplateApplicator` what it wrote
-and instead walks each element's `$cascade_duplicates` — the same config `DataObject::duplicate()`
-consults to create those children, so the published set can't drift from the created set (#174).
+and instead walks each element's duplicated-relation tree via
+`OwnedTreeWalker::walkDuplicates()` (#174).
+
+That walk reproduces what `DataObject::duplicate()` creates rather than reading one config, which
+takes two corrections in opposite directions: an **empty** `$cascade_duplicates` on a `Versioned`
+record makes the framework fall back to `$owns ∩ (many_many + belongs_to + has_many)`
+(`RecursivePublishable::onBeforeDuplicate()`), and a **many_many** entry link-copies existing
+records rather than cloning new ones, so its targets pre-date the duplicate and must not be
+published on its behalf.
 
 ## What actually needs an explicit publish call
 

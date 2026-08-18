@@ -348,11 +348,14 @@ class PageActionsTest extends ContentApiTestCase
 
     /**
      * `ApiTestElement::$cascade_duplicates` also names `PlainItems`, whose
-     * class isn't Versioned. `OwnedTreeWalker` never emits an unversioned
-     * record and `publishOwnedTree()` drops any that reach it via
-     * `$additional` with a logged warning, so the call must still succeed —
-     * matching how the composition path already handles Essentials'
-     * StatCounter.
+     * class isn't Versioned.
+     *
+     * Note what this does and does not cover: `OwnedTreeWalker` never emits
+     * an unversioned record, so the child never even reaches
+     * `publishOwnedTree()` — its own drop-with-a-warning branch is exercised
+     * by the composition tests, not here. What this pins is that an
+     * unversioned child neither fails the call nor goes missing from the
+     * duplicate.
      */
     public function testApplyTemplateToleratesUnversionedElementChildren(): void
     {
@@ -439,5 +442,48 @@ class PageActionsTest extends ContentApiTestCase
         ], $this->adminToken);
 
         $this->assertErrorCode($response, 'FEATURE_UNAVAILABLE', 501);
+    }
+
+    /**
+     * The walk runs over `$area->Elements()` — every element on the page, not
+     * only the ones the template just added — so it reaches the children of
+     * pre-existing, untouched elements too, publishing them.
+     *
+     * That breadth is inherited from the endpoint's pre-existing behavior
+     * (which already published every element on the page, just not their
+     * children) and is deliberately not narrowed here. Pinning it so the
+     * decision is visible rather than incidental: it is the surface most
+     * likely to surprise an existing deployment, since an unrelated template
+     * application now pushes an untouched element's draft-only child live.
+     */
+    public function testApplyTemplateAlsoPublishesPreExistingElementsChildren(): void
+    {
+        $this->useTemplateStubs();
+
+        $page = $this->blockPage();
+
+        $existing = ApiTestElement::create(['Title' => 'Already here']);
+        $existing->ParentID = $page->ElementalArea()->ID;
+        $existing->write();
+
+        $existingChild = ApiTestElementItem::create(['Title' => 'Pre-existing child']);
+        $existingChild->ElementID = $existing->ID;
+        $existingChild->write();
+
+        $this->assertFalse($existingChild->isPublished(), 'precondition: draft only');
+
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'recursive',
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $this->assertTrue(
+            ApiTestElementItem::get()->byID($existingChild->ID)->isPublished(),
+            'a pre-existing element\'s child is published too — deliberate, see the handler comment'
+        );
     }
 }

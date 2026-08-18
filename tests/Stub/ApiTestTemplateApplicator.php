@@ -19,10 +19,24 @@ use SilverStripe\Versioned\Versioned;
  * test. A stub that attached hand-built children instead would prove nothing
  * about the real integration.
  *
- * Kept deliberately thinner than the real applicator elsewhere: its own
- * validation branches (missing template, record without an elemental area)
- * return `['success' => false, ...]`, which `PageHandler` already maps to
- * VALIDATION_FAILED and which no part of this fix touches.
+ * Thinner than the real applicator everywhere else, and in three places it
+ * deliberately does NOT match it. Do not write tests against these paths and
+ * assume the answer transfers to production:
+ *
+ * - **Missing elemental area.** This returns `success => false`; the real
+ *   applicator `write()`s the record to materialize an area and carries on,
+ *   failing only if one still doesn't exist afterwards. The opposite outcome.
+ * - **`setSkipPopulateData(true)`.** The real duplicator sets it before
+ *   writing each copy, suppressing `populateElementData()`. That flag is what
+ *   makes `duplicate()` the *only* creator of children on this path, which is
+ *   in turn what lets the handler's walk be complete. This stub doesn't model
+ *   it, so nothing here pins that assumption.
+ * - **Per-element error handling.** The real duplicator wraps each element in
+ *   `try/catch`, logs, and still reports success — a partially-failed apply
+ *   returns 200 in production. Exceptions escape this stub instead.
+ *
+ * Re-reading the area from the page afterwards (rather than trusting a report
+ * of what was written) is `PageHandler`'s answer to that last one.
  */
 class ApiTestTemplateApplicator implements TestOnly
 {

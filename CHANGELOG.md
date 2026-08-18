@@ -7,29 +7,47 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Fixed
 - **(#174, closing the known gap 1.9.0 left open)** `pages/$ID/apply-template` with
-  `{"publish": "recursive"}` now publishes each element's own has_many children, not just the
+  `{"publish": "recursive"}` now publishes each element's own duplicated descendants, not just the
   elemental area and its top-level elements.
 
-  1.9.0 flagged this as unverified. It is now confirmed real:
+  1.9.0 flagged this as unverified. The mechanism is now confirmed:
   `TemplateElementDuplicator::duplicateElements()` duplicates each template element with a bare
-  `$element->duplicate()`, and `DataObject::duplicate()` falls back to `$cascade_duplicates` when
-  given no relation list, recursing into each copied child's own `$cascade_duplicates` in turn.
-  Real elements declare it — `ElementStatCounters` => `Stats`, `ElementPhotoGallery` => `Images`,
-  `ElementCard` => `ElementLink` — so a template containing any of them left its duplicated
-  children on draft after a `"recursive"` apply, with no error and no signal anything was missed.
-  Those children were also never authorization-checked, for the same reason: `BaseElement`
-  declares no `$owns`, so nothing reached them.
+  `$element->duplicate()`, so `DataObject::duplicate()` decides what children get created. An
+  element's children are only reachable by the publish walk if that element declares `$owns`
+  itself — `BaseElement` doesn't — so anything `duplicate()` created that `$owns` didn't name
+  stayed on draft after a `"recursive"` apply, unpublished and unauthorized, with no error and no
+  signal.
 
-  `PageHandler::applyTemplate()` now walks each element's `$cascade_duplicates` — the same config
-  `duplicate()` consulted to create those children, so the published set can't drift from the
-  created set — and passes the result to `publishOwnedTree()` alongside the area and elements.
-  `OwnedTreeWalker::walk()` takes the relation-list config key as a parameter to support this
-  (defaulting to `owns`); its cycle guard, depth cap, and unversioned handling are unchanged and
-  now apply to both walks.
+  **Scope, stated precisely:** no stock Dynamic element actually hits this today. The elements
+  with versioned children list them in `$owns` as well (`ElementPhotoGallery` => `Images`,
+  `ElementCard` => `ElementLink`), so the existing walk already reached them; the one genuine
+  cascade-only case, `ElementStatCounters` => `Stats`, has an unversioned child with nothing to
+  publish. The gap is structural rather than currently-triggered — nothing stops an element
+  declaring `$cascade_duplicates` without a matching `$owns` for a versioned child, and that
+  combination silently loses content.
 
-  **Behavior change**: an element-child class that grants `create`/`update` but withholds `action`
-  now gets `403 FORBIDDEN_CLASS` on a `"recursive"` apply-template, and the whole call rolls back —
-  the same behavior 1.9.0 introduced for the composition path, now reaching the children too.
+  `PageHandler::applyTemplate()` now walks each element via the new
+  `OwnedTreeWalker::walkDuplicates()` and passes the result to `publishOwnedTree()` alongside the
+  area and elements. That walk reproduces what `duplicate()` creates rather than reading
+  `$cascade_duplicates` directly, which takes two corrections in opposite directions:
+
+  - An **empty** `$cascade_duplicates` on a `Versioned` record makes the framework substitute
+    `$owns ∩ (many_many + belongs_to + has_many)` (`RecursivePublishable::onBeforeDuplicate()`).
+    Without this, grandchildren went missing at depth 2+, where the page-level `$owns` walk can no
+    longer cover for it.
+  - A **many_many** entry creates nothing — `duplicateManyManyRelation()` link-copies, attaching
+    the same pre-existing records to the clone. Publishing those would push shared, possibly
+    deliberately-draft records live and would newly `403` on classes no project allowlists.
+
+  `OwnedTreeWalker`'s cycle guard, depth cap, diamond handling, and unversioned-record handling are
+  unchanged and now serve both walks. `walk()`'s signature is unchanged.
+
+  **Behavior change**: a class reached only through the new walk that grants `create`/`update` but
+  withholds `action` now gets `403 FORBIDDEN_CLASS` on a `"recursive"` apply-template, and the
+  whole call rolls back — the same behavior 1.9.0 introduced for the composition path, now
+  reaching these records too. Note this applies to children of **every element on the page**, not
+  only the ones the template just added: the endpoint has always published every element on the
+  page, and that breadth now extends to their children.
 
   This is also the first test coverage of any kind for `apply-template`'s publish behavior.
   `dynamic/silverstripe-elemental-templates` remains `suggest`ed rather than required; the tests
@@ -78,6 +96,8 @@ All notable changes to this project are documented here. Format loosely follows
   `dynamic/silverstripe-elemental-templates`' `TemplateApplicator` duplicates such children, they
   can stay on draft after a `"recursive"` apply. Not verified either way: that package is optional
   and isn't a dev dependency of this module, so its actual output shape can't be checked here.
+  *(Since fixed — see the #174 entry above, which also records why no stock element was actually
+  affected.)*
 
 ## [1.8.0] - 2026-08-18
 

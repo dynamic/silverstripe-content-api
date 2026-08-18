@@ -8,6 +8,9 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateLeafObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateRootObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
@@ -76,6 +79,9 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestFingerprintRelatedDeniedSubclassObject::class,
         ApiTestHierarchyObject::class,
         ApiTestTemplateModel::class,
+        ApiTestDuplicateRootObject::class,
+        ApiTestDuplicateChildObject::class,
+        ApiTestDuplicateLeafObject::class,
     ];
 
     protected function setUp(): void

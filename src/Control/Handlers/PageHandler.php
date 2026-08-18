@@ -239,26 +239,37 @@ class PageHandler
             // symmetry with the composition path; the per-element walk below
             // is not redundant, and is the whole point of this block.
             //
-            // #174: an element's own has_many children are NOT reachable via
-            // $owns — BaseElement declares none, the same gap publishAll()
-            // closes by walking the children it wrote. TemplateApplicator
-            // does create them: TemplateElementDuplicator::duplicateElements()
-            // duplicates each template element with a bare
-            // $element->duplicate(), and DataObject::duplicate() falls back
-            // to $cascade_duplicates when no relation list is passed,
-            // recursing into each copied child's own $cascade_duplicates in
-            // turn. Real elements declare it (ElementStatCounters => Stats,
-            // ElementPhotoGallery => Images, ElementCard => ElementLink), so
-            // before this walk those children stayed on draft after a
-            // "recursive" apply with no error and no signal.
+            // (publishAll() has it easier: it passes the exact records it
+            // just wrote, one flat level deep, because it did the writing.)
             //
-            // Walking $cascade_duplicates specifically — rather than sweeping
-            // every has_many — keeps the published set identical to the
-            // created set by construction: it is the same config duplicate()
-            // consulted to create them, so the two cannot drift.
+            // #174: an element's own children are only $owns-reachable if
+            // that element declares $owns itself — BaseElement doesn't, and
+            // an element is free to declare $cascade_duplicates without a
+            // matching $owns entry. TemplateApplicator creates exactly those
+            // records: TemplateElementDuplicator::duplicateElements()
+            // duplicates each template element with a bare
+            // $element->duplicate(). Anything duplicate() creates but $owns
+            // doesn't name used to stay on draft after a "recursive" apply —
+            // unpublished and, because nothing reached it, unauthorized —
+            // with no error and no signal.
+            //
+            // walkDuplicates() rather than a generic has_many sweep, and
+            // rather than a bare $cascade_duplicates read: it reproduces what
+            // duplicate() actually creates, including the $owns fallback the
+            // framework substitutes for a Versioned record with an empty
+            // $cascade_duplicates, and excluding many_many (link-copied, not
+            // cloned). See that method — both corrections are load-bearing,
+            // in opposite directions.
+            //
+            // No stock Dynamic element hits this today: the ones with
+            // versioned children list them in $owns as well, and the one
+            // cascade-only case (ElementStatCounters => Stats) has an
+            // unversioned child. The gap is structural, not hypothetical —
+            // nothing stops an element declaring one without the other.
             //
             // Deliberately unchanged: $area->Elements() is every element on
-            // the page, not only the ones this template just added. That is
+            // the page, not only the ones this template just added, so this
+            // reaches pre-existing elements' children too. That breadth is
             // this endpoint's pre-existing behavior and narrowing it would be
             // its own change.
             $additional = [];
@@ -269,7 +280,7 @@ class PageHandler
                 foreach ($area->Elements() as $element) {
                     $additional[] = $element;
 
-                    foreach ($this->ownedTreeWalker->walk($element, null, 'cascade_duplicates') as $entry) {
+                    foreach ($this->ownedTreeWalker->walkDuplicates($element) as $entry) {
                         $additional[] = $entry['record'];
                     }
                 }
