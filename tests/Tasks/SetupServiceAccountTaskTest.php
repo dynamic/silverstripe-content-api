@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Tasks\SetupServiceAccountTask;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\PolyExecution\PolyOutput;
 use SilverStripe\Security\Group;
+use SilverStripe\Security\Member;
 use SilverStripe\Security\Permission;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -76,6 +77,56 @@ class SetupServiceAccountTaskTest extends SapphireTest
         $duplicate->write(false, false, false, false, true);
 
         $this->assertSame(Command::FAILURE, $this->runTask(['--group' => 'Test Adapter Ambiguous']));
+    }
+
+    /**
+     * #124: omitting `--member` entirely keeps the pre-existing behavior —
+     * group provisioning only, no member step run at all. Explicit
+     * opt-in, not run by default.
+     */
+    public function testOmittingMemberSkipsMemberProvisioningEntirely(): void
+    {
+        Member::get()->filter('Email', 'adapter-member-test@example.com')->removeAll();
+
+        $result = $this->runTask(['--group' => 'Test Adapter No Member']);
+
+        $this->assertSame(Command::SUCCESS, $result);
+        $this->assertNull(Member::get()->filter('Email', 'adapter-member-test@example.com')->first());
+    }
+
+    /**
+     * #124: passing --member also find-or-creates that Member and attaches
+     * it to the just-provisioned group.
+     */
+    public function testMemberOptionAlsoProvisionsAndAttachesTheMember(): void
+    {
+        Member::get()->filter('Email', 'adapter-member-test@example.com')->removeAll();
+
+        $result = $this->runTask([
+            '--group' => 'Test Adapter With Member',
+            '--member' => 'adapter-member-test@example.com',
+        ]);
+
+        $group = Group::get()->filter('Title', 'Test Adapter With Member')->first();
+        $member = Member::get()->filter('Email', 'adapter-member-test@example.com')->first();
+
+        $this->assertSame(Command::SUCCESS, $result);
+        $this->assertNotNull($member);
+        $this->assertTrue($member->inGroup($group));
+
+        Member::get()->filter('Email', 'adapter-member-test@example.com')->removeAll();
+    }
+
+    /**
+     * An empty --member value maps to Command::INVALID the same way an
+     * empty --group does — the three-way exit-code mapping applies to the
+     * member step too, not just the group step.
+     */
+    public function testEmptyMemberOptionMapsToCommandInvalid(): void
+    {
+        $result = $this->runTask(['--group' => 'Test Adapter Empty Member', '--member' => '']);
+
+        $this->assertSame(Command::INVALID, $result);
     }
 
     protected function runTask(array $options): int

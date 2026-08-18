@@ -286,7 +286,10 @@ require `EnvironmentGate::checkPopulationAllowed()` to pass:
 - Allowed by default in `dev` and `test` environments only (`population_enabled_environments`).
 - `SS_CONTENT_API_ALLOW_POPULATE=1` (parsed with `FILTER_VALIDATE_BOOLEAN`) overrides for
   deliberate UAT/staging runs.
-- Denied requests return `403 ENV_FORBIDDEN`.
+- Denied requests return `403 ENV_FORBIDDEN`, with `details` naming the current environment,
+  the env var, and the configured `population_enabled_environments` (#126) — a caller already
+  holding `CONTENT_API_POPULATE` (every call site checks that first) can tell this apart from an
+  ACL failure without parsing message text.
 
 ## Composition child ACL and identity scoping
 

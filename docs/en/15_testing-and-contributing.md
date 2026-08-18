@@ -39,6 +39,16 @@ vendor/bin/phpcbf src/ tests/    # auto-fix — composer lint-clean
 vendor/bin/phpstan analyse       # phpstan.neon.dist
 ```
 
+## Pre-push gate
+
+This repo has **no GitHub Actions workflow** — deliberately, not an oversight. `gh api
+repos/dynamic/silverstripe-content-api/actions/permissions` returns `{"enabled": false}`,
+consistent with the other `dynamic/*` module repos. The actual pre-push gate is `local-ci`,
+which auto-detects this repo's `phpunit.xml.dist`/`phpcs.xml.dist`/`phpstan.neon.dist` and
+additionally runs the project-declared `scripts/check-doc-drift.sh` (`.local-ci.json`). Run it
+(or the commands above by hand, including `SS_PHPUNIT_FLUSH=1` for PHPUnit) before opening a
+PR — nothing else will catch a regression for you.
+
 ## Test suite map
 
 | File | Covers |

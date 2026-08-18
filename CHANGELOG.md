@@ -26,18 +26,45 @@ All notable changes to this project are documented here. Format loosely follows
   `RecordWriter::assertElementPlacementAllowed()` still fires under the exact allowlist shape this
   generator produces, not just the fixture suite's default `guarded` policy.
 - **(#126)** `EnvironmentGate::checkPopulationAllowed()` now logs a warning (via the injected
-  `LoggerInterface`, not the wire response — the `403 ENV_FORBIDDEN` error itself already said
-  what to do) the moment it blocks a call, worded around the gap the issue described: a `dev`/
-  `test` rehearsal never reaches this gate at all, so a clean, repeated local rehearsal gives no
-  signal that a real `live`-type target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. Docs
+  `LoggerInterface`, not the wire response) the moment it blocks a call: a `dev`/`test` rehearsal
+  never reaches this gate at all, so a clean, repeated local rehearsal gives no signal that a
+  real `live`-type target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. Docs
   (`01_quickstart.md`, `02_configuration.md#environmentgate`) now call this out explicitly before
-  a first production write. The wire error code stays `ENV_FORBIDDEN` — it was already dedicated
-  to this one check (not a generic/shared code), so changing it would be a breaking change to
-  every existing consumer's error handling for a discoverability gap the issue itself locates
-  entirely upfront, before the error is ever hit. A new `EnvironmentGate::isPopulationAllowed()`
-  silent probe (no throw, no log) was split out for `SchemaService`'s read-only
-  `populationEnabled` flag, so checking that flag on `GET schema/site` can never itself trigger
-  the "population blocked" warning meant for an actual blocked write.
+  a first production write. A new `EnvironmentGate::isPopulationAllowed()` silent probe (no
+  throw, no log) replaces `SchemaService`'s prior try/catch around the throwing method, so
+  checking `populationEnabled` on `GET schema/site` can never itself trigger the "population
+  blocked" warning meant for an actual blocked write. The `403 ENV_FORBIDDEN` response now also
+  carries structured `details` (`environment`, `envVar`, `populationEnabledEnvironments`) — a
+  caller that isn't a human reading the message text (an agent driving this API on someone's
+  behalf) can tell this apart from an ACL failure and act on it without being able to read the
+  site's own `.env`. `content_schema_site`'s tool description (`schema/endpoints.json`, spec
+  bumped to `v1.12`) now says explicitly to check `populationEnabled` before a first write
+  against an unfamiliar target. The wire error code stays `ENV_FORBIDDEN` — already dedicated to
+  this one check, so changing it would be a breaking change to every existing consumer's error
+  handling for a discoverability gap that doesn't need a new code, only better data.
+- **(#124)** New `Dynamic\ContentApi\Tasks\Support\ServiceAccountMemberProvisioner`:
+  find-or-create the service-account `Member` itself and attach it to an
+  already-provisioned permission group. `ServiceAccountProvisioner` only provisioned the Group +
+  permission codes; `ApiTokenMinter` explicitly required a `Member` to already exist and be
+  attached — nothing bridged the two, so every project needing a service account wrote this
+  find-or-create block itself, and re-ran it after every DB sync (a locally-created
+  service-account Member isn't part of a synced prod snapshot). Wired into
+  `SetupServiceAccountTask` via a new `--member=<email>` option — explicitly opt-in, not run
+  by default, so a plain group-provisioning run never silently mints a login-capable account as
+  a side effect. Idempotent, matching `ServiceAccountProvisioner`'s own contract: a re-run finds
+  the existing Member rather than duplicating it, never detaches it from a group it's already in,
+  and never touches a password (the existing-member branch never calls `write()`). Refuses to
+  guess (same as `ServiceAccountProvisioner`) when multiple groups share a title, and fails
+  clearly when the named group doesn't exist yet. A newly-created Member gets an explicit random
+  password (`generateRandomPassword()`, discarded, never printed) — **review fix before merge**:
+  a first draft relied on `Member::write()` to auto-generate an unknown password when none is
+  set; that claim was wrong (an unset `Password` on a new record encrypts the literal empty
+  string, a *known* credential, per `Member::onBeforeWrite()`), so this now sets a real one
+  explicitly rather than relying on a false safety assumption. Also checks the resolved group —
+  and every ancestor, since group membership grants inherit upward through the tree — for `ADMIN`
+  or any `CMS_ACCESS_*` code before telling the operator the account has no CMS-admin access,
+  warning instead when it finds one (`--group=Administrators`, or any group descended from a
+  privileged one, is a real, reachable input this task can't assume away).
 
 ### Removed
 - **(#150)** `ContentApiController.cors_enabled` — configured and documented but never read
@@ -46,6 +73,55 @@ All notable changes to this project are documented here. Format loosely follows
   and the docs paragraph, and replaced the paragraph with an explicit statement of the actual
   position: `/content-api/v1` is server-to-server/agent-only and has no CORS surface at all.
   Colymba's own `cors.Enabled` (governing the separate `/api` surface) is unaffected.
+
+### Fixed
+- **(#136)** `DbTransaction::run()` — the one place every write path in this module opens a
+  transaction — now catches `\Error` (a `TypeError`/`ArgumentCountError`, not `\Exception`)
+  escaping the work closure and rolls back explicitly before re-throwing. Framework
+  `Database::withTransaction()` only ever catches `Exception`, so an `Error` mid-write previously
+  left `transactionRollback()` uncalled and the transaction open at its current nesting level —
+  the `#70`/`#127` rollback-verification safety net was silently bypassed exactly when the
+  transaction's own bookkeeping was most likely to be in a bad state. Deliberately catches
+  `\Error`, not `\Throwable` — catching `Exception` too would roll back a second time for the
+  path the framework already handles correctly on its own.
+
+  **Remaining scope, not covered by this fix**: `BatchProcessor::process()`'s atomic path and
+  `runDryRun()` still report a bare `SERVER_ERROR` 500 rather than `ROLLBACK_UNVERIFIED` when an
+  `Error` escapes a batch operation — `$results`/`$summary` are locals inside `run()` that only
+  escape via `BatchAbortException`, so per-op reporting on the `Error` path needs a separate
+  follow-up converting an `Error` into a `BatchAbortException` at the per-op boundary. This fix
+  closes the data-integrity hole (nothing is left half-committed); it doesn't yet restore
+  accurate error reporting on that specific path.
+
+  Verified against the real production shape, not just a single top-level call: a nested
+  `DbTransaction::run()` (`BatchProcessor` opening one transaction, `RecordWriter::write()`
+  opening another inside it per op — the exact shape `NestedTransactionManager`'s savepoint
+  bookkeeping engages for) correctly rolls back both levels and leaves `transactionDepth()`
+  balanced when an `Error` escapes the inner call.
+
+### Docs
+- **(#147)** `docs/en/15_testing-and-contributing.md` now documents the actual pre-push gate:
+  Actions is disabled on this repo (`actions/permissions` → `enabled: false`), so `local-ci` —
+  which auto-detects PHPUnit/phpcs/phpstan from their own config files and additionally runs the
+  project-declared `scripts/check-doc-drift.sh` (`.local-ci.json`) — is the real test/lint gate,
+  not a GitHub Actions workflow that was never going to run.
+
+### Changed
+- **(#125)** `ClassRegistry::resolve()`'s `UNKNOWN_CLASS` error now distinguishes the two ways a
+  class ref can fail, instead of one message covering both: a ref with no `models:` entry at all
+  now names the real, autoloadable class it most likely refers to when one exists (matched on
+  basename, case-insensitively) and says to add a `models:` entry, rather than reading like a
+  typo or routing problem — the exact miss that cost real investigation time on
+  `sheboygan-youth-sailing-installer`'s `SearchPage`. A `models:` entry pointing at an FQCN that
+  doesn't autoload (stale config, not a caller mistake) gets its own distinct message. Both cases
+  still throw `UNKNOWN_CLASS`/404 — introducing a second error code would be a breaking change to
+  any caller branching on `error.code` for what's purely a message-quality gap — but now carry
+  structured `details` (`CLASS_NOT_MAPPED` / `CLASS_NOT_FOUND` / `CLASS_ALREADY_MAPPED`) a caller
+  can act on programmatically. The suggestion never names a `discoveryDenylist()` class
+  (`Member`/`Group`/`Permission`/etc. — caught in review before merge: a first draft suggested
+  registering exactly the classes the module hardcodes as never-exposable), and when the matched
+  class is already registered under a different ref, says so (`CLASS_ALREADY_MAPPED`) instead of
+  wrongly suggesting a duplicate `models:` entry.
 
 ### Docs
 - **(#66)** `docs/en/upstream-issues.md` now states upfront that response time on the

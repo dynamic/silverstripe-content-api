@@ -44,10 +44,10 @@ class SchemaTest extends ContentApiTestCase
         $this->assertTrue($body['data']['integrations']['restfulapi']);
         $this->assertArrayHasKey('populationEnabled', $body['data']);
 
-        // #126 review follow-up: reading this flag is a status probe, not
-        // an attempted write — it must never trigger EnvironmentGate's
-        // "population blocked" warning log, or every GET schema call on a
-        // live-type target would falsely log one.
+        // #126: reading this flag is a status probe, not an attempted
+        // write — it must never trigger EnvironmentGate's "population
+        // blocked" warning log, or every GET schema call on a live-type
+        // target would falsely log one.
         $logHandler = new TestHandler();
         Injector::inst()->registerService(new Logger('test', [$logHandler]), LoggerInterface::class);
         Config::modify()->set(EnvironmentGate::class, 'population_enabled_environments', []);
