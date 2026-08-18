@@ -93,6 +93,24 @@ PR — nothing else will catch a regression for you.
   container**, not a project-relative path — clear it after editing any `_config/*.yml` before a
   CLI `phpunit`/`sake` run picks up the change.
 
+- **A test touching a real framework class (not an `ApiTest*` stub) inherits the host project's
+  own exposure config, not a clean slate.** `ContentApiTestCase::setUp()` already grants
+  `api_access` explicitly to every `ApiTest*` stub (for a different, config-manifest-reliability
+  reason — `TestOnly` classes in a vendored module run aren't reliably in the manifest, see the
+  comment there), which incidentally means a stub was never at risk of this leak in the first
+  place — no host project maps an `ApiTest*` class in its own `content-api.yml`. A class the host
+  project also maps (e.g. `SilverStripe\Assets\File`/`Image`) is different: it still carries
+  whatever that host declared, layered underneath. #186 was this: one testbed granted `Image` its own
+  `api_access` and the other didn't, so two `AssetsTest` cases that assumed `Image` carried no
+  grant passed on one host and failed on the other — a host-config difference, not a module
+  regression. `ContentApiTestCase` now pins `File`/`Image` to `false` for this reason; any new
+  test that needs a real (non-stub) framework class to start from a known state should pin that
+  class explicitly rather than relying on either testbed's own config. Pinning `api_access`
+  specifically only neutralizes a host that grants through that same key — it does nothing
+  against a host granting via `content_api_access` (checked first, always wins) or
+  `discovery_roots`/`discovery_write_policy`; neither testbed does either for `File`/`Image`
+  today, but a class-level pin like this one is only as strong as the specific key it overrides.
+
 ## Keeping `schema/endpoints.json` in sync with the MCP server
 
 [`schema/endpoints.json`](../../schema/endpoints.json) is the **source of truth** for the

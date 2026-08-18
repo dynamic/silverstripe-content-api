@@ -5,6 +5,25 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **(#186)** `ContentApiTestCase` now pins `SilverStripe\Assets\File`/`Image` to
+  `api_access: false` in `setUp()`. Two `AssetsTest` cases failed on this branch's testbed
+  specifically: its own exposure config grants `Image` its own `api_access` (added while closing
+  #174), which short-circuits `AssetHandler::governingAssetClass()`'s ancestry walk before either
+  test's `File`-only `Config::modify()` override was ever consulted — a host-config leak into the
+  module's own suite, not a `silverstripe/assets` version regression as originally suspected. The
+  same pin also restores the strength of the #119 unpublish-owns shared-asset regression test,
+  which previously depended on an absence `ContentApiTestCase` never actually enforced. Landed on
+  branch `1` first, merged up here.
+
+### Changed
+- **(#115, #118)** Merge-up of branch `1`'s backport of this branch's own `GenerateContentApiExposure`
+  task (shipped here in 2.2.0) — no new capability on this branch, but the shared
+  `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer hardcodes this branch's `sake tasks:`
+  invocation syntax directly into the generated YAML's own header comment (it needed to stop
+  doing that so branch `1`'s `key=value` adapter could reuse the same class); the emitted banner
+  text is worded generically now instead.
+
 ## [2.6.0] - 2026-08-18
 
 ### Added
@@ -976,6 +995,7 @@ color tokens, and apply-template.
 [2.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.4.0...2.0.0
+[1.11.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.10.0...1.11.0
 [1.10.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.9.0...1.10.0
 [1.9.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.8.0...1.9.0
 [1.8.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.7.0...1.8.0
