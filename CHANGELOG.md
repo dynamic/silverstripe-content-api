@@ -66,6 +66,23 @@ All notable changes to this project are documented here. Format loosely follows
   warning instead when it finds one (`--group=Administrators`, or any group descended from a
   privileged one, is a real, reachable input this task can't assume away).
 
+### Changed
+- **(#125)** `ClassRegistry::resolve()`'s `UNKNOWN_CLASS` error now distinguishes the two ways a
+  class ref can fail, instead of one message covering both: a ref with no `models:` entry at all
+  now names the real, autoloadable class it most likely refers to when one exists (matched on
+  basename, case-insensitively) and says to add a `models:` entry, rather than reading like a
+  typo or routing problem — the exact miss that cost real investigation time on
+  `sheboygan-youth-sailing-installer`'s `SearchPage`. A `models:` entry pointing at an FQCN that
+  doesn't autoload (stale config, not a caller mistake) gets its own distinct message. Both cases
+  still throw `UNKNOWN_CLASS`/404 — introducing a second error code would be a breaking change to
+  any caller branching on `error.code` for what's purely a message-quality gap — but now carry
+  structured `details` (`CLASS_NOT_MAPPED` / `CLASS_NOT_FOUND` / `CLASS_ALREADY_MAPPED`) a caller
+  can act on programmatically. The suggestion never names a `discoveryDenylist()` class
+  (`Member`/`Group`/`Permission`/etc. — caught in review before merge: a first draft suggested
+  registering exactly the classes the module hardcodes as never-exposable), and when the matched
+  class is already registered under a different ref, says so (`CLASS_ALREADY_MAPPED`) instead of
+  wrongly suggesting a duplicate `models:` entry.
+
 ### Removed
 - **(#150)** `ContentApiController.cors_enabled` — configured and documented but never read
   anywhere in PHP; the controller emitted no `Access-Control-*` headers and had no `OPTIONS`
@@ -105,25 +122,6 @@ All notable changes to this project are documented here. Format loosely follows
   which auto-detects PHPUnit/phpcs/phpstan from their own config files and additionally runs the
   project-declared `scripts/check-doc-drift.sh` (`.local-ci.json`) — is the real test/lint gate,
   not a GitHub Actions workflow that was never going to run.
-
-### Changed
-- **(#125)** `ClassRegistry::resolve()`'s `UNKNOWN_CLASS` error now distinguishes the two ways a
-  class ref can fail, instead of one message covering both: a ref with no `models:` entry at all
-  now names the real, autoloadable class it most likely refers to when one exists (matched on
-  basename, case-insensitively) and says to add a `models:` entry, rather than reading like a
-  typo or routing problem — the exact miss that cost real investigation time on
-  `sheboygan-youth-sailing-installer`'s `SearchPage`. A `models:` entry pointing at an FQCN that
-  doesn't autoload (stale config, not a caller mistake) gets its own distinct message. Both cases
-  still throw `UNKNOWN_CLASS`/404 — introducing a second error code would be a breaking change to
-  any caller branching on `error.code` for what's purely a message-quality gap — but now carry
-  structured `details` (`CLASS_NOT_MAPPED` / `CLASS_NOT_FOUND` / `CLASS_ALREADY_MAPPED`) a caller
-  can act on programmatically. The suggestion never names a `discoveryDenylist()` class
-  (`Member`/`Group`/`Permission`/etc. — caught in review before merge: a first draft suggested
-  registering exactly the classes the module hardcodes as never-exposable), and when the matched
-  class is already registered under a different ref, says so (`CLASS_ALREADY_MAPPED`) instead of
-  wrongly suggesting a duplicate `models:` entry.
-
-### Docs
 - **(#66)** `docs/en/upstream-issues.md` now states upfront that response time on the
   silverstripeltd-maintained line has been slow to nonexistent (their own
   `feature/cms-6-compatibility` PR has sat open since 2025-09-05 with zero review, and neither
