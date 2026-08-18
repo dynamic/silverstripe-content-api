@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Psr\Log\LoggerInterface;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
@@ -366,8 +367,23 @@ class PublishOrchestrator
 
     /**
      * IDs of every `Hierarchy` descendant of $record in the given stage.
-     * Empty for a non-hierarchical class, one with no extension at all, or
-     * a record that doesn't exist in that stage.
+     * Empty for a record that isn't a `SiteTree` with
+     * `enforce_strict_hierarchy` enabled, or one that doesn't exist in that
+     * stage.
+     *
+     * The scope check is intentionally narrower than "any `Hierarchy`
+     * class" (#89): the cascade this guard exists to prevent —
+     * `SiteTree::onBeforeDelete()` deleting every current
+     * `AllChildren()` when a page is deleted from a stage — only fires on
+     * `SiteTree` itself, and only when `SiteTree::config()->get('enforce_
+     * strict_hierarchy')` is true (the framework default; note this reads
+     * `SiteTree`'s own config, not `static::config()`, so a subclass
+     * override doesn't change whether the cascade actually runs). `Hierarchy`
+     * itself declares no `onBeforeDelete`/`onAfterDelete`, and `Versioned`
+     * only has `onAfterDelete` — so a `Hierarchy`-extended non-`SiteTree`
+     * class, or a project that has turned the config off, was previously
+     * refused here (and required `force`) for a cascade that was never
+     * actually going to happen.
      *
      * Deliberately queries by $record's own concrete class
      * (`get_class($record)`), not `Hierarchy::getHierarchyBaseClass()` —
@@ -388,7 +404,7 @@ class PublishOrchestrator
      */
     protected function findDescendantIDs(DataObject $record, string $stage): array
     {
-        if (!$record->hasExtension(Hierarchy::class)) {
+        if (!$record instanceof SiteTree || !SiteTree::config()->get('enforce_strict_hierarchy')) {
             return [];
         }
 

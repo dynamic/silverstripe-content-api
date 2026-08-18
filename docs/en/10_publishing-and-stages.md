@@ -216,8 +216,13 @@ rather than merely not-yet-published, a plain `subtree` call puts it back live. 
 `{"dryRun": true}` first to see exactly what a real call would touch before running it for
 real.
 
-The guard only applies to classes carrying the `Hierarchy` extension — a plain versioned
-`DataObject` with no tree concept is unaffected (nothing to cascade to).
+The guard only applies to `SiteTree` records with `enforce_strict_hierarchy` enabled — the only
+combination `SiteTree::onBeforeDelete()`'s cascade actually fires for (#89). A `Hierarchy`-
+extended, `Versioned` class that isn't `SiteTree`, or a project that has explicitly set
+`SiteTree.enforce_strict_hierarchy: false`, never has this cascade risk in the first place, so
+`unpublish`/`archive` on those succeed directly with no need for `force` — passing `force` there
+was previously required for a cascade that was never actually going to happen. A plain versioned
+`DataObject` with no tree concept is unaffected either way (nothing to cascade to).
 
 ## Composition-level publish restriction
 

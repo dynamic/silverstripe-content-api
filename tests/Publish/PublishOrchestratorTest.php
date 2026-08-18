@@ -6,11 +6,13 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestHierarchyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
 use Psr\Log\LoggerInterface;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Security\InheritedPermissions;
@@ -286,6 +288,60 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $this->assertFalse($this->isLive($wrapper->ID));
     }
 
+    /**
+     * #89: the guard used to key on `hasExtension(Hierarchy::class)`, but
+     * `SiteTree::onBeforeDelete()`'s cascade — the actual risk being
+     * guarded against — only fires when `SiteTree.enforce_strict_hierarchy`
+     * is enabled. With it turned off, unpublishing a page with live
+     * children must succeed without `force`, and the framework itself must
+     * not have cascaded anything away.
+     */
+    public function testUnpublishSucceedsWithoutForceWhenEnforceStrictHierarchyIsDisabled(): void
+    {
+        Config::modify()->set(SiteTree::class, 'enforce_strict_hierarchy', false);
+
+        $wrapper = $this->publishedPage('No Cascade Wrapper');
+        $child = $this->publishedPage('No Cascade Child', $wrapper->ID);
+
+        $this->orchestrator->unpublish($wrapper);
+
+        $this->assertFalse($this->isLive($wrapper->ID));
+        $this->assertTrue(
+            $this->isLive($child->ID),
+            'enforce_strict_hierarchy=false means the framework never cascades — the child must still be live'
+        );
+    }
+
+    public function testArchiveSucceedsWithoutForceWhenEnforceStrictHierarchyIsDisabled(): void
+    {
+        Config::modify()->set(SiteTree::class, 'enforce_strict_hierarchy', false);
+
+        $wrapper = $this->publishedPage('No Cascade Archive Wrapper');
+        $child = $this->publishedPage('No Cascade Archive Child', $wrapper->ID);
+
+        $this->orchestrator->archive($wrapper);
+
+        $this->assertFalse($this->isLive($wrapper->ID));
+        $this->assertTrue($this->isLive($child->ID));
+    }
+
+    /**
+     * #89's second consequence: a `Hierarchy`-extended, `Versioned` class
+     * that isn't `SiteTree` was refused the same as a page, even though
+     * `SiteTree::onBeforeDelete()` — the only place the cascade lives — can
+     * never fire on it at all.
+     */
+    public function testUnpublishSucceedsWithoutForceOnAHierarchyClassThatIsNotSiteTree(): void
+    {
+        $wrapper = $this->publishedHierarchyObject('Non-SiteTree Wrapper');
+        $child = $this->publishedHierarchyObject('Non-SiteTree Child', $wrapper->ID);
+
+        $this->orchestrator->unpublish($wrapper);
+
+        $this->assertFalse($this->isLiveHierarchyObject($wrapper->ID));
+        $this->assertTrue($this->isLiveHierarchyObject($child->ID));
+    }
+
     public function testSubtreeModePublishesEveryDraftDescendant(): void
     {
         $root = ApiTestPage::create(['Title' => 'Subtree Root']);
@@ -519,5 +575,21 @@ class PublishOrchestratorTest extends ContentApiTestCase
     private function isLive(int $id): bool
     {
         return (bool) Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $id)->exists();
+    }
+
+    private function publishedHierarchyObject(string $title, int $parentID = 0): ApiTestHierarchyObject
+    {
+        $object = ApiTestHierarchyObject::create(['Title' => $title, 'ParentID' => $parentID]);
+        $object->write();
+        $object->publishRecursive();
+
+        return $object;
+    }
+
+    private function isLiveHierarchyObject(int $id): bool
+    {
+        return (bool) Versioned::get_by_stage(ApiTestHierarchyObject::class, Versioned::LIVE)
+            ->filter('ID', $id)
+            ->exists();
     }
 }
