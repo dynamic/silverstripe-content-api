@@ -93,7 +93,24 @@ class CompositionService
         }
 
         // 1. Page
-        [$page, $pageOperation] = $this->resolvePage($pageSpec, $member);
+        [$page, $pageOperation] = $this->resolvePage($pageSpec, $member, $publishMode);
+
+        // #114: publishAll() below calls $page->publishRecursive() directly
+        // — it doesn't go through PublishOrchestrator (which itself never
+        // authorizes the root; see its own docblock) or RecordWriter::write()
+        // (the page's own field write below never carries a "publish" key,
+        // so that class's #114 check never fires for it either). Without
+        // this, a class granting update/create but withholding action could
+        // still have its page published via a composition, the same gap
+        // #114 closed for a payload write's own "publish" key and for
+        // convertPage(). get_class($page) is deliberately read AFTER
+        // resolvePage() (which already ran convertPage()'s own equivalent
+        // check on the target class, if convertTo was used) — checking the
+        // page's final class here is idempotent with that check, not a
+        // conflicting second decision.
+        if ($publishMode === 'recursive') {
+            $this->policy->checkClassAccess(get_class($page), 'action', $member);
+        }
 
         $pageWarnings = [];
 
@@ -168,7 +185,7 @@ class CompositionService
     /**
      * @return array{0: SiteTree, 1: string} page + operation performed
      */
-    protected function resolvePage(array $pageSpec, Member $member): array
+    protected function resolvePage(array $pageSpec, Member $member, string $publishMode = 'none'): array
     {
         $match = (array) ($pageSpec['match'] ?? []);
 
@@ -201,7 +218,8 @@ class CompositionService
                 $page,
                 (string) $pageSpec['convertTo'],
                 !empty($pageSpec['force']),
-                $member
+                $member,
+                $publishMode
             );
 
             if ($converted) {
@@ -290,8 +308,13 @@ class CompositionService
         return $page;
     }
 
-    protected function convertPage(SiteTree $page, string $targetRef, bool $force, Member $member): ?SiteTree
-    {
+    protected function convertPage(
+        SiteTree $page,
+        string $targetRef,
+        bool $force,
+        Member $member,
+        string $publishMode = 'none'
+    ): ?SiteTree {
         $targetClass = $this->registry->resolve($targetRef);
 
         if (!is_a($targetClass, SiteTree::class, true)) {
@@ -315,6 +338,17 @@ class CompositionService
         }
 
         $this->policy->checkRecordAccess($page, 'update', $member);
+
+        // #114: same gap as PageHandler::convert() — only the
+        // *pre-conversion* record's 'update' verb was ever checked, never
+        // the *target* class's own verbs, before the converted instance is
+        // written and (with publishMode "recursive") published as root via
+        // publishAll() below.
+        $this->policy->checkClassAccess($targetClass, 'update', $member);
+
+        if ($publishMode !== 'none') {
+            $this->policy->checkClassAccess($targetClass, 'action', $member);
+        }
 
         /** @var SiteTree $converted */
         $converted = $page->newClassInstance($targetClass);
@@ -706,6 +740,15 @@ class CompositionService
      * archive action on this surface) rather than a second, duck-typed
      * hasMethod('publishSingle') check keeps that answer from being able to
      * diverge between call sites.
+     *
+     * KNOWN GAP, not covered by #114 (tracked as #168): `publish($record,
+     * 'single', $member)` performs no authorization at all, and nothing
+     * upstream checks the `action` verb for the area/element/child classes
+     * either — their own writes always pass `"publish": "none"` explicitly.
+     * Only the *page* itself is authorized before this method runs (see
+     * `compose()`, above). This is the owned-relation publish cascade #119
+     * exists to formalize with real authorization; closing it here would be
+     * scope creep onto that issue.
      */
     protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): void
     {

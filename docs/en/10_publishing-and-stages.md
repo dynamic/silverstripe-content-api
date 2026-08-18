@@ -111,9 +111,18 @@ actions](#publishunpublisharchive-actions) for how to pass them):
   publish it by publishing an ancestor they can edit instead. The whole subtree is checked
   *before* anything is written — a permission gap on descendant #12 refuses the entire call
   rather than leaving descendants #1-11 live with no way to undo it. The *root* record itself is
-  assumed to already be authorized by whichever call site is invoking `publish()` — that
-  assumption doesn't hold everywhere yet; see `PublishOrchestrator::collectSubtreeTargets()`'s
-  docblock (issue #114).
+  assumed to already be authorized by whichever call site is invoking `publish()`. Fixed for
+  every root-record call site (#114): `RecordActionsHandler` checks `action` directly;
+  `RecordWriter::write()` checks the class-level `action` verb whenever the payload's `publish`
+  key isn't `none`; `PageHandler::convert()`/`CompositionService::convertPage()` check the
+  *target* class's `action` verb under the same condition, not just the *pre-conversion*
+  record's `update`; and `CompositionService::compose()` itself checks the page's own `action`
+  verb before `publishAll()`, whether or not `convertTo` was used. See
+  `PublishOrchestrator::collectSubtreeTargets()`'s docblock — including the paragraph naming
+  what's still **not** covered: a composition's *area* and *elements* publish via `publish()`'s
+  `single` mode with no authorization check at all (the same gap exists in
+  `PageHandler::applyTemplate()`'s own `publishSingle()` calls), tracked as #168, a gap #119's
+  owned-relation cascade work is scoped to close, not this issue.
 - **`liveOnly`**: skip a descendant branch — no publish, no recursing into its own children —
   when it isn't already live. See the resurrection-risk warning below.
 - **`dryRun`**: run the full authorization-checked walk (so the same error a real call would

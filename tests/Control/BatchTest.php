@@ -286,6 +286,33 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #114: `defaultPublish` (or a per-op "publish" key) reaches
+     * RecordWriter::write() the same as any single-record write — a class
+     * granting `create` but not `action` must refuse a batch op that
+     * inherits a non-"none" publish mode, not just single-record writes.
+     */
+    public function testDefaultPublishRequiresTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,create,update');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestVersioned',
+                    'externalId' => 'b-forbidden',
+                    'fields' => ['Title' => 'Batch Forbidden'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error'], 'the batch call itself must succeed — only the op fails');
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('FORBIDDEN_CLASS', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
      * Write-pipeline coverage absorbed from the removed HTTP CRUD endpoints —
      * batch ops run the same RecordWriter/WriteApplicator path.
      */
