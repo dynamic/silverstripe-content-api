@@ -32,6 +32,12 @@ All notable changes to this project are documented here. Format loosely follows
   closes the data-integrity hole (nothing is left half-committed); it doesn't yet restore
   accurate error reporting on that specific path.
 
+  Verified against the real production shape, not just a single top-level call: a nested
+  `DbTransaction::run()` (`BatchProcessor` opening one transaction, `RecordWriter::write()`
+  opening another inside it per op — the exact shape `NestedTransactionManager`'s savepoint
+  bookkeeping engages for) correctly rolls back both levels and leaves `transactionDepth()`
+  balanced when an `Error` escapes the inner call.
+
 ### Docs
 - **(#147)** `docs/en/15_testing-and-contributing.md` now documents the actual pre-push gate:
   Actions is disabled on this repo (`actions/permissions` → `enabled: false`), so `local-ci` —
