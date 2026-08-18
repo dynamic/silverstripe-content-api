@@ -7,6 +7,7 @@ use Dynamic\ContentApi\Tasks\SetupServiceAccountTask;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Security\Group;
+use SilverStripe\Security\Member;
 use SilverStripe\Security\Permission;
 
 /**
@@ -95,6 +96,60 @@ class SetupServiceAccountTaskTest extends SapphireTest
 
         $this->assertStringContainsString('group cannot be empty.', $output);
         $this->assertStringNotContainsString('--group', $output);
+    }
+
+    /**
+     * #124: omitting `member` entirely keeps the pre-existing behavior —
+     * only the group-provisioning "mint a token" hint, no member step run
+     * at all. Explicit opt-in, not run by default.
+     */
+    public function testOmittingMemberSkipsMemberProvisioningEntirely(): void
+    {
+        Member::get()->filter('Email', 'adapter-member-test@example.com')->removeAll();
+
+        $this->runTask(['group' => 'Test Adapter No Member']);
+
+        $this->assertNull(Member::get()->filter('Email', 'adapter-member-test@example.com')->first());
+    }
+
+    /**
+     * #124: passing `member=` also find-or-creates that Member and attaches
+     * it to the just-provisioned group, and the final "mint a token" hint
+     * uses the real email rather than the placeholder.
+     */
+    public function testMemberVarAlsoProvisionsAndAttachesTheMember(): void
+    {
+        Member::get()->filter('Email', 'adapter-member-test@example.com')->removeAll();
+
+        $output = $this->runTask([
+            'group' => 'Test Adapter With Member',
+            'member' => 'adapter-member-test@example.com',
+        ]);
+
+        $group = Group::get()->filter('Title', 'Test Adapter With Member')->first();
+        $member = Member::get()->filter('Email', 'adapter-member-test@example.com')->first();
+
+        $this->assertNotNull($member);
+        $this->assertTrue($member->inGroup($group));
+        $this->assertStringContainsString(
+            'Mint a token: sake dev/tasks/MintContentApiToken email=adapter-member-test@example.com',
+            $output
+        );
+
+        Member::get()->filter('Email', 'adapter-member-test@example.com')->removeAll();
+    }
+
+    /**
+     * ServiceAccountMemberProvisioner's own message text uses branch `2`'s
+     * SS6 --flag syntax (`--member`) — this adapter must translate it the
+     * same way it already does for `ServiceAccountProvisioner`'s `--group`.
+     */
+    public function testEmptyMemberRejectionUsesThisBranchsSyntax(): void
+    {
+        $output = $this->runTask(['group' => 'Test Adapter Empty Member', 'member' => '']);
+
+        $this->assertStringContainsString('member cannot be empty.', $output);
+        $this->assertStringNotContainsString('--member', $output);
     }
 
     protected function runTask(array $vars): string
