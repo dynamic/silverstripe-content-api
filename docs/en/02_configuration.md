@@ -18,8 +18,10 @@ deliberately.
 | `tokenLife` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `604800` (7 days, seconds) | Token lifetime. Raise for long-lived service accounts (e.g. `31536000` for a year) rather than relying on refresh |
 | `autoRefreshLifetime` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `false` | No activity auto-refresh — a fixed, predictable, revocable lifetime |
 
-`ContentApiController.cors_enabled` (default `false`) is this module's own CORS flag, separate
-from colymba's.
+`/content-api/v1` itself has no CORS surface — it emits no `Access-Control-*` headers and handles
+no `OPTIONS` preflight. That's a deliberate position, not an oversight: the endpoint is designed
+for server-to-server/agent callers, not browsers. `cors.Enabled` above is colymba's own `/api`
+surface only.
 
 ## ClassRegistry
 

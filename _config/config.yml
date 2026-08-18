@@ -28,7 +28,3 @@ Colymba\RESTfulAPI\RESTfulAPI:
 Colymba\RESTfulAPI\Authenticators\TokenAuthenticator:
   tokenLife: 604800
   autoRefreshLifetime: false
-
-Dynamic\ContentApi\Control\ContentApiController:
-  # CORS is off by default: the API is designed for server-to-server / agent callers.
-  cors_enabled: false
