@@ -65,16 +65,20 @@ check; `ContentApiGrantExtension` (step 2) is what satisfies the record-level `c
 service account needs both. A task provisions the permission codes in one step:
 
 ```bash
-sake tasks:SetupContentApiServiceAccount --group="Content API Service Accounts"
+sake tasks:SetupContentApiServiceAccount --group="Content API Service Accounts" --member=agent@example.com
 sake tasks:MintContentApiToken --email=agent@example.com
 ```
 
 Add `--populate` to the first command too if the account needs batch/compositions/asset
-writes/page actions.
+writes/page actions. `--member` (#124) also find-or-creates that Member and attaches it to the
+group in the same step — omit it and the Member step is skipped entirely, matching the older
+two-task behavior where a project supplied its own Member. This is a real, repeated step in the
+provisioning ritual, not a one-time setup: a DB sync wipes any locally-created service-account
+Member (it isn't part of a synced prod snapshot), so most projects re-run `--member` after every
+sync rather than passing it only once.
 
-(Assign the member to the group first if `MintContentApiToken` doesn't do so itself — the two
-tasks are independent.) The plaintext token is printed once — see
-[Authentication](03_authentication.md) for storage and rotation.
+The plaintext token is printed once — see [Authentication](03_authentication.md) for storage and
+rotation.
 
 ## 4. Call it
 

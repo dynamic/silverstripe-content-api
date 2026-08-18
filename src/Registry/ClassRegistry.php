@@ -8,6 +8,7 @@ use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\ORM\DataObject;
 
 /**
  * Maps short class references used in URLs/payloads to FQCNs and resolves each
@@ -332,6 +333,18 @@ class ClassRegistry
     /**
      * Resolve a short class reference to its FQCN.
      *
+     * `$classRef` is a short ref, not an FQCN, so the two ways this can fail
+     * are genuinely different and worth distinguishing in the message (#125):
+     * a ref with no `models:` entry at all (the common case — a real class
+     * that was simply never registered) vs. a `models:` entry that points at
+     * an FQCN that doesn't autoload (a broken/stale config value, effectively
+     * a server misconfiguration). Both still throw the same `UNKNOWN_CLASS`
+     * code — the two existing tests (`SchemaTest`, `RecordsReadTest`) assert
+     * that code/status on the unmapped-ref path, and splitting it into a new
+     * code would be a breaking change to any caller branching on `error.code`
+     * for a discoverability gap that doesn't need one. What changes is only
+     * the message and `details`.
+     *
      * @throws ApiError UNKNOWN_CLASS when unmapped, missing or not exposed
      */
     public function resolve(string $classRef): string
@@ -339,14 +352,115 @@ class ClassRegistry
         $models = $this->mergedModels();
         $className = $models[$classRef] ?? null;
 
-        if (!$className || !class_exists($className)) {
+        // Deliberately !empty(), not !== null — an empty-string config value
+        // (`models: {ref: ''}`) is functionally unmapped, same as the
+        // original `!$className` check treated it, not "registered to
+        // nothing."
+        if (!empty($className) && !class_exists($className)) {
             throw new ApiError(
                 ErrorCode::UNKNOWN_CLASS,
-                sprintf('Unknown class reference "%s".', $classRef)
+                sprintf(
+                    'Class reference "%s" is registered to "%s", but that class does not exist '
+                        . '(autoload failure or stale "models:" config).',
+                    $classRef,
+                    $className
+                ),
+                [['field' => null, 'code' => 'CLASS_NOT_FOUND', 'message' => $className]]
+            );
+        }
+
+        if (!$className) {
+            $suggestion = $this->findClassBasenameMatch($classRef);
+
+            // #125 review follow-up: the suggestion is worthless (or actively
+            // wrong) in two cases the basename match alone can't see —
+            // caught here, not inside findClassBasenameMatch(), since both
+            // need $models, which that method deliberately doesn't take.
+            if ($suggestion !== null) {
+                // (a) already registered, just under a different ref — the
+                // fix is "use that ref", not "add a models: entry", and
+                // telling the caller to add one invites a duplicate alias.
+                $existingRef = array_search($suggestion, $models, true);
+
+                if ($existingRef !== false) {
+                    throw new ApiError(
+                        ErrorCode::UNKNOWN_CLASS,
+                        sprintf(
+                            'Unknown class reference "%s". "%s" is already registered, as ref '
+                                . '"%s" — use that instead.',
+                            $classRef,
+                            $suggestion,
+                            $existingRef
+                        ),
+                        [['field' => null, 'code' => 'CLASS_ALREADY_MAPPED', 'message' => (string) $existingRef]]
+                    );
+                }
+            }
+
+            throw new ApiError(
+                ErrorCode::UNKNOWN_CLASS,
+                $suggestion !== null
+                    ? sprintf(
+                        'Unknown class reference "%s". A class named "%s" exists (%s) but has no '
+                            . '"models:" entry — add one in your content-api.yml.',
+                        $classRef,
+                        ClassInfo::shortName($suggestion),
+                        $suggestion
+                    )
+                    : sprintf('Unknown class reference "%s".', $classRef),
+                $suggestion !== null
+                    ? [['field' => null, 'code' => 'CLASS_NOT_MAPPED', 'message' => $suggestion]]
+                    : []
             );
         }
 
         return $className;
+    }
+
+    /**
+     * Best-effort suggestion for `resolve()`'s "unmapped ref" branch: does a
+     * `DataObject` subclass exist whose short (unqualified) name matches
+     * `$classRef` case-insensitively? This is what actually cost real time on
+     * `sheboygan-youth-sailing-installer` (#125) — a live, working
+     * `SearchPage` class 404'd `UNKNOWN_CLASS` with nothing pointing at the
+     * real fix (a missing `models:` entry), and the investigation took real
+     * time specifically because the error read like a typo/routing problem
+     * rather than a registration gap.
+     *
+     * (b) Never suggests a `discoveryDenylist()` class — caught here, not by
+     * the caller. `Member`/`Group`/`Permission`/etc. are hardcoded-excluded
+     * from discovery for exactly this reason (the class docblock: "a project
+     * can't accidentally relax it away"), and a first version of this method
+     * suggested them anyway — reviewed and caught before merge. Telling a
+     * caller to register `Member` would both give actively wrong guidance
+     * and turn `resolve()` into an existence oracle for classes the module
+     * has specifically decided callers shouldn't be pointed at, regardless
+     * of whether they already hold a valid token.
+     *
+     * Deliberately narrow otherwise: only matches an exact case-insensitive
+     * basename, never a fuzzy/partial match — a wrong suggestion would be
+     * worse than none. Returns the first match found; ambiguity between two
+     * identically-named classes in different namespaces isn't worth
+     * resolving further here, since either surviving result still correctly
+     * signals "register this" (and (a) above already prefers an
+     * already-registered match when there is one).
+     */
+    private function findClassBasenameMatch(string $classRef): ?string
+    {
+        $needle = strtolower($classRef);
+        $denylist = $this->discoveryDenylist();
+
+        foreach (ClassInfo::subclassesFor(DataObject::class, false) as $candidate) {
+            if (in_array($candidate, $denylist, true)) {
+                continue;
+            }
+
+            if (strtolower(ClassInfo::shortName($candidate)) === $needle) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -67,10 +67,13 @@ class SchemaService
         return [
             'api' => 'silverstripe-content-api/v1',
             'environment' => Director::get_environment_type(),
-            // isPopulationAllowed() — not checkPopulationAllowed() — this is
-            // a read-only status probe, not an attempted write, and must
-            // never trigger checkPopulationAllowed()'s own "population
-            // blocked" warning log on every GET (#126 review follow-up).
+            // #126: the silent probe, not checkPopulationAllowed() — a
+            // schema read is not itself an attempted write, and must never
+            // trigger the "population blocked" warning that method logs
+            // for an actual blocked write. The prior try/catch here called
+            // the throwing method purely to test its outcome, which meant
+            // every GET schema/site against a blocked environment logged a
+            // false "blocked" warning on nothing more than a read.
             'populationEnabled' => $this->environmentGate->isPopulationAllowed(),
             'crud' => $this->crudSurface(),
             'integrations' => $this->detectIntegrations(),

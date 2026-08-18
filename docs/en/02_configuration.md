@@ -99,7 +99,10 @@ only fires outside `population_enabled_environments` — so a clean, repeated lo
 no signal whatsoever that a real target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. The gate
 also logs a warning server-side (not just the `403 ENV_FORBIDDEN` response) the moment it blocks
 a call, specifically so this is visible in a deploy/ops log even when nothing is watching the API
-response itself (#126).
+response itself. The response itself also carries structured `details` (`environment`, `envVar`,
+`populationEnabledEnvironments`) so a caller that isn't a human reading the message text — an
+agent driving this API on someone's behalf — can tell this apart from an ACL failure without
+being able to read the site's own `.env` (#126).
 
 ## WriteApplicator
 

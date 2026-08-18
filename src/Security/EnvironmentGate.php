@@ -36,6 +36,7 @@ class EnvironmentGate
         }
 
         $environment = Director::get_environment_type();
+        $allowed = (array) static::config()->get('population_enabled_environments');
 
         // #126: a `dev`/`test` rehearsal against this same gate never fires
         // it at all (this environment wouldn't reach this branch), so the
@@ -64,13 +65,27 @@ class EnvironmentGate
             // contract is — see the docblock above.
         }
 
+        // #126: the wire message already names the environment and the env
+        // var in prose, but a caller that isn't a human reading that text —
+        // an agent driving this API on someone's behalf, e.g. daisy-content
+        // — has no way to tell this apart from an ACL failure, and no way
+        // to go read the site's .env to find out which. Structured
+        // `details` makes the fix machine-actionable instead of prose-only,
+        // the same instinct as `ELEMENT_NOT_ALLOWED_ON_PAGE` already naming
+        // a page's actual allowed element types.
         throw new ApiError(
             ErrorCode::ENV_FORBIDDEN,
             sprintf(
                 'Population endpoints are disabled in the "%s" environment. '
                 . 'Set SS_CONTENT_API_ALLOW_POPULATE=1 to override deliberately.',
                 $environment
-            )
+            ),
+            [[
+                'code' => 'ENV_FORBIDDEN',
+                'environment' => $environment,
+                'envVar' => 'SS_CONTENT_API_ALLOW_POPULATE',
+                'populationEnabledEnvironments' => $allowed,
+            ]]
         );
     }
 
