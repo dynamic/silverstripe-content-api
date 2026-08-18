@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-08-18
+
 ### Added
 - **(#115, #118)** Backport of branch `2`'s `sake dev/tasks/GenerateContentApiExposure`
   (`GenerateContentApiExposureTask`/`ExposureScaffolder`), introspecting one or more `root=`
@@ -14,9 +16,8 @@ All notable changes to this project are documented here. Format loosely follows
   shared `ExposureScaffolder` business logic as branch `2` (2.2.0); only the entry point differs,
   this branch's legacy `run($request)` adapter translating `key=value` request vars instead of
   Symfony Console `--flag` options. `ExposureScaffolder::AUTO_GENERATED_BANNER` no longer names
-  either branch's invocation syntax directly, so the file no longer has a reason to differ once
-  the pending merge-up resolves the add/add conflict this backport creates on branch `2` (which
-  still carries the old branch-2-specific banner text until then).
+  either branch's invocation syntax directly, so the file reads identically on both branches —
+  merged up to branch `2` (#189), resolving the add/add conflict this backport created there.
 
 ### Fixed
 - **(#186)** `ContentApiTestCase` now pins `SilverStripe\Assets\File`/`Image` to
@@ -936,6 +937,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.12.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.11.0...1.12.0
 [1.11.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.10.0...1.11.0
 [1.10.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.9.0...1.10.0
 [1.9.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.8.0...1.9.0
