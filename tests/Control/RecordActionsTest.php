@@ -5,10 +5,12 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestForceUnpublishPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedAssetOwnerObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\Assets\Image;
 use SilverStripe\Versioned\Versioned;
 
 class RecordActionsTest extends ContentApiTestCase
@@ -41,10 +43,13 @@ class RecordActionsTest extends ContentApiTestCase
     }
 
     /**
-     * #130 code-review regression: `dryRun` only ever means anything for
-     * `publish` mode "subtree" — unpublish/archive have no dry-run
-     * support at all and must reject the flag outright rather than
-     * silently performing the real, irreversible action.
+     * #130 code-review regression, extended by #119: `dryRun` means
+     * something for `publish` mode "subtree"/"owns" and `unpublish` mode
+     * "owns" — a plain (`single`-mode, the default) unpublish and archive
+     * have no dry-run support at all and must reject the flag outright
+     * rather than silently performing the real, irreversible action. See
+     * `testUnpublishOwnsDryRunViaHttpReturnsThePreviewEnvelopeWithoutWriting`
+     * for the positive "owns" case this test doesn't cover.
      */
     public function testUnpublishAndArchiveRejectDryRunNotSilentlyIgnoringIt(): void
     {
@@ -559,6 +564,140 @@ class RecordActionsTest extends ContentApiTestCase
         $this->assertFalse(
             Versioned::get_by_stage(ApiTestOwnedParentObject::class, Versioned::LIVE)
                 ->filter('ID', $parent->ID)->exists()
+        );
+    }
+
+    /**
+     * #119: `mode: "owns"` on unpublish must actually reach
+     * `PublishOrchestrator::unpublish()` with that mode and cascade to the
+     * owned child — the unpublish-side counterpart to
+     * `testPublishActionAcceptsAnExplicitOwnsMode`.
+     */
+    public function testUnpublishActionAcceptsAnExplicitOwnsMode(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Unpublish Action Owns Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Unpublish Action Owns Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        $this->apiPost("records/ApiTestOwnedParent/{$parent->ID}/publish", ['mode' => 'owns'], $token);
+
+        $response = $this->decode(
+            $this->apiPost("records/ApiTestOwnedParent/{$parent->ID}/unpublish", ['mode' => 'owns'], $token)
+        );
+
+        $this->assertFalse($response['data']['stage']['live']);
+        $this->assertFalse(
+            Versioned::get_by_stage(ApiTestOwnedChildObject::class, Versioned::LIVE)
+                ->filter('ID', $child->ID)->exists(),
+            'mode=owns must reach PublishOrchestrator::unpublish() with the owns mode and cascade to the owned child'
+        );
+
+        $unpublishedIDs = array_column($response['meta']['unpublished'], 'id');
+        $this->assertContains((int) $parent->ID, $unpublishedIDs);
+        $this->assertContains((int) $child->ID, $unpublishedIDs);
+        $this->assertSame([], $response['meta']['skipped']);
+    }
+
+    public function testUnpublishOwnsDryRunViaHttpReturnsThePreviewEnvelopeWithoutWriting(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Unpublish Owns DryRun Envelope Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create([
+            'Title' => 'Unpublish Owns DryRun Envelope Child',
+            'ParentID' => $parent->ID,
+        ]);
+        $child->write();
+
+        $this->apiPost("records/ApiTestOwnedParent/{$parent->ID}/publish", ['mode' => 'owns'], $token);
+
+        $response = $this->decode($this->apiPost(
+            "records/ApiTestOwnedParent/{$parent->ID}/unpublish",
+            ['mode' => 'owns', 'dryRun' => true],
+            $token
+        ));
+
+        $this->assertSame('unpublishDryRun', $response['meta']['operation']);
+        $this->assertSame('owns', $response['meta']['mode']);
+        $previewedIDs = array_column($response['data']['wouldUnpublish'], 'id');
+        $this->assertContains((int) $parent->ID, $previewedIDs);
+        $this->assertContains((int) $child->ID, $previewedIDs);
+
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestOwnedParentObject::class, Versioned::LIVE)
+                ->filter('ID', $parent->ID)->exists(),
+            'dryRun must never write'
+        );
+    }
+
+    /**
+     * A shared `Image` reached via two independent roots' `$owns` must
+     * stay live and appear in `skipped` — the HTTP-level counterpart to
+     * `PublishOrchestratorTest::testUnpublishOwnsExcludesASharedAssetAndReportsItSkipped`,
+     * confirming the exclusion survives the handler layer's own response
+     * mapping intact.
+     */
+    public function testUnpublishOwnsExcludesASharedAssetViaHttp(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $asset = Image::create();
+        $asset->setFromString('not-real-image-bytes', 'http-shared-asset.jpg');
+        $asset->Title = 'HTTP Shared Asset';
+        $asset->write();
+        $asset->publishSingle();
+
+        $ownerA = ApiTestOwnedAssetOwnerObject::create(['Title' => 'HTTP Owner A', 'AssetID' => $asset->ID]);
+        $ownerA->write();
+        $ownerA->publishSingle();
+
+        $ownerB = ApiTestOwnedAssetOwnerObject::create(['Title' => 'HTTP Owner B', 'AssetID' => $asset->ID]);
+        $ownerB->write();
+        $ownerB->publishSingle();
+
+        $response = $this->decode(
+            $this->apiPost("records/ApiTestOwnedAssetOwner/{$ownerA->ID}/unpublish", ['mode' => 'owns'], $token)
+        );
+
+        $this->assertFalse($response['data']['stage']['live']);
+        $this->assertTrue(
+            Versioned::get_by_stage(Image::class, Versioned::LIVE)->filter('ID', $asset->ID)->exists(),
+            'the shared asset must stay live — owner B still needs it'
+        );
+
+        $this->assertCount(1, $response['meta']['skipped']);
+        $this->assertSame((int) $asset->ID, $response['meta']['skipped'][0]['id']);
+        $this->assertSame('SHARED_ASSET_CLASS', $response['meta']['skipped'][0]['reason']);
+    }
+
+    /**
+     * A plain (`single`-mode, the default) unpublish must still reject
+     * `dryRun` — only `mode: "owns"` narrows the #130 rejection.
+     */
+    public function testUnpublishSingleModeStillRejectsDryRun(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $target = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+        $target->publishRecursive();
+
+        $response = $this->apiPost(
+            "records/ApiTestVersioned/{$target->ID}/unpublish",
+            ['dryRun' => true],
+            $token
+        );
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestVersionedObject::class, Versioned::LIVE)
+                ->filter('ID', $target->ID)->exists(),
+            'nothing should have run — the record must still be live'
         );
     }
 }

@@ -107,13 +107,50 @@ class OwnedTreeWalker
         return $this->walkRelations($root, $maxDepth, self::MODE_DUPLICATES);
     }
 
+    /**
+     * Same walk as {@see walk()}, but a record whose class `is_a()` one of
+     * `$excludedClasses` is neither emitted nor expanded — its own owned
+     * relations (if it declares any) are out of scope for this walk too, so
+     * an excluded node can't smuggle something back in underneath it. Built
+     * for #119's unpublish cascade: `File`/`Image` are routinely owned by
+     * more than one live record, and unpublishing a shared asset out from
+     * under an unrelated page is exactly the hazard the issue calls out —
+     * excluding `File::class` here (which covers `Image` via inheritance)
+     * keeps every asset live regardless of how many owners reach it.
+     *
+     * The root itself is never reported as excluded — same convention as
+     * {@see collect()}'s existing depth-0 emission gate, since the caller
+     * (not this walker) is responsible for the root.
+     *
+     * @param string[] $excludedClasses
+     * @return array{
+     *   targets: array<int, array{record: DataObject, depth: int}>,
+     *   skipped: array<int, array{record: DataObject, depth: int}>
+     * }
+     */
+    public function walkOwnedExcluding(DataObject $root, array $excludedClasses, ?int $maxDepth = null): array
+    {
+        $maxDepth ??= (int) static::config()->get('max_depth');
+        $visited = [];
+        $result = [];
+        $skipped = [];
+
+        $this->collect($root, 0, $maxDepth, self::MODE_OWNS, $visited, $result, $excludedClasses, $skipped);
+
+        return [
+            'targets' => array_values($result),
+            'skipped' => array_values($skipped),
+        ];
+    }
+
     protected function walkRelations(DataObject $root, ?int $maxDepth, string $mode): array
     {
         $maxDepth ??= (int) static::config()->get('max_depth');
         $visited = [];
         $result = [];
+        $skipped = [];
 
-        $this->collect($root, 0, $maxDepth, $mode, $visited, $result);
+        $this->collect($root, 0, $maxDepth, $mode, $visited, $result, [], $skipped);
 
         return array_values($result);
     }
@@ -205,6 +242,12 @@ class OwnedTreeWalker
      *   reference; may briefly contain gaps (unset(), not re-indexed) when
      *   a shallower path replaces a deeper entry for the same node —
      *   walk() re-indexes with array_values() once collection finishes
+     * @param string[] $excludedClasses classes (matched via is_a(), so a
+     *   subclass is covered by naming its parent) neither emitted nor
+     *   expanded — see {@see walkOwnedExcluding()}
+     * @param array<string, array{record: DataObject, depth: int}> $skipped
+     *   "ClassName:id" => the shallowest depth an excluded node was reached
+     *   at, by reference
      */
     protected function collect(
         DataObject $record,
@@ -212,7 +255,9 @@ class OwnedTreeWalker
         int $maxDepth,
         string $mode,
         array &$visited,
-        array &$result
+        array &$result,
+        array $excludedClasses = [],
+        array &$skipped = []
     ): void {
         $key = get_class($record) . ':' . $record->ID;
 
@@ -223,6 +268,21 @@ class OwnedTreeWalker
         }
 
         $visited[$key] = $depth;
+
+        if ($depth > 0) {
+            foreach ($excludedClasses as $excludedClass) {
+                if (is_a($record, $excludedClass)) {
+                    // Excluded — not emitted, and not expanded: whatever it
+                    // owns is out of scope for this walk, not just the node
+                    // itself. Keyed by $key so a shallower re-visit (same
+                    // diamond hazard as $result below) simply overwrites the
+                    // deeper entry in place rather than appending a dupe.
+                    $skipped[$key] = ['record' => $record, 'depth' => $depth];
+
+                    return;
+                }
+            }
+        }
 
         $isVersioned = $record->hasExtension(Versioned::class);
 
@@ -272,7 +332,16 @@ class OwnedTreeWalker
 
             if ($related instanceof DataObject) {
                 if ($related->exists()) {
-                    $this->collect($related, $depth + 1, $maxDepth, $mode, $visited, $result);
+                    $this->collect(
+                        $related,
+                        $depth + 1,
+                        $maxDepth,
+                        $mode,
+                        $visited,
+                        $result,
+                        $excludedClasses,
+                        $skipped
+                    );
                 }
 
                 continue;
@@ -281,7 +350,16 @@ class OwnedTreeWalker
             if (is_iterable($related)) {
                 foreach ($related as $child) {
                     if ($child instanceof DataObject) {
-                        $this->collect($child, $depth + 1, $maxDepth, $mode, $visited, $result);
+                        $this->collect(
+                            $child,
+                            $depth + 1,
+                            $maxDepth,
+                            $mode,
+                            $visited,
+                            $result,
+                            $excludedClasses,
+                            $skipped
+                        );
                     }
                 }
             }
