@@ -67,7 +67,7 @@ All notable changes to this project are documented here. Format loosely follows
   checks `action` for those classes either, since element writes always pass `"publish": "none"`
   explicitly. This is the owned-relation publish cascade #119 exists to formalize with real
   authorization across a whole `$owns` tree, not a single root record's own verb — closing it
-  here would be scope creep onto that issue. Filed as a residual follow-up.
+  here would be scope creep onto that issue. Filed as #168.
 
 ## [1.7.0] - 2026-08-17
 

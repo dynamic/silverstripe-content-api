@@ -740,6 +740,15 @@ class CompositionService
      * archive action on this surface) rather than a second, duck-typed
      * hasMethod('publishSingle') check keeps that answer from being able to
      * diverge between call sites.
+     *
+     * KNOWN GAP, not covered by #114 (tracked as #168): `publish($record,
+     * 'single', $member)` performs no authorization at all, and nothing
+     * upstream checks the `action` verb for the area/element/child classes
+     * either — their own writes always pass `"publish": "none"` explicitly.
+     * Only the *page* itself is authorized before this method runs (see
+     * `compose()`, above). This is the owned-relation publish cascade #119
+     * exists to formalize with real authorization; closing it here would be
+     * scope creep onto that issue.
      */
     protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): void
     {

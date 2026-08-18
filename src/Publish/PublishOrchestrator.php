@@ -191,7 +191,7 @@ class PublishOrchestrator
      * check never fires for them). This is the owned-relation cascade #119
      * exists to formalize with real authorization, not a single root
      * record's own verb — closing it here would be scope creep onto that
-     * issue, not a #114 fix.
+     * issue, not a #114 fix. Tracked separately as #168.
      *
      * `$liveOnly` (#102) skips a descendant branch entirely — no
      * collecting it as a target, no recursing into its own children, no
