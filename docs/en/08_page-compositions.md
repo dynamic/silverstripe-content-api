@@ -164,13 +164,16 @@ well-defined meaning at this level and would leave the rest on draft behind a li
 `publish` inside `elements[]` (though composition elements are always written `publish: "none"`
 internally and published via the composition's own explicit pass instead).
 
-`recursive` publishes the area, then every written element (and its children) individually via
-`PublishOrchestrator::publish($record, 'single')`, then finally `page->publishRecursive()` —
-**a page's own `publishRecursive()` does not cascade into owned elemental blocks**, so the
-composition does this explicitly rather than relying on that cascade. Not every has_many child
-model is Versioned (e.g. Essentials' `StatCounter` is a plain DataObject) — routing every publish
-through `PublishOrchestrator` (rather than a duck-typed `hasMethod('publishSingle')` check) keeps
-"is this record publishable" answered in exactly one place.
+`recursive` routes the area, every written element (and its children), and the page itself
+through `PublishOrchestrator::publishOwnedTree()` (the same primitive the `owns` publish mode
+uses, see [Publishing & stages](10_publishing-and-stages.md#publish-modes)) — **a page's own
+`publishRecursive()` does not cascade into owned elemental blocks**, so the composition does this
+explicitly rather than relying on that cascade. Every one of area/elements/children is
+authorization-checked (class `action` verb) before anything is written — #119/#168: a class
+granting `create`/`update` but withholding `action` now refuses the whole composition publish
+with `403 FORBIDDEN_CLASS`, where it previously published silently. Not every has_many child
+model is Versioned (e.g. Essentials' `StatCounter` is a plain DataObject) — `publishOwnedTree()`
+silently drops anything unversioned from its target set rather than erroring.
 
 ## Response
 

@@ -286,6 +286,37 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #119/#168: `owns` is reachable as a per-op `publish` value the same
+     * way `single`/`recursive`/`subtree` already are — no allowlist of its
+     * own on the batch surface, inherited from `PublishOrchestrator::MODES`
+     * via `RecordWriter::write()`'s `assertValidMode()` call. A class with
+     * no `$owns` declared behaves like `single` (see
+     * `PublishOrchestratorTest::testOwnsModeOnAClassWithNoOwnedRelationsJustPublishesTheRecordItself`),
+     * so this only needs to confirm the mode string itself isn't rejected
+     * and the record does publish.
+     */
+    public function testDefaultPublishAcceptsOwnsMode(): void
+    {
+        $body = $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'owns',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestVersioned',
+                    'externalId' => 'b-owns-live',
+                    'fields' => ['Title' => 'Batch Owns Live'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertTrue($body['data']['results'][0]['stage']['live']);
+
+        $record = ApiTestVersionedObject::get()->filter('FixtureIdentifier', 'b-owns-live')->first();
+        $this->assertTrue($record->isPublished());
+    }
+
+    /**
      * #114: `defaultPublish` (or a per-op "publish" key) reaches
      * RecordWriter::write() the same as any single-record write — a class
      * granting `create` but not `action` must refuse a batch op that

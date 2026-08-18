@@ -120,16 +120,30 @@ class RecordActionsHandler
                     $liveOnly = !empty($body['liveOnly']);
                     $dryRun = !empty($body['dryRun']);
 
-                    // liveOnly/dryRun only mean something for mode: "subtree"
-                    // — PublishOrchestrator::publish() itself just ignores
-                    // them on every other mode, which would silently perform
-                    // a real write while a caller reasonably believed
-                    // "dryRun": true guaranteed nothing changed. Refuse the
-                    // combination outright instead.
-                    if (($liveOnly || $dryRun) && $mode !== 'subtree') {
+                    // dryRun means something for "subtree" and "owns" alike
+                    // — both walk a set of descendants before writing.
+                    // liveOnly is "subtree"-only: it means "don't resurrect
+                    // a Hierarchy-tree branch deliberately taken offline",
+                    // a tree-hierarchy concept "owns" (an owned-relation
+                    // walk, not a tree walk) has no equivalent for.
+                    // PublishOrchestrator::publish() itself just ignores
+                    // dryRun/liveOnly on every other mode, which would
+                    // silently perform a real write while a caller
+                    // reasonably believed "dryRun": true guaranteed nothing
+                    // changed, or that "liveOnly": true was doing something
+                    // on a mode where it can't. Refuse both combinations
+                    // outright instead.
+                    if ($dryRun && !in_array($mode, ['subtree', 'owns'], true)) {
                         throw new ApiError(
                             ErrorCode::PAYLOAD_INVALID,
-                            'liveOnly/dryRun apply to "mode": "subtree" only.'
+                            'dryRun applies to "mode": "subtree" or "owns" only.'
+                        );
+                    }
+
+                    if ($liveOnly && $mode !== 'subtree') {
+                        throw new ApiError(
+                            ErrorCode::PAYLOAD_INVALID,
+                            'liveOnly applies to "mode": "subtree" only.'
                         );
                     }
 

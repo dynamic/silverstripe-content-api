@@ -13,7 +13,7 @@ writability is decided).
   "relations": { "Staff": { "mode": "add", "items": [ { "externalId": "staff-jane",
                  "extraFields": { "SortOrder": 1 } } ] } },
   "externalId": "home-hero",
-  "publish": "none|single|recursive"
+  "publish": "none|single|recursive|subtree|owns"
 }
 ```
 
@@ -154,8 +154,10 @@ Sets/matches the [external id](#external-ids) column for this write's target rec
 
 ## `publish`
 
-`none` (default — leave on draft), `single` (`publishSingle()`), or `recursive`
-(`publishRecursive()`). See [Publishing & stages](10_publishing-and-stages.md).
+`none` (default — leave on draft), `single` (`publishSingle()`), `recursive`
+(`publishRecursive()`), `subtree` (record plus every draft `Hierarchy` tree child), or `owns`
+(record plus every `$owns`-reachable descendant). See
+[Publishing & stages](10_publishing-and-stages.md).
 
 Anything other than `none` requires the class's `action` verb, not just `update`/`create` (#114)
 — see [Security model](04_security-model.md#class-level-gate).
