@@ -8,6 +8,8 @@ use SilverStripe\Dev\SapphireTest;
 use SilverStripe\ORM\DB;
 use SilverStripe\Security\Group;
 use SilverStripe\Security\Member;
+use SilverStripe\Security\MemberAuthenticator\MemberAuthenticator;
+use SilverStripe\Security\Permission;
 
 /**
  * Business-logic coverage for #124's branch-neutral member provisioner,
@@ -49,19 +51,33 @@ class ServiceAccountMemberProvisionerTest extends SapphireTest
     }
 
     /**
-     * This class never sets a password explicitly — confirmed live that
-     * `Member::write()` auto-generates a random, unknown one when none is
-     * set (framework/stack behavior, not this class's own), which is
-     * functionally equivalent for lockout purposes (nobody knows it) but
-     * worth pinning so a future stack change that silently drops that
-     * default doesn't go unnoticed here.
+     * #124 review follow-up (critical, caught before merge): a first draft
+     * relied on `Member::write()` to "auto-generate a random, unknown"
+     * password when none is set. That claim was wrong — an unset `Password`
+     * on a new record encrypts the *empty string*, a known credential, not
+     * an unknown one (`Member::onBeforeWrite()` re-encrypts on
+     * `!$this->ID`, and `$this->Password` is `null` -> `''` at that point).
+     * A prior version of this exact test only asserted
+     * `Password !== ''` — the stored bcrypt hash of `''` is a 60-char
+     * string, so that assertion passed identically whether the password
+     * was genuinely random or a hash of nothing, proving nothing.
+     *
+     * The real, security-relevant assertion: an empty password must not
+     * authenticate. This fails against the pre-fix behavior and passes
+     * against the fix (an explicit `generateRandomPassword()`).
      */
-    public function testCreatedMemberGetsAnUnknownPasswordNotAFixedOrEmptyOne(): void
+    public function testCreatedMemberHasARealPasswordAnEmptyPasswordCannotAuthenticateWith(): void
     {
         $this->provision('member-provisioner-test@example.com');
 
         $member = Member::get()->filter('Email', 'member-provisioner-test@example.com')->first();
-        $this->assertNotSame('', (string) $member->Password);
+
+        $result = (new MemberAuthenticator())->checkPassword($member, '');
+
+        $this->assertFalse(
+            $result->isValid(),
+            'an empty password must never authenticate as this member'
+        );
     }
 
     public function testIsIdempotent(): void
@@ -73,8 +89,42 @@ class ServiceAccountMemberProvisionerTest extends SapphireTest
         $this->assertSame(1, $members->count(), 're-running must not create a duplicate member');
 
         $member = $members->first();
-        $groups = $member->Groups()->filter('Title', 'Test Member Group');
-        $this->assertSame(1, $groups->count(), 're-running must not add a duplicate group relation');
+
+        // #124 review follow-up (confidence 85): Member::Groups() is a
+        // Member_GroupSet, whose linkJoinTable() is a deliberate no-op —
+        // it filters "Group"."ID" IN (...), never joins Group_Members. A
+        // duplicate row in the join table therefore cannot produce a
+        // duplicate row in this list; the original version of this
+        // assertion (`$member->Groups()->filter(...)->count()`) passed
+        // regardless of whether the join table itself was actually
+        // deduplicated. Query the join table directly instead.
+        $joinRowCount = (int) DB::query(sprintf(
+            'SELECT COUNT(*) FROM "Group_Members" WHERE "MemberID" = %d AND "GroupID" = %d',
+            (int) $member->ID,
+            (int) $this->group()->ID
+        ))->value();
+        $this->assertSame(1, $joinRowCount, 're-running must not add a duplicate Group_Members row');
+    }
+
+    /**
+     * #124 review follow-up (confidence 80): true by construction (the
+     * existing-member branch never calls write()), but nothing asserted it
+     * — exactly the kind of guarantee a future refactor that adds a
+     * write() to that branch would silently break.
+     */
+    public function testRerunningDoesNotTouchAnExistingMembersPassword(): void
+    {
+        $this->provision('member-provisioner-test@example.com');
+
+        $member = Member::get()->filter('Email', 'member-provisioner-test@example.com')->first();
+        $passwordBefore = $member->Password;
+        $saltBefore = $member->Salt;
+
+        $this->provision('member-provisioner-test@example.com');
+
+        $member = Member::get()->filter('Email', 'member-provisioner-test@example.com')->first();
+        $this->assertSame($passwordBefore, $member->Password);
+        $this->assertSame($saltBefore, $member->Salt);
     }
 
     /**
@@ -96,6 +146,61 @@ class ServiceAccountMemberProvisionerTest extends SapphireTest
         $this->assertSame($existingId, $member->ID, 'must reuse the existing record, not create a new one');
         $this->assertSame('Pre Existing', $member->FirstName, 'must not overwrite unrelated fields');
         $this->assertTrue($member->inGroup($this->group()));
+    }
+
+    public function testResultConfirmsNoCmsAccessForAnOrdinaryGroup(): void
+    {
+        $result = $this->provision('member-provisioner-test@example.com');
+
+        $this->assertStringContainsString(
+            'no CMS-admin access',
+            implode("\n", $result->lines)
+        );
+        $this->assertStringNotContainsString('WARNING', implode("\n", $result->lines));
+    }
+
+    /**
+     * #124 review follow-up (confidence 88): the original "no CMS-admin
+     * access" line was printed unconditionally, true only about the
+     * permission codes this task itself grants — not about whatever the
+     * *resolved group* already carried. `group=Administrators` (or any
+     * group sharing a title with, or descended from, a privileged one) is
+     * a real, reachable input. This proves the group's own permission
+     * codes are actually checked, not just the ones this task adds.
+     */
+    public function testWarnsWhenTheGroupItselfGrantsAdmin(): void
+    {
+        Permission::grant((int) $this->group()->ID, 'ADMIN');
+
+        $result = $this->provision('member-provisioner-test@example.com');
+
+        $this->assertSame(TaskStatus::Success, $result->status);
+        $this->assertStringContainsString('WARNING', implode("\n", $result->lines));
+        $this->assertStringContainsString('ADMIN', implode("\n", $result->lines));
+    }
+
+    /**
+     * Group membership grants inherit upward through the group tree
+     * (`Member_GroupSet::foreignIDFilter()` walks ancestors) — attaching to
+     * a child of a privileged group inherits that privilege even though
+     * the child group itself grants nothing. The check must walk ancestors,
+     * not just the resolved group's own permission rows.
+     */
+    public function testWarnsWhenAnAncestorGroupGrantsCmsAccess(): void
+    {
+        $parent = Group::create(['Title' => 'Test Member Group Parent']);
+        $parent->write();
+        Permission::grant((int) $parent->ID, 'CMS_ACCESS_LeftAndMain');
+
+        $child = $this->group();
+        $child->ParentID = $parent->ID;
+        $child->write();
+
+        $result = $this->provision('member-provisioner-test@example.com');
+
+        $this->assertStringContainsString('WARNING', implode("\n", $result->lines));
+
+        $parent->delete();
     }
 
     public function testFailsWhenTheGroupDoesNotExist(): void

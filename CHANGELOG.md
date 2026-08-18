@@ -34,11 +34,18 @@ All notable changes to this project are documented here. Format loosely follows
   by default, so a plain group-provisioning run never silently mints a login-capable account as
   a side effect. Idempotent, matching `ServiceAccountProvisioner`'s own contract: a re-run finds
   the existing Member rather than duplicating it, never detaches it from a group it's already in,
-  and never touches a password. Refuses to guess (same as `ServiceAccountProvisioner`) when
-  multiple groups share a title, and fails clearly when the named group doesn't exist yet. The
-  created Member gets no `CMS_ACCESS_*` code (the granted permission codes carry none) and, per
-  SilverStripe's own `Member::write()` behavior on a record with no password set, an unknown
-  auto-generated one — token auth only, in practice unreachable by a normal login either way.
+  and never touches a password (the existing-member branch never calls `write()`). Refuses to
+  guess (same as `ServiceAccountProvisioner`) when multiple groups share a title, and fails
+  clearly when the named group doesn't exist yet. A newly-created Member gets an explicit random
+  password (`generateRandomPassword()`, discarded, never printed) — **review fix before merge**:
+  a first draft relied on `Member::write()` to auto-generate an unknown password when none is
+  set; that claim was wrong (an unset `Password` on a new record encrypts the literal empty
+  string, a *known* credential, per `Member::onBeforeWrite()`), so this now sets a real one
+  explicitly rather than relying on a false safety assumption. Also checks the resolved group —
+  and every ancestor, since group membership grants inherit upward through the tree — for `ADMIN`
+  or any `CMS_ACCESS_*` code before telling the operator the account has no CMS-admin access,
+  warning instead when it finds one (`group=Administrators`, or any group descended from a
+  privileged one, is a real, reachable input this task can't assume away).
 
 ### Removed
 - **(#150)** `ContentApiController.cors_enabled` — configured and documented but never read
