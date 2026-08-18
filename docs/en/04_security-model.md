@@ -217,9 +217,13 @@ their own hand-rolled loops: every area/element/child is now authorization-check
 `action` verb + `canEdit()`) before anything is written, the whole cascade refusing on the first
 one the caller can't publish rather than leaving earlier ones live with no way to undo it.
 
-**Behavior change**: a class in the cascade granting `create`/`update` but withholding `action`
-now gets `403 FORBIDDEN_CLASS` on a composition or apply-template publish, where it previously
-published silently.
+**Behavior change**: any class in the walked `$owns` cascade — not just elements — granting
+`create`/`update` but withholding `action` now gets `403 FORBIDDEN_CLASS` on a composition or
+apply-template publish, where it previously published silently. This reaches further than
+elements/areas: `File`/`Image` are versioned, so an owned image relation (a common pattern for
+image-bearing elements) is checked too, and asset classes are the ones most likely to be
+configured read/create-only today. See
+[Publishing & stages](10_publishing-and-stages.md#publish-modes) for the full note.
 
 ## Record-level gate
 

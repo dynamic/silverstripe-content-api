@@ -202,7 +202,7 @@
               "subtree",
               "owns"
             ],
-            "description": "publish only: takes precedence over the legacy recursive boolean below. subtree publishes the record then every draft Hierarchy child depth-first — the way to publish a moved subtree before unpublishing its old wrapper, see the descendant-cascade guard above. owns publishes the record then every $owns-reachable descendant (e.g. an elemental area and its elements) — authorization-checked the same way as subtree, over the owned-relation graph instead of the Hierarchy tree."
+            "description": "publish only: takes precedence over the legacy recursive boolean below. subtree publishes the record then every draft Hierarchy child depth-first — the way to publish a moved subtree before unpublishing its old wrapper, see the descendant-cascade guard above. owns publishes every $owns-reachable descendant (e.g. an elemental area and its elements) first, then the record itself — authorization-checked the same way as subtree, over the owned-relation graph instead of the Hierarchy tree."
           },
           "recursive": {
             "type": "boolean",

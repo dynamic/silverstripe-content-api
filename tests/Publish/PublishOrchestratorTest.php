@@ -12,6 +12,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnsCycleObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Monolog\Handler\TestHandler;
 use Monolog\Logger;
@@ -773,6 +774,124 @@ class PublishOrchestratorTest extends ContentApiTestCase
             1,
             count(array_filter($touchedIDs, fn (int $id) => $id === (int) $child->ID)),
             'a target reachable both via $owns and via $additional must appear exactly once'
+        );
+    }
+
+    /**
+     * The critical case `$additional` exists for: a record reachable ONLY
+     * via `$additional`, never via the `$owns` walk (e.g. an element's own
+     * has_many child — BaseElement declares no $owns), must still be
+     * authorization-checked before anything is written. Without this test,
+     * a regression that dropped $additional entries from the check loop
+     * (or checked them after writing) would pass every other test in this
+     * file, since all of them use records that either succeed or are
+     * walk-reachable.
+     */
+    public function testOwnsModeRefusesWhenAnAdditionalOnlyTargetDoesNotGrantTheActionVerb(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Owns Additional-Only Gated Parent']);
+        $parent->write();
+
+        // Not linked into $parent's $owns graph at all — reachable only via
+        // $additional.
+        $sideloaded = ApiTestOwnedGrandchildObject::create(['Title' => 'Owns Additional-Only Gated']);
+        $sideloaded->write();
+
+        Config::modify()->set(ApiTestOwnedGrandchildObject::class, 'api_access', 'read');
+
+        try {
+            $this->orchestrator->publishOwnedTree($parent, $this->adminMember(), [$sideloaded]);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('FORBIDDEN_CLASS', $error->toArray()['code']);
+        }
+
+        $this->assertFalse(
+            $this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID),
+            'an $additional-only target failing authorization must refuse the whole call, root included'
+        );
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedGrandchildObject::class, $sideloaded->ID));
+    }
+
+    public function testOwnsModeRejectsANonDataObjectInAdditional(): void
+    {
+        $root = ApiTestVersionedObject::create(['Title' => 'Owns Bad Additional Root']);
+        $root->write();
+
+        try {
+            $this->orchestrator->publishOwnedTree($root, $this->adminMember(), ['not-a-record']);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('PAYLOAD_INVALID', $error->toArray()['code']);
+        }
+
+        $this->assertFalse(
+            (bool) Versioned::get_by_stage(ApiTestVersionedObject::class, Versioned::LIVE)
+                ->filter('ID', $root->ID)->exists()
+        );
+    }
+
+    public function testOwnsModeRejectsAnUnsavedRecordInAdditional(): void
+    {
+        $root = ApiTestVersionedObject::create(['Title' => 'Owns Unsaved Additional Root']);
+        $root->write();
+
+        $unsaved = ApiTestOwnedGrandchildObject::create(['Title' => 'Never Written']);
+
+        try {
+            $this->orchestrator->publishOwnedTree($root, $this->adminMember(), [$unsaved]);
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('PAYLOAD_INVALID', $error->toArray()['code']);
+        }
+    }
+
+    /**
+     * The one genuinely expected drop case — an unversioned record passed
+     * via $additional (e.g. a non-versioned has_many child) — is skipped
+     * with a logged warning rather than an error, matching
+     * OwnedTreeWalker's own handling of a misconfigured $owns entry.
+     */
+    public function testOwnsModeLogsAndSkipsAnUnversionedAdditionalEntry(): void
+    {
+        $root = ApiTestVersionedObject::create(['Title' => 'Owns Unversioned Additional Root']);
+        $root->write();
+
+        $unversioned = ApiTestUnversionedOwnedWrapperObject::create(['Title' => 'Not Versioned']);
+        $unversioned->write();
+
+        $entries = $this->orchestrator->publishOwnedTree($root, $this->adminMember(), [$unversioned]);
+
+        $this->assertTrue((bool) Versioned::get_by_stage(ApiTestVersionedObject::class, Versioned::LIVE)
+            ->filter('ID', $root->ID)->exists());
+        $this->assertCount(1, $entries, 'the unversioned entry must not appear in the published set');
+
+        $this->assertNotEmpty(
+            array_filter(
+                $this->logHandler->getRecords(),
+                fn ($record) => str_contains((string) $record->message, 'is not Versioned — skipped')
+            ),
+            'skipping an unversioned $additional entry must be logged, not silent'
+        );
+    }
+
+    /**
+     * $root passed a second time via $additional must not be double-
+     * authorization-checked (it's explicitly NOT checked as $root — see
+     * publishOwnedTree()'s own docblock) or double-published.
+     */
+    public function testOwnsModeDeduplicatesRootPassedViaAdditional(): void
+    {
+        $root = ApiTestOwnedParentObject::create(['Title' => 'Owns Root-In-Additional']);
+        $root->write();
+
+        $entries = $this->orchestrator->publishOwnedTree($root, $this->adminMember(), [$root]);
+
+        $touchedIDs = array_column($entries, 'id');
+        $this->assertSame(
+            1,
+            count(array_filter($touchedIDs, fn (int $id) => $id === (int) $root->ID)),
+            '$root passed via $additional must not produce a duplicate entry'
         );
     }
 

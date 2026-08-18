@@ -281,21 +281,34 @@ class PublishOrchestrator
      * descendant, with every one of them authorization-checked first —
      * #119's publish half, closing #168.
      *
-     * `$additional` names records the caller already knows it wrote that
-     * the `$owns` graph may not itself reach. This is load-bearing, not
-     * defensive padding: Elemental's `ElementalPageExtension` declares
-     * `$owns = ['ElementalArea']` and `ElementalArea` declares `$owns =
-     * ['Elements']`, but `BaseElement` itself declares no `$owns` at all —
-     * so an element's own has_many children (e.g. `ElementFeatures` →
-     * `FeatureObject`) are unreachable by walk unless a project opts in.
-     * `CompositionService::publishAll()` and `PageHandler::applyTemplate()`
-     * both already know exactly which area/elements/children they just
-     * wrote, so they pass them here explicitly rather than relying on a
-     * walk that could silently regress coverage those hand-rolled loops
-     * used to have. Deduplicated against the walked set (and against
-     * itself) on `ClassName:ID`; anything unversioned or not `exists()` is
-     * dropped rather than erroring, matching {@see OwnedTreeWalker}'s own
-     * silent skip of non-versioned nodes.
+     * `$additional` names records outside the walked `$owns` graph that
+     * should be published (and authorization-checked) alongside it. This is
+     * load-bearing, not defensive padding: Elemental's `ElementalPageExtension`
+     * declares `$owns = ['ElementalArea']` and `ElementalArea` declares
+     * `$owns = ['Elements']`, but `BaseElement` itself declares no `$owns`
+     * at all — so an element's own has_many children (e.g. `ElementFeatures`
+     * → `FeatureObject`) are unreachable by walk unless a project opts in.
+     * `CompositionService::publishAll()` uses this to pass the exact
+     * area/elements/children it just wrote, so the walk's own coverage gap
+     * can't silently regress what its old hand-rolled loop used to publish.
+     * `PageHandler::applyTemplate()` also passes the area/elements here, but
+     * for a narrower reason — see that method's own docblock for why its
+     * `$additional` isn't equivalent to `publishAll()`'s (it doesn't track
+     * writes, and doesn't include element children; #174). Deduplicated
+     * against the walked set, against itself, and against `$root` (a caller
+     * passing the root here is very unlikely given the two current call
+     * sites, but would otherwise both double-authorize and double-publish
+     * it) — all on `ClassName:ID`.
+     *
+     * Every non-`$root` entry in `$additional` must be a `DataObject` that
+     * `exists()` — anything else means the caller passed something it
+     * shouldn't have (a wrong array shape, or a record it thinks it wrote
+     * but didn't), and is refused loudly (`PAYLOAD_INVALID`) rather than
+     * silently dropped, so that kind of bug can't masquerade as "nothing to
+     * publish." An unversioned entry is the one genuinely expected case
+     * (e.g. Essentials' `StatCounter`, a plain `DataObject` has_many child)
+     * — dropped with a logged warning, matching {@see OwnedTreeWalker}'s
+     * own handling of a misconfigured `$owns` entry.
      *
      * Same check-everything-before-writing-anything shape as
      * {@see publishSubtree()}: every target is authorization-checked
@@ -306,7 +319,10 @@ class PublishOrchestrator
      * the root is assumed to be the caller's own already-authorized
      * target (checked at the call site, e.g. `RecordWriter::write()`'s
      * #114 `action`-verb gate, or `CompositionService::compose()`'s own
-     * page-level check).
+     * page-level check). Callers should wrap the whole call in a
+     * transaction if a mid-cascade authorization failure shouldn't leave
+     * an earlier, unrelated write persisted — see `CompositionHandler`
+     * and `PageHandler::applyTemplate()`, both of which do.
      *
      * Descendants publish first, in walk order, then `$root` itself last
      * via `publishSingle()` — never `publishRecursive()`, since the walk
@@ -314,11 +330,13 @@ class PublishOrchestrator
      * established `publishRecursive()` misses Elemental entirely) and
      * mixing the two would double-publish with ambiguous ordering.
      *
-     * `$root` itself must be `Versioned` — the three call sites reach this
-     * only via `publish()`'s own dispatch, which already guards on that
-     * before ever reaching the `owns` branch, but this is public API in
-     * its own right, so the guard is repeated here rather than trusted to
-     * every future caller.
+     * `$root` itself must be `Versioned`. `RecordActionsHandler`/
+     * `PageHandler::convert()` reach this via `publish()`'s own dispatch,
+     * which already guards on that before ever reaching the `owns` branch —
+     * but `CompositionService::publishAll()` and `PageHandler::applyTemplate()`
+     * call this method directly, bypassing that guard entirely, so it is
+     * load-bearing for them, not merely repeated for a hypothetical future
+     * caller.
      *
      * @param DataObject[] $additional
      * @return array<int, array{id: int, className: string}> every record
@@ -342,17 +360,38 @@ class PublishOrchestrator
         }
 
         foreach ($additional as $record) {
-            if (
-                !$record instanceof DataObject
-                || !$record->hasExtension(Versioned::class)
-                || !$record->exists()
-            ) {
+            if (!$record instanceof DataObject) {
+                throw new ApiError(
+                    ErrorCode::PAYLOAD_INVALID,
+                    sprintf(
+                        '$additional must contain only DataObject instances, got %s.',
+                        is_object($record) ? get_class($record) : gettype($record)
+                    )
+                );
+            }
+
+            if (!$record->exists()) {
+                throw new ApiError(
+                    ErrorCode::PAYLOAD_INVALID,
+                    sprintf('$additional contains an unsaved %s — every target must already exist.', get_class($record))
+                );
+            }
+
+            if (!$record->hasExtension(Versioned::class)) {
+                Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+                    '%s #%d passed to publishOwnedTree() via $additional is not Versioned — skipped.',
+                    get_class($record),
+                    $record->ID
+                ));
+
                 continue;
             }
 
             $key = get_class($record) . ':' . $record->ID;
             $targets[$key] ??= $record;
         }
+
+        unset($targets[get_class($root) . ':' . $root->ID]);
 
         foreach ($targets as $target) {
             $this->assertDescendantPublishable($target, $member);

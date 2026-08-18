@@ -39,11 +39,13 @@ Two independent checks, both against the same draft read:
   itself.
 - **Owned tree** (`?include=owned`, the default — `?include=none` skips it; `?depth=N` caps how
   far it recurses, and rejects a non-numeric value rather than silently disabling the whole walk)
-  — every record this one `$owns`, recursively, via the new
-  `Dynamic\ContentApi\Verify\OwnedTreeWalker` (the module's first `$owns` walker; no class in
-  `src/` declares `$owns` anywhere else — Elemental's own publish cascade is hand-rolled, not
-  `$owns`-driven — see "`publishRecursive()` does not cascade to elements" below). Reports each
-  owned descendant's live/draft status and
+  — every record this one `$owns`, recursively, via `Dynamic\ContentApi\Verify\OwnedTreeWalker`
+  (the module's first `$owns` walker, built for this endpoint; no class in `src/` declares `$owns`
+  itself). The `owns` publish mode (see [Publish modes](#publish-modes)) now walks the same
+  `$owns` chain to publish it, so Elemental's page→area→elements cascade *is* `$owns`-driven for
+  that part — only an element's own has_many children still aren't (`BaseElement` declares no
+  `$owns`; see [Publish modes](#publish-modes) for how the publish side works around that with
+  `$additional`). Reports each owned descendant's live/draft status and
   depth, **not** a field-level diff of each one (only the root gets that). Walks *through* an
   unversioned intermediate record without reporting it (it has no draft/live state of its own),
   matching `RecursivePublishable`'s real recursion behavior rather than pruning the whole branch
@@ -130,11 +132,18 @@ actions](#publishunpublisharchive-actions) for how to pass it); `subtree` alone 
   `PublishOrchestrator::publishOwnedTree()` instead, the same authorized primitive `owns` mode
   itself dispatches to.
 
-  **Behavior change, not a compatibility knob**: a project whose element (or other composed)
-  classes grant `create`/`update` in `api_access` but withhold `action` will start getting
-  `403 FORBIDDEN_CLASS` on a composition or apply-template call with a publishing mode, where it
-  previously published silently. Grant `action` on those classes, or pass `publish: "none"` if the
-  cascade was never intended to publish them.
+  **Behavior change, not a compatibility knob.** The walk checks every `$owns`-reachable class,
+  not just elements — the blast radius is wider than "element type" alone. `File`/`Image` are
+  versioned, so any page or element declaring `private static $owns = ['SomeImageRelation']` (a
+  common pattern for image-bearing elements, and the standard Elemental "add an asset" wiring)
+  pulls `SilverStripe\Assets\File`/`Image` into the checked set too — and asset classes are the
+  ones most likely to be configured `read`/`create`-only in a project's exposure config, since
+  publishing an asset was never previously a thing this module authorization-checked. A project
+  whose element, area, page, or **owned asset** classes grant `create`/`update` in `api_access`
+  but withhold `action` will start getting `403 FORBIDDEN_CLASS` on a composition or
+  apply-template call with a publishing mode, where it previously published silently. Grant
+  `action` on every affected class, or pass `publish: "none"` if the cascade was never intended to
+  publish them.
 - **`liveOnly`** (`subtree` only): skip a descendant branch — no publish, no recursing into its
   own children — when it isn't already live. See the resurrection-risk warning below. Meaningless
   for `owns` — an owned-relation graph isn't a `Hierarchy` tree, so "already live" isn't a

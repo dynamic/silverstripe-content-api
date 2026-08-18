@@ -460,6 +460,55 @@ class CompositionTest extends ContentApiTestCase
     }
 
     /**
+     * #119/#168, the case the test above can't cover: `ApiTestElement`'s own
+     * children (`ApiTestElementItem`) are only reachable via
+     * `publishAll()`'s `$additional` list — `BaseElement` declares no
+     * `$owns`, so `PublishOrchestrator::publishOwnedTree()`'s walk never
+     * finds them on its own. A regression that dropped `$additional`
+     * entries from the authorization-check loop would pass the test above
+     * (the element itself is walk-reachable through the area) but not this
+     * one.
+     */
+    public function testComposeWithPublishRecursiveRequiresElementChildClassActionVerb(): void
+    {
+        Config::modify()->set(ApiTestElementItem::class, 'api_access', 'read,create,update');
+
+        $page = ApiTestBlockPage::create(['Title' => 'Owns Cascade Child Auth Gap Page']);
+        $page->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'owns-auth-child-e1',
+                    'fields' => ['Title' => 'Parent With Gated Child'],
+                    'children' => [
+                        'Items' => [
+                            ['externalId' => 'owns-auth-child-i1', 'fields' => ['Title' => 'Gated Child']],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+
+        $this->assertFalse(
+            ApiTestBlockPage::get()->byID($page->ID)->isPublished(),
+            'the whole cascade is authorization-checked before any write, including additional-only targets'
+        );
+        $this->assertNull(
+            ApiTestElement::get()->filter('FixtureIdentifier', 'owns-auth-child-e1')->first(),
+            'the whole composition rolls back'
+        );
+        $this->assertNull(
+            ApiTestElementItem::get()->filter('FixtureIdentifier', 'owns-auth-child-i1')->first()
+        );
+    }
+
+    /**
      * The positive-space/regression half: a page write with no "publish"
      * key at all (mode defaults to "none" at the composition level) must
      * stay reachable on "update" alone, matching every other #114 gate's
