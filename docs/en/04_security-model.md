@@ -197,6 +197,21 @@ all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit
 **not** also grant archive; that requires `delete` to also be listed in the class's `api_access`
 **and** `canDelete()` to independently allow it at the record level.
 
+**`unpublish` with `{"force": true}` additionally requires `delete` — but only where forcing can
+actually do anything (#80).** Forcing bypasses the descendant-cascade guard (see [Publishing and
+stages](10_publishing-and-stages.md)), and where that bypass is real, the cascade it uncovers is
+delete-shaped — the same live-subtree loss `archive` produces. But per #89, the guard itself only
+ever has something to bypass on a `SiteTree` class with `enforce_strict_hierarchy` enabled; on
+every other class `force: true` is already a no-op, so this extra `delete` requirement doesn't
+apply there either — demanding a verb for a bypass that was never going to cascade anything would
+itself be a breaking change for a client that defensively always sends `force: true`. Plain,
+non-forced `unpublish` always needs only `action`. Where it does apply, `force: true` needs
+`action` (unpublish's base verb) **and** `delete`, checked at both the class and record level —
+the `delete` requirement mirrors how the batch `delete` op (`RecordWriter::delete()`) has always
+been gated on `delete` alone, regardless of `mode`.
+`PublishOrchestrator::forceCouldStrandDescendants($className)` is the one place this scoping is
+decided — both the guard and this verb gate call it, so they can't drift apart.
+
 **Create** is different: `checkCreateAccess()` calls `canCreate($member, $context)` with a
 `$context` array hydrated from the payload's has_one keys (`buildCreateContext()`), because a
 tenant-scoped `canCreate()` often needs the *parent* record to decide, and that parent doesn't

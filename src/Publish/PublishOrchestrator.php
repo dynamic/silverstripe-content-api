@@ -241,6 +241,29 @@ class PublishOrchestrator
     }
 
     /**
+     * Whether `force: true` on `unpublish`/`archive` for this class could
+     * possibly bypass a real cascade risk — i.e. whether
+     * `findDescendantIDs()`'s own `SiteTree` + `enforce_strict_hierarchy`
+     * scoping (#89) could ever find something to strand for it. Class-level
+     * only (no record needed), so callers can use it before fetching one.
+     *
+     * Exposed specifically so `RecordActionsHandler`'s force-unpublish
+     * `delete`-verb gate (#80) can't drift out of sync with this scoping
+     * the next time either is rescoped — a hardcoded copy of the same
+     * `instanceof`/config check here and there would silently diverge if
+     * this one ever changes. On a non-`SiteTree` class, or a project that
+     * has turned `enforce_strict_hierarchy` off, `force: true` is already a
+     * no-op (see #89) — requiring `delete` to use it there would demand a
+     * verb for a bypass that was never going to happen, the same mistake
+     * #89 fixed in the other direction.
+     */
+    public function forceCouldStrandDescendants(string $className): bool
+    {
+        return is_a($className, SiteTree::class, true)
+            && (bool) SiteTree::config()->get('enforce_strict_hierarchy');
+    }
+
+    /**
      * Remove the record from the live stage, keeping the draft.
      *
      * Guards against a real, confirmed-live SilverStripe framework
@@ -367,23 +390,23 @@ class PublishOrchestrator
 
     /**
      * IDs of every `Hierarchy` descendant of $record in the given stage.
-     * Empty for a record that isn't a `SiteTree` with
-     * `enforce_strict_hierarchy` enabled, or one that doesn't exist in that
-     * stage.
+     * Empty when {@see forceCouldStrandDescendants()} says this class has
+     * no real cascade risk to begin with, or the record doesn't exist in
+     * that stage.
      *
-     * The scope check is intentionally narrower than "any `Hierarchy`
-     * class" (#89): the cascade this guard exists to prevent —
-     * `SiteTree::onBeforeDelete()` deleting every current
-     * `AllChildren()` when a page is deleted from a stage — only fires on
-     * `SiteTree` itself, and only when `SiteTree::config()->get('enforce_
-     * strict_hierarchy')` is true (the framework default; note this reads
-     * `SiteTree`'s own config, not `static::config()`, so a subclass
-     * override doesn't change whether the cascade actually runs). `Hierarchy`
-     * itself declares no `onBeforeDelete`/`onAfterDelete`, and `Versioned`
-     * only has `onAfterDelete` — so a `Hierarchy`-extended non-`SiteTree`
-     * class, or a project that has turned the config off, was previously
-     * refused here (and required `force`) for a cascade that was never
-     * actually going to happen.
+     * The scope check (#89) is intentionally narrower than "any
+     * `Hierarchy` class": the cascade this guard exists to prevent —
+     * `SiteTree::onBeforeDelete()` deleting every current `AllChildren()`
+     * when a page is deleted from a stage — only fires on `SiteTree`
+     * itself, and only when `SiteTree.enforce_strict_hierarchy` is enabled
+     * (the framework default). `Hierarchy` itself declares no
+     * `onBeforeDelete`/`onAfterDelete`, and `Versioned` only has
+     * `onAfterDelete` — so a `Hierarchy`-extended non-`SiteTree` class, or
+     * a project that has turned the config off, was previously refused
+     * here (and required `force`) for a cascade that was never actually
+     * going to happen. `forceCouldStrandDescendants()` is the one place
+     * this decision is made — shared with `RecordActionsHandler`'s #80
+     * force-unpublish `delete`-verb gate, so the two can't drift apart.
      *
      * Deliberately queries by $record's own concrete class
      * (`get_class($record)`), not `Hierarchy::getHierarchyBaseClass()` —
@@ -404,7 +427,7 @@ class PublishOrchestrator
      */
     protected function findDescendantIDs(DataObject $record, string $stage): array
     {
-        if (!$record instanceof SiteTree || !SiteTree::config()->get('enforce_strict_hierarchy')) {
+        if (!$this->forceCouldStrandDescendants(get_class($record))) {
             return [];
         }
 
