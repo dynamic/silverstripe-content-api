@@ -164,7 +164,7 @@ stranded on draft behind a live page.
 | Action | Effect |
 |---|---|
 | `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present. `mode: "subtree"` alone also accepts `{"liveOnly": true}` and `{"dryRun": true}` (see [Publish modes](#publish-modes)); both are `400 PAYLOAD_INVALID` on every other mode. `dryRun` responds with `{"data": {"wouldPublish": [...]}, "meta": {"operation": "publishDryRun", "mode": "subtree"}}` instead of the normal response. A real (non-`dryRun`) `subtree` call keeps the normal serialized-record response but adds `meta.published`: the same `[{id, className}, ...]` list, so a `liveOnly` call still reports what was actually touched |
-| `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below |
+| `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below. `{"force": true}` also requires the `delete` verb, not just `action` (#80) — see [Security model](04_security-model.md#record-level-gate) |
 | `archive` | Removes from both stages, recoverable via version history (`doArchive()`) — same guard |
 
 `unpublish`/`archive` raise `400 PAYLOAD_INVALID` if called on an unversioned class

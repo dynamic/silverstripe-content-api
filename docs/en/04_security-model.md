@@ -197,6 +197,13 @@ all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit
 **not** also grant archive; that requires `delete` to also be listed in the class's `api_access`
 **and** `canDelete()` to independently allow it at the record level.
 
+**`unpublish` with `{"force": true}` additionally requires `delete` (#80).** Forcing bypasses the
+descendant-cascade guard (see [Publishing and stages](10_publishing-and-stages.md)), and the
+cascade it bypasses is delete-shaped — the same live-subtree loss `archive` produces. Plain,
+non-forced `unpublish` still needs only `action`; `force: true` needs `action` **and** `delete`,
+checked at both the class and record level, matching how the batch `delete` op (`mode:
+"unpublish"`) has always been gated.
+
 **Create** is different: `checkCreateAccess()` calls `canCreate($member, $context)` with a
 `$context` array hydrated from the payload's has_one keys (`buildCreateContext()`), because a
 tenant-scoped `canCreate()` often needs the *parent* record to decide, and that parent doesn't

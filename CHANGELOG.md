@@ -16,6 +16,14 @@ All notable changes to this project are documented here. Format loosely follows
   pass `force: true` — whose entire meaning is "accept the loss" — for a cascade that was never
   actually going to happen. The guard now checks `$record instanceof SiteTree &&
   SiteTree::config()->get('enforce_strict_hierarchy')` instead.
+- **(#80)** `POST records/$Class/$ID/unpublish` with `{"force": true}` bypasses the
+  stranded-descendants guard, and the resulting cascade is delete-shaped — the same live-subtree
+  loss `archive` produces — but was gated on the `action` verb alone, unlike every other
+  delete-shaped path in the module (`archive`; the batch `delete` op with `mode: "unpublish"`,
+  which already required `delete` via `RecordWriter::delete()`). `RecordActionsHandler` now also
+  requires the `delete` verb, at both the class and record level, whenever `force: true` is
+  passed to `unpublish` — plain, non-forced `unpublish` is unchanged and still needs only
+  `action`.
 
 ## [1.7.0] - 2026-08-17
 

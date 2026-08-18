@@ -64,6 +64,22 @@ class RecordActionsHandler
         $this->policy->checkClassAccess($className, $verb, $context->member);
         $body = $this->jsonBody($request);
 
+        // #80: unpublish's `force: true` bypasses the descendant-cascade
+        // guard, and PublishOrchestrator::unpublish() then hits the exact
+        // same SiteTree::onBeforeDelete() cascade archive/delete does — a
+        // delete-shaped outcome, gated everywhere else in the module
+        // (archive above; the batch delete op via RecordWriter::delete())
+        // on 'delete', not 'action'. Checked here (class-level, once the
+        // body is parseable) in addition to — not instead of — the
+        // 'action' check above: plain unpublish stays reachable on
+        // 'action' alone, only the forced/cascading variant also needs
+        // 'delete'.
+        $forceUnpublish = $action === 'unpublish' && !empty($body['force']);
+
+        if ($forceUnpublish) {
+            $this->policy->checkClassAccess($className, 'delete', $context->member);
+        }
+
         // #130: dryRun is meaningful here only for publish mode "subtree"
         // (checked below, alongside liveOnly, once the mode is known).
         // unpublish/archive have no dry-run support at all — reject
@@ -78,9 +94,13 @@ class RecordActionsHandler
             );
         }
 
-        return $this->inDraft(function () use ($request, $className, $action, $body, $context, $verb) {
+        return $this->inDraft(function () use ($request, $className, $action, $body, $context, $verb, $forceUnpublish) {
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
             $this->policy->checkRecordAccess($record, $verb, $context->member);
+
+            if ($forceUnpublish) {
+                $this->policy->checkRecordAccess($record, 'delete', $context->member);
+            }
 
             $extraMeta = [];
 

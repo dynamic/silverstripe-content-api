@@ -147,6 +147,56 @@ class RecordActionsTest extends ContentApiTestCase
         $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
     }
 
+    /**
+     * #80: force-unpublish's cascade is delete-shaped (the same live-subtree
+     * loss archive produces), so it must require the 'delete' verb at the
+     * class level too — not just 'action' — mirroring archive's existing
+     * split (see testArchiveRequiresClassDeleteVerb above). Plain,
+     * non-forced unpublish must stay reachable on 'action' alone.
+     */
+    public function testForceUnpublishRequiresClassDeleteVerb(): void
+    {
+        \SilverStripe\Core\Config\Config::modify()
+            ->set(ApiTestVersionedObject::class, 'api_access', 'read,action');
+
+        $token = $this->mintTokenFor('adminUser');
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token);
+
+        $plainUnpublish = $this->apiPost("records/ApiTestVersioned/{$record->ID}/unpublish", [], $token);
+        $this->assertSame(
+            200,
+            $plainUnpublish->getStatusCode(),
+            'plain unpublish must stay reachable on "action" alone, without "delete"'
+        );
+
+        // Republish so the force call below has something to act on.
+        $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token);
+
+        $forced = $this->apiPost("records/ApiTestVersioned/{$record->ID}/unpublish", ['force' => true], $token);
+        $this->assertErrorCode($forced, 'FORBIDDEN_CLASS', 403);
+    }
+
+    /**
+     * Record-level half of the same split (#80), mirroring
+     * testArchiveRequiresCanDeleteNotCanEdit: ApiTestVersionedObject's
+     * default api_access (set in ContentApiTestCase::setUp) grants the
+     * class-level 'delete' verb, but apiUser's own canDelete() is
+     * ADMIN-only — force-unpublish must still be refused at the record
+     * gate.
+     */
+    public function testForceUnpublishRequiresRecordDeleteVerb(): void
+    {
+        $token = $this->mintTokenFor('apiUser');
+        $record = $this->objFromFixture(ApiTestVersionedObject::class, 'draftOnly');
+
+        $this->apiPost("records/ApiTestVersioned/{$record->ID}/publish", [], $token);
+
+        $forced = $this->apiPost("records/ApiTestVersioned/{$record->ID}/unpublish", ['force' => true], $token);
+        $this->assertErrorCode($forced, 'FORBIDDEN_RECORD', 403);
+    }
+
     public function testActionRequiresVerb(): void
     {
         \SilverStripe\Core\Config\Config::modify()

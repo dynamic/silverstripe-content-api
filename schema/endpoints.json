@@ -211,7 +211,7 @@
           "force": {
             "type": "boolean",
             "default": false,
-            "description": "unpublish/archive only: bypass the descendant-cascade guard"
+            "description": "unpublish/archive only: bypass the descendant-cascade guard. On unpublish, this additionally requires the 'delete' verb (not just 'action') — the resulting cascade is delete-shaped, the same as archive"
           },
           "liveOnly": {
             "type": "boolean",
