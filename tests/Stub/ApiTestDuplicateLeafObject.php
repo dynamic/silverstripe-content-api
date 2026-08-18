@@ -21,6 +21,7 @@ class ApiTestDuplicateLeafObject extends DataObject implements TestOnly
 
     private static array $has_one = [
         'Child' => ApiTestDuplicateChildObject::class,
+        'Wrapper' => ApiTestDuplicateUnversionedObject::class,
     ];
 
     private static array $extensions = [

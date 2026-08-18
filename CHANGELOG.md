@@ -42,12 +42,24 @@ All notable changes to this project are documented here. Format loosely follows
   `OwnedTreeWalker`'s cycle guard, depth cap, diamond handling, and unversioned-record handling are
   unchanged and now serve both walks. `walk()`'s signature is unchanged.
 
-  **Behavior change**: a class reached only through the new walk that grants `create`/`update` but
-  withholds `action` now gets `403 FORBIDDEN_CLASS` on a `"recursive"` apply-template, and the
-  whole call rolls back — the same behavior 1.9.0 introduced for the composition path, now
-  reaching these records too. Note this applies to children of **every element on the page**, not
-  only the ones the template just added: the endpoint has always published every element on the
-  page, and that breadth now extends to their children.
+  **Behavior change, worth reading before upgrading**: a class reached only through the new walk
+  that grants `create`/`update` but withholds `action` now gets `403 FORBIDDEN_CLASS` on a
+  `"recursive"` apply-template, and the whole call rolls back — the same behavior 1.9.0 introduced
+  for the composition path, now reaching these records too.
+
+  Two things widen that further than it first looks, both deliberate:
+
+  - It applies to children of **every element on the page**, not only the ones the template just
+    added. The endpoint has always published every element on the page; that breadth now extends
+    to their children.
+  - The `$owns` fallback reaches versioned records sitting below an **unversioned** intermediate,
+    which nothing previously walked to at all.
+
+  So an `apply-template` call that succeeded before can now hard-fail on a class the project never
+  had to allowlist. That is the correct direction — those records really were created by the
+  duplicate and really do need publishing, and failing loudly beats leaving them silently on draft
+  — but it is a live endpoint changing behavior. Fix: grant `action` on the affected classes, or
+  pass `"publish": "none"` if the cascade was never meant to publish them.
 
   This is also the first test coverage of any kind for `apply-template`'s publish behavior.
   `dynamic/silverstripe-elemental-templates` remains `suggest`ed rather than required; the tests

@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateLeafObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateRootObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateUnversionedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
@@ -82,6 +83,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestDuplicateRootObject::class,
         ApiTestDuplicateChildObject::class,
         ApiTestDuplicateLeafObject::class,
+        ApiTestDuplicateUnversionedObject::class,
     ];
 
     protected function setUp(): void

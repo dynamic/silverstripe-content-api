@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateLeafObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateRootObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateUnversionedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
@@ -561,6 +562,80 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
     private function key(\SilverStripe\ORM\DataObject $record): string
     {
         return get_class($record) . ':' . (int) $record->ID;
+    }
+
+    /**
+     * `cascade_duplicates: false` means "duplicate nothing" — a supported
+     * value both `duplicate()` and `onBeforeDuplicate()` honour explicitly.
+     * It must not fall through to the `$owns` fallback (which is for an
+     * *empty* list, a different statement) and must not be cast to `[false]`.
+     */
+    public function testCascadeDuplicatesFalseMeansNothingRatherThanTheOwnsFallback(): void
+    {
+        $child = $this->inDraft(function () {
+            $child = ApiTestDuplicateChildObject::create(['Title' => 'Child']);
+            $child->write();
+
+            $leaf = ApiTestDuplicateLeafObject::create(['Title' => 'Leaf', 'ChildID' => $child->ID]);
+            $leaf->write();
+
+            return $child;
+        });
+
+        // Without the override the $owns fallback finds 'Leaves'.
+        $this->assertCount(1, $this->inDraft(fn () => $this->walker()->walkDuplicates($child)));
+
+        Config::modify()->set(ApiTestDuplicateChildObject::class, 'cascade_duplicates', false);
+
+        $this->assertSame(
+            [],
+            $this->inDraft(fn () => $this->walker()->walkDuplicates($child)),
+            'false is "duplicate nothing", not "fall back to $owns"'
+        );
+    }
+
+    /**
+     * The duplicates-mode counterpart of
+     * {@see testAnUnversionedIntermediateIsWalkedThroughNotPrunedAt}.
+     *
+     * `RecursivePublishable` is attached to `DataObject` itself
+     * (`versioned/_config/versionedownership.yml`), so its
+     * `onBeforeDuplicate()` `$owns` fallback fires for unversioned records
+     * too — `duplicate()` really does clone an unversioned intermediate's
+     * owned has_many children. Gating that fallback on `Versioned` (an
+     * earlier cut did) pruned the branch here and silently lost the
+     * versioned leaf below it, which is #174's own failure mode one node
+     * type over.
+     */
+    public function testWalkDuplicatesFollowsTheFallbackThroughAnUnversionedIntermediate(): void
+    {
+        [$root, $leaf] = $this->inDraft(function () {
+            $root = ApiTestDuplicateRootObject::create(['Title' => 'Root']);
+            $root->write();
+
+            $wrapper = ApiTestDuplicateUnversionedObject::create(['Title' => 'Wrapper', 'RootID' => $root->ID]);
+            $wrapper->write();
+
+            $leaf = ApiTestDuplicateLeafObject::create(['Title' => 'Wrapped leaf', 'WrapperID' => $wrapper->ID]);
+            $leaf->write();
+
+            return [$root, $leaf];
+        });
+
+        $result = $this->inDraft(fn () => $this->walker()->walkDuplicates($root));
+        $keys = array_map(fn ($e) => $this->key($e['record']), $result);
+
+        $this->assertContains(
+            $this->key($leaf),
+            $keys,
+            'a versioned record below an unversioned intermediate must still be walked'
+        );
+
+        // The intermediate itself is walked through, never emitted — it has
+        // no draft/live state to publish.
+        foreach ($result as $entry) {
+            $this->assertNotInstanceOf(ApiTestDuplicateUnversionedObject::class, $entry['record']);
+        }
     }
 
     /**
