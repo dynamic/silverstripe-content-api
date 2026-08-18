@@ -5,6 +5,8 @@ namespace Dynamic\ContentApi\Tests\Control;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestForceUnpublishPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Versioned\Versioned;
@@ -470,6 +472,93 @@ class RecordActionsTest extends ContentApiTestCase
         $this->assertFalse(
             Versioned::get_by_stage(ApiTestPage::class, Versioned::LIVE)->filter('ID', $root->ID)->exists(),
             'dryRun must never write, over HTTP any more than at the orchestrator level'
+        );
+    }
+
+    /**
+     * #119/#168: `mode: "owns"` must actually reach
+     * `PublishOrchestrator::publish()` with that mode — publishing an owned
+     * child that Hierarchy-based `subtree` has no concept of (these are
+     * plain `has_many`-owned `DataObject`s, not Hierarchy tree children).
+     */
+    public function testPublishActionAcceptsAnExplicitOwnsMode(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Publish Action Owns Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Publish Action Owns Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        $response = $this->decode(
+            $this->apiPost("records/ApiTestOwnedParent/{$parent->ID}/publish", ['mode' => 'owns'], $token)
+        );
+
+        $this->assertTrue($response['data']['stage']['live']);
+        $this->assertTrue(
+            Versioned::get_by_stage(ApiTestOwnedChildObject::class, Versioned::LIVE)
+                ->filter('ID', $child->ID)->exists(),
+            'mode=owns must reach PublishOrchestrator::publish() with the owns mode and cascade to the owned child'
+        );
+
+        $publishedIDs = array_column($response['meta']['published'], 'id');
+        $this->assertContains((int) $parent->ID, $publishedIDs);
+        $this->assertContains((int) $child->ID, $publishedIDs);
+    }
+
+    public function testOwnsDryRunViaHttpReturnsThePreviewEnvelopeWithoutWriting(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Owns DryRun Envelope Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Owns DryRun Envelope Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        $response = $this->decode($this->apiPost(
+            "records/ApiTestOwnedParent/{$parent->ID}/publish",
+            ['mode' => 'owns', 'dryRun' => true],
+            $token
+        ));
+
+        $this->assertSame('publishDryRun', $response['meta']['operation']);
+        $this->assertSame('owns', $response['meta']['mode']);
+        $previewedIDs = array_column($response['data']['wouldPublish'], 'id');
+        $this->assertContains((int) $parent->ID, $previewedIDs);
+        $this->assertContains((int) $child->ID, $previewedIDs);
+
+        $this->assertFalse(
+            Versioned::get_by_stage(ApiTestOwnedParentObject::class, Versioned::LIVE)
+                ->filter('ID', $parent->ID)->exists(),
+            'dryRun must never write'
+        );
+    }
+
+    /**
+     * `liveOnly` means "skip a Hierarchy-tree branch that isn't already
+     * live" — meaningless for `owns`' relation-graph walk, so it's refused
+     * outright rather than silently ignored, same reasoning as
+     * `testLiveOnlyOnAnExplicitNonSubtreeModeIsAlsoRejected`.
+     */
+    public function testLiveOnlyOnOwnsModeIsRejected(): void
+    {
+        $token = $this->mintTokenFor('adminUser');
+
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Owns LiveOnly Rejected Parent']);
+        $parent->write();
+
+        $response = $this->apiPost(
+            "records/ApiTestOwnedParent/{$parent->ID}/publish",
+            ['mode' => 'owns', 'liveOnly' => true],
+            $token
+        );
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        $this->assertFalse(
+            Versioned::get_by_stage(ApiTestOwnedParentObject::class, Versioned::LIVE)
+                ->filter('ID', $parent->ID)->exists()
         );
     }
 }

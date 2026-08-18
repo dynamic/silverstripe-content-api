@@ -730,39 +730,38 @@ class CompositionService
     }
 
     /**
-     * Publish the page (recursively) plus every written area/element/child
-     * individually — page publishRecursive does not cascade into elements.
+     * Publish the page plus every written area/element/child — page
+     * publishRecursive does not cascade into elements, so this routes
+     * through {@see PublishOrchestrator::publishOwnedTree()} (#119/#168)
+     * instead: the area and every element/child are passed as `$additional`
+     * targets (this method already knows exactly which ones it just wrote,
+     * so it doesn't rely on `$owns` reaching them — `BaseElement` itself
+     * declares no `$owns`, so element children aren't walk-reachable
+     * without a project opting in), and every one of them is now
+     * authorization-checked (class `action` verb + `canEdit()`) before
+     * anything is written. This closes the gap #168 tracked: previously
+     * `publish($record, 'single', $member)` performed no authorization at
+     * all for the area/element/child classes, only the page itself was
+     * checked (see `compose()`, above).
      *
      * Not every has_many child model is Versioned (e.g. Essentials'
-     * StatCounter is a plain DataObject) — routing through
-     * PublishOrchestrator::publish() (already the single source of truth for
-     * "is this record publishable", used by every other publish/unpublish/
-     * archive action on this surface) rather than a second, duck-typed
-     * hasMethod('publishSingle') check keeps that answer from being able to
-     * diverge between call sites.
-     *
-     * KNOWN GAP, not covered by #114 (tracked as #168): `publish($record,
-     * 'single', $member)` performs no authorization at all, and nothing
-     * upstream checks the `action` verb for the area/element/child classes
-     * either — their own writes always pass `"publish": "none"` explicitly.
-     * Only the *page* itself is authorized before this method runs (see
-     * `compose()`, above). This is the owned-relation publish cascade #119
-     * exists to formalize with real authorization; closing it here would be
-     * scope creep onto that issue.
+     * StatCounter is a plain DataObject) — `publishOwnedTree()` silently
+     * drops anything unversioned from `$additional` rather than erroring,
+     * so no duck-typed `hasMethod('publishSingle')` check is needed here.
      */
     protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): void
     {
-        $this->publisher->publish($area, 'single', $member);
+        $additional = [$area];
 
         foreach ($elementResults as $result) {
-            $this->publisher->publish($result['record'], 'single', $member);
+            $additional[] = $result['record'];
 
             foreach ($result['children'] as $childResult) {
-                $this->publisher->publish($childResult['record'], 'single', $member);
+                $additional[] = $childResult['record'];
             }
         }
 
-        $page->publishRecursive();
+        $this->publisher->publishOwnedTree($page, $member, $additional);
     }
 
     /**

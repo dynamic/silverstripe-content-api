@@ -103,7 +103,7 @@ response. Full reference: [Verification](16_verification.md#fingerprint).
 `{action}` is `publish`, `unpublish`, or `archive`. `publish` accepts `{"mode": "..."}` to
 select a [publish mode](10_publishing-and-stages.md#publish-modes) (`{"recursive": true}`
 remains a legacy shorthand for `mode: "recursive"`) — `mode: "subtree"` alone also accepts
-`{"liveOnly": true}` and `{"dryRun": true}`. See
+`{"liveOnly": true}`; `mode: "subtree"` or `"owns"` accept `{"dryRun": true}`. See
 [Publishing & stages](10_publishing-and-stages.md).
 
 ## `POST assets` / `GET assets/$ID`
@@ -113,8 +113,8 @@ See [Assets](09_assets.md).
 ## `POST pages/$ID/convert`
 
 Changes a page's class via `newClassInstance()`. Body: `{"className": "...", "publish":
-"none|single|recursive", "force": false}`. Refuses to convert the site home page unless
-`force: true` (`403 HOMEPAGE_CONVERSION_FORBIDDEN`). A no-op (same class already) returns
+"none|single|recursive|subtree|owns", "force": false}`. Refuses to convert the site home page
+unless `force: true` (`403 HOMEPAGE_CONVERSION_FORBIDDEN`). A no-op (same class already) returns
 without error.
 
 ## `POST pages/$ID/apply-template`
