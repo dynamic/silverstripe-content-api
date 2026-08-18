@@ -355,7 +355,10 @@ class CompositionTest extends ContentApiTestCase
                     'fields' => ['Title' => 'Has a non-versioned child'],
                     'children' => [
                         'PlainItems' => [
-                            ['externalId' => 'plain-child-i1', 'fields' => ['Title' => 'Plain child', 'SortOrder' => 1]],
+                            [
+                                'externalId' => 'plain-child-i1',
+                                'fields' => ['Title' => 'Plain child', 'SortOrder' => 1],
+                            ],
                         ],
                     ],
                 ],

@@ -674,4 +674,114 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
         $this->assertStringContainsString('cascade_duplicates', $logger->messages[0]);
         $this->assertStringNotContainsString('in $owns', $logger->messages[0]);
     }
+
+    /**
+     * #119: an excluded node is pruned at itself, AND its own owned
+     * relations are never followed either — a grandchild reachable ONLY
+     * through an excluded child must not leak into `targets` (it isn't
+     * independently owned by the parent, so it has no other path in) NOR
+     * into `skipped` (it was never visited at all, so there's nothing to
+     * report about it specifically).
+     */
+    public function testWalkOwnedExcludingPrunesAnExcludedNodeAndItsOwnSubtree(): void
+    {
+        [$parent, $child, $grandchild] = $this->inDraft(function () {
+            $parent = ApiTestOwnedParentObject::create(['Title' => 'Excluding Parent']);
+            $parent->write();
+
+            $child = ApiTestOwnedChildObject::create(['Title' => 'Excluding Child', 'ParentID' => $parent->ID]);
+            $child->write();
+
+            $grandchild = ApiTestOwnedGrandchildObject::create([
+                'Title' => 'Excluding Grandchild',
+                'ParentID' => $child->ID,
+            ]);
+            $grandchild->write();
+
+            return [$parent, $child, $grandchild];
+        });
+
+        $result = $this->inDraft(
+            fn () => $this->walker()->walkOwnedExcluding($parent, [ApiTestOwnedChildObject::class])
+        );
+
+        $targetIDs = array_map(fn ($entry) => (int) $entry['record']->ID, $result['targets']);
+        $skippedIDs = array_map(fn ($entry) => (int) $entry['record']->ID, $result['skipped']);
+
+        $this->assertSame(
+            [],
+            $targetIDs,
+            'the excluded child, and everything only reachable through it, must not be a target'
+        );
+        $this->assertSame([(int) $child->ID], $skippedIDs, 'the excluded node itself is reported');
+        $this->assertNotContains(
+            (int) $grandchild->ID,
+            array_merge($targetIDs, $skippedIDs),
+            'a node reachable only through an excluded node is never visited at all — not a target, not skipped'
+        );
+    }
+
+    /**
+     * A record NOT excluded, but reachable only through the excluded
+     * child's `$owns`, is genuinely unreachable — confirmed by the parent's
+     * OWN direct has_one, `FeaturedGrandchild`, still surfacing normally
+     * when it's a different, non-excluded record than the one hanging off
+     * the pruned child.
+     */
+    public function testWalkOwnedExcludingLeavesNonExcludedBranchesIntact(): void
+    {
+        [$parent, $featured] = $this->inDraft(function () {
+            $featured = ApiTestOwnedGrandchildObject::create(['Title' => 'Still Reachable']);
+            $featured->write();
+
+            $parent = ApiTestOwnedParentObject::create([
+                'Title' => 'Mixed Branches Parent',
+                'FeaturedGrandchildID' => $featured->ID,
+            ]);
+            $parent->write();
+
+            $child = ApiTestOwnedChildObject::create(['Title' => 'Pruned Child', 'ParentID' => $parent->ID]);
+            $child->write();
+
+            return [$parent, $featured];
+        });
+
+        $result = $this->inDraft(
+            fn () => $this->walker()->walkOwnedExcluding($parent, [ApiTestOwnedChildObject::class])
+        );
+
+        $targetIDs = array_map(fn ($entry) => (int) $entry['record']->ID, $result['targets']);
+
+        $this->assertSame(
+            [(int) $featured->ID],
+            $targetIDs,
+            'a branch not routed through the excluded class must still be walked normally'
+        );
+    }
+
+    /**
+     * `walkOwnedExcluding()` is new API — confirms it doesn't change
+     * `walk()`'s own behavior (no excludedClasses argument reaches it).
+     */
+    public function testWalkOwnedExcludingWithNoExclusionsMatchesPlainWalk(): void
+    {
+        [$parent, $child] = $this->inDraft(function () {
+            $parent = ApiTestOwnedParentObject::create(['Title' => 'No Exclusions Parent']);
+            $parent->write();
+
+            $child = ApiTestOwnedChildObject::create(['Title' => 'No Exclusions Child', 'ParentID' => $parent->ID]);
+            $child->write();
+
+            return [$parent, $child];
+        });
+
+        $plainWalk = $this->inDraft(fn () => $this->walker()->walk($parent));
+        $result = $this->inDraft(fn () => $this->walker()->walkOwnedExcluding($parent, []));
+
+        $this->assertSame(
+            array_map(fn ($entry) => (int) $entry['record']->ID, $plainWalk),
+            array_map(fn ($entry) => (int) $entry['record']->ID, $result['targets'])
+        );
+        $this->assertSame([], $result['skipped']);
+    }
 }

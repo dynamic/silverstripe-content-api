@@ -217,13 +217,74 @@ page-level cascade alone would leave elements stranded on draft behind a live pa
 | Action | Effect |
 |---|---|
 | `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present. `mode: "subtree"` alone also accepts `{"liveOnly": true}` and `{"dryRun": true}` (see [Publish modes](#publish-modes)); both are `400 PAYLOAD_INVALID` on every other mode. `dryRun` responds with `{"data": {"wouldPublish": [...]}, "meta": {"operation": "publishDryRun", "mode": "subtree"}}` instead of the normal response. A real (non-`dryRun`) `subtree` call keeps the normal serialized-record response but adds `meta.published`: the same `[{id, className}, ...]` list, so a `liveOnly` call still reports what was actually touched |
-| `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below. `{"force": true}` also requires the `delete` verb, not just `action` (#80) — see [Security model](04_security-model.md#record-level-gate) |
+| `unpublish` | `doUnpublish()` by default (`mode: "single"`) — see the safety guard below. `{"mode": "owns"}` cascades to the record's owned tree too, minus shared assets (see [Unpublish modes](#unpublish-modes)). `{"force": true}` also requires the `delete` verb, not just `action` (#80) — see [Security model](04_security-model.md#record-level-gate) |
 | `archive` | Removes from both stages, recoverable via version history (`doArchive()`) — same guard |
 
 `unpublish`/`archive` raise `400 PAYLOAD_INVALID` if called on an unversioned class
 (`assertVersioned()`). `publish` does **not** — `PublishOrchestrator::publish()` silently no-ops
 for a non-versioned record (same as `mode: "none"`) and the request still returns `200` with no
 state change, rather than erroring.
+
+`mode: "owns"` on `unpublish` also accepts `{"dryRun": true}` — `dryRun` is otherwise
+`400 PAYLOAD_INVALID` on `unpublish`/`archive` (a plain `single` unpublish and archive have no
+dry-run support at all; only `owns` walks a set of descendants worth previewing). `dryRun`
+responds with `{"data": {"wouldUnpublish": [...], "skipped": [...]}, "meta": {"operation":
+"unpublishDryRun", "mode": "owns"}}` instead of the normal response. A real (non-`dryRun`) `owns`
+call keeps the normal serialized-record response but adds `meta.unpublished` (the same
+`[{id, className}, ...]` shape as `meta.published`, root included first) and `meta.skipped`
+(`[{id, className, reason}, ...]` — every excluded shared asset). See [Unpublish
+modes](#unpublish-modes) for why assets are excluded rather than walked.
+
+## Unpublish modes
+
+Two modes — a deliberately smaller, **non-mirrored** set of the five [publish modes](#publish-modes)
+above:
+
+| Mode | Effect |
+|---|---|
+| `single` | `doUnpublish()` on the record itself only. The default — unchanged since before #119 |
+| `owns` | `doUnpublish()` on the record, then every `$owns`-reachable descendant, **except a shared asset** (see below) |
+
+There is deliberately no unpublish `recursive` or `subtree` — a `Hierarchy` tree cascade is
+exactly the stranded-descendants hazard the [guard below](#unpublishing-or-archiving-a-hierarchy-record-the-descendant-cascade-guard)
+exists to prevent, not a feature to add more of. `owns` composes with that guard rather than
+replacing it: it still runs against the root before anything else happens, `force` still bypasses
+it the same way, and a `$owns` relation graph and a `Hierarchy` tree remain two entirely different
+graphs — `owns` mode only ever touches the former.
+
+**`owns` is not a mirror of publish's `owns` mode, in three ways (#119):**
+
+- **A `File`/`Image` reached through the walk is excluded, never unpublished — reported instead.**
+  `$owns` routinely names an image relation, and a single file is routinely owned by more than one
+  live record at once — a hero slide, a CTA card, and a page's own product image all pointing at
+  the same upload is a realistic shape. Unpublishing that file out from under a page that
+  never asked to be touched would 403 that page via `AssetControlExtension`, with no way to see
+  why from the caller that triggered it. Every excluded node still appears in the response's
+  `skipped` list (`{id, className, reason: "SHARED_ASSET_CLASS"}`), not silently dropped, so a
+  caller can see exactly what stayed live and why — see [Stage actions](#stage-actions) for the
+  full response shape. This is a class-level
+  exclusion (`is_a()`, so a project's own `File` subclass is covered too), not a reference count —
+  a reference count would need to be exhaustive across has_one/has_many/many_many to be safe, and
+  getting that wrong reintroduces exactly the hazard this exclusion exists to prevent. The
+  practical effect: an owned asset is *never* touched by this cascade, whether or not it's
+  genuinely shared by anything else.
+- **Root first, descendants after — the opposite order from publish's `owns` mode.** Publishing
+  writes leaves before the root so nothing is ever live with an unpublished parent. A page that
+  still points at draft elements is a normal, harmless in-progress state; elements that vanish
+  from live while the page above them is still fully live is not the same kind of safe — so
+  unpublish takes the root down first.
+- **No `$additional` parameter.** Publish's `owns` mode can be handed extra targets outside the
+  walked `$owns` graph (`CompositionService`/`PageHandler` use this internally to reach an
+  element's own has_many children, since `BaseElement` declares no `$owns`). Unpublish's `owns`
+  mode has no equivalent — there is no unpublish call site with the same "I know what I just
+  wrote and it isn't all walk-reachable" problem publish's internal callers have.
+
+Same check-everything-before-writing-anything shape as publish's `owns` mode: every non-excluded
+descendant is authorization-checked (class `action` verb + `canEdit()` — the same verb a plain
+`single` unpublish already uses, per #80's reasoning that unpublish is `action`-shaped and
+`delete` is reserved for the force-bypass that reaches records the caller never named) before any
+`doUnpublish()` call. `dryRun` runs the same guard and walk, returning the preview shape below,
+without writing anything.
 
 ## Unpublishing or archiving a `Hierarchy` record: the descendant-cascade guard
 

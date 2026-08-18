@@ -5,6 +5,51 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#119)** New `owns` unpublish mode — `records/$ClassRef/$ID/unpublish` (`{"mode": "owns"}`):
+  unpublishes the record, then every descendant reachable through its `$owns` config
+  (`OwnedTreeWalker::walkOwnedExcluding()`, a new sibling of the walker's existing `walk()`),
+  authorization-checked the same way `owns` publish mode already is (class `action` verb +
+  `canEdit()`), before writing anything. This is the unpublish half #119 left open when its
+  publish half shipped (1.9.0/2.4.0) — the issue itself flagged it as the harder, riskier half,
+  not a symmetric mirror: `$owns` routinely names `File`/`Image`, and a single asset is routinely
+  owned by more than one live record at once (one file ID simultaneously serving a hero slide, a
+  CTA card, and a page's own product image is a realistic shape). Unpublishing a
+  shared asset out from under a page that never asked to be touched would 403 that page via
+  `AssetControlExtension`, with no way to see why.
+
+  `owns` mode never unpublishes a `File`/`Image` reached through the walk — `is_a()`-excluded at
+  the walker itself (covers a project's own `File` subclass too), not filtered from the result
+  afterwards, so nothing reachable only through an excluded asset leaks into the target set
+  either. Every excluded node is still reported, in a new `skipped` list
+  (`{id, className, reason: "SHARED_ASSET_CLASS"}`), not silently dropped. This is a deliberate
+  type exclusion, not a reference count: a count would need to be exhaustive across
+  has_one/has_many/many_many to be safe, and getting that wrong reproduces the exact hazard the
+  exclusion exists to prevent — an owned asset is simply never touched by this cascade.
+
+  Two more deliberate asymmetries with `owns` publish mode: the root unpublishes **first**, then
+  descendants (the opposite order from publish, which writes leaves before the root) — so there
+  is never a window where a page is live but points at elements that have already been pulled;
+  and there is no `$additional` parameter — publish's internal callers use it to reach an
+  element's own has_many children (since `BaseElement` declares no `$owns`), and unpublish has no
+  call site with the same problem.
+
+  Composes with, rather than replaces, the existing `Hierarchy` stranded-descendants guard (#71)
+  and its `force` bypass — checked on the root AND every walked target, not just the root: nothing
+  prevents an owned relation from itself being a `SiteTree` with its own live tree children, and
+  the guard is a per-record risk, not a per-call-site one (`/review-pr` caught the root-only cut
+  of this before merge). `RecordActionsHandler`'s `owns`-mode write now runs inside a `DbTransaction`
+  (matching how `PageHandler::applyTemplate()` wraps its own owned-tree cascade), so a
+  `doUnpublish()` hook throwing partway through the descendant loop rolls the whole cascade back
+  instead of leaving a live orphan (root unpublished, only some descendants following it) with no
+  way to tell from the response alone. Takes `dryRun` (previously `400 PAYLOAD_INVALID` on every
+  unpublish call — narrowed to permit `dryRun` with `mode: "owns"` specifically; a plain
+  `single`-mode unpublish and `archive` still reject it outright). Real (non-`dryRun`) response
+  adds `meta.unpublished` (root first)
+  and `meta.skipped` alongside the existing serialized-record shape; `dryRun` responds with
+  `{"data": {"wouldUnpublish": [...], "skipped": [...]}, "meta": {"operation": "unpublishDryRun",
+  "mode": "owns"}}`. Spec bumped to `v1.15`.
+
 ## [2.5.0] - 2026-08-18
 
 ### Fixed
@@ -928,6 +973,12 @@ color tokens, and apply-template.
 [2.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.4.0...2.0.0
+[1.10.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.9.0...1.10.0
+[1.9.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.8.0...1.9.0
+[1.8.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.7.0...1.8.0
+[1.7.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.6.0...1.7.0
+[1.6.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.5.0...1.6.0
+[1.5.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.0.0...1.5.0
 [1.4.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.3.0...1.4.0
 [1.3.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.1.0...1.2.0
