@@ -4,10 +4,12 @@ namespace Dynamic\ContentApi\Security;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 
 /**
  * Environment gating for population-domain endpoints (batch, compositions,
@@ -29,23 +31,81 @@ class EnvironmentGate
      */
     public function checkPopulationAllowed(): void
     {
-        if (self::overrideEnabled()) {
+        if ($this->isPopulationAllowed()) {
             return;
         }
 
         $environment = Director::get_environment_type();
         $allowed = (array) static::config()->get('population_enabled_environments');
 
-        if (!in_array($environment, $allowed, true)) {
-            throw new ApiError(
-                ErrorCode::ENV_FORBIDDEN,
-                sprintf(
-                    'Population endpoints are disabled in the "%s" environment. '
-                    . 'Set SS_CONTENT_API_ALLOW_POPULATE=1 to override deliberately.',
-                    $environment
-                )
-            );
+        // #126: a `dev`/`test` rehearsal against this same gate never fires
+        // it at all (this environment wouldn't reach this branch), so the
+        // FIRST time a project ever sees this is typically the first real
+        // write against a `live`/`uat`-type target — often the one moment
+        // nobody's watching the response body closely. The wire error
+        // (below) already says exactly what to do; this log line exists so
+        // the same signal also reaches whatever server-side log a
+        // deploy/ops process actually monitors. Only reached from THIS
+        // throwing method, never from isPopulationAllowed()'s silent probe
+        // (SchemaService's `populationEnabled` flag) — every `GET
+        // schema/site` call would otherwise log a false "blocked" warning
+        // on a `live` target purely from checking the flag, defeating the
+        // "distinct signal for the moment that actually matters" point of
+        // adding it. Best-effort: a broken logger service must not replace
+        // the ENV_FORBIDDEN response below with an unrelated 500.
+        try {
+            Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+                'Content API population blocked in the "%s" environment (SS_CONTENT_API_ALLOW_POPULATE '
+                    . 'not set). A clean dev/test rehearsal never exercises this gate, so passing rehearsals '
+                    . 'give no warning before a real write hits it here.',
+                $environment
+            ));
+        } catch (\Throwable) {
+            // Logging is secondary to the ApiError this method's real
+            // contract is — see the docblock above.
         }
+
+        // #126: the wire message already names the environment and the env
+        // var in prose, but a caller that isn't a human reading that text —
+        // an agent driving this API on someone's behalf, e.g. daisy-content
+        // — has no way to tell this apart from an ACL failure, and no way
+        // to go read the site's .env to find out which. Structured
+        // `details` makes the fix machine-actionable instead of prose-only,
+        // the same instinct as `ELEMENT_NOT_ALLOWED_ON_PAGE` already naming
+        // a page's actual allowed element types.
+        throw new ApiError(
+            ErrorCode::ENV_FORBIDDEN,
+            sprintf(
+                'Population endpoints are disabled in the "%s" environment. '
+                . 'Set SS_CONTENT_API_ALLOW_POPULATE=1 to override deliberately.',
+                $environment
+            ),
+            [[
+                'code' => 'ENV_FORBIDDEN',
+                'environment' => $environment,
+                'envVar' => 'SS_CONTENT_API_ALLOW_POPULATE',
+                'populationEnabledEnvironments' => $allowed,
+            ]]
+        );
+    }
+
+    /**
+     * Silent probe — no exception, no log line — for a caller that only
+     * needs to know the current state (e.g. `SchemaService`'s
+     * `populationEnabled` flag on `GET schema/site`). Reading this is not
+     * itself an attempted write, so it must never produce the same
+     * server-side warning `checkPopulationAllowed()` logs when a real
+     * population call is actually blocked.
+     */
+    public function isPopulationAllowed(): bool
+    {
+        if (self::overrideEnabled()) {
+            return true;
+        }
+
+        $allowed = (array) static::config()->get('population_enabled_environments');
+
+        return in_array(Director::get_environment_type(), $allowed, true);
     }
 
     /**

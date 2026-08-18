@@ -10,7 +10,8 @@ branch on `error.code`, never on `error.message` text. Source:
 ```
 
 `details` is present on multi-field failures (write validation, batch atomic rollback),
-`UNKNOWN_CLASS` when the module can point at a likely cause, and absent otherwise.
+`UNKNOWN_CLASS` when the module can point at a likely cause, `ENV_FORBIDDEN`, and absent
+otherwise.
 
 | Code | HTTP | Triggered by |
 |---|---|---|
@@ -19,7 +20,7 @@ branch on `error.code`, never on `error.message` text. Source:
 | `FORBIDDEN` | 403 | Member lacks `CONTENT_API_ACCESS` or `CONTENT_API_POPULATE` |
 | `FORBIDDEN_CLASS` | 403 | Class doesn't expose the requested verb via `api_access`/`content_api_access` |
 | `FORBIDDEN_RECORD` | 403 | The model's own `canView`/`canEdit`/`canDelete`/`canCreate` denies |
-| `ENV_FORBIDDEN` | 403 | Population endpoint called outside `population_enabled_environments` without the override |
+| `ENV_FORBIDDEN` | 403 | Population endpoint called outside `population_enabled_environments` without the override. `details[0]` carries `environment`, `envVar`, and `populationEnabledEnvironments` so a caller can distinguish this from an ACL failure and act on it programmatically (#126) |
 | `UNKNOWN_CLASS` | 404 | Class ref not in the merged models map, or its mapped FQCN doesn't exist. `details[0].code` distinguishes `CLASS_NOT_MAPPED` (a real, registerable class exists with that name but has no `models:` entry — `details[0].message` names the FQCN), `CLASS_ALREADY_MAPPED` (that class is already registered, under a different ref — `details[0].message` names the existing ref, use that instead of adding a duplicate), and `CLASS_NOT_FOUND` (a `models:` entry exists but the FQCN it points at doesn't autoload), when the module can tell which. Never suggests a class the module hardcodes as never-exposable (`Member`/`Group`/`Permission`/etc.) regardless of project config |
 | `NOT_FOUND` | 404 | Record / external id / related record not found |
 | `METHOD_NOT_ALLOWED` | 405 | Wrong HTTP verb for the route |

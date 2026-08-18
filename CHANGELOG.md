@@ -5,6 +5,25 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#126)** `EnvironmentGate::checkPopulationAllowed()` now logs a warning (via the injected
+  `LoggerInterface`, not the wire response) the moment it blocks a call: a `dev`/`test` rehearsal
+  never reaches this gate at all, so a clean, repeated local rehearsal gives no signal that a
+  real `live`-type target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. Docs
+  (`01_quickstart.md`, `02_configuration.md#environmentgate`) now call this out explicitly before
+  a first production write. A new `EnvironmentGate::isPopulationAllowed()` silent probe (no
+  throw, no log) replaces `SchemaService`'s prior try/catch around the throwing method, so
+  checking `populationEnabled` on `GET schema/site` can never itself trigger the "population
+  blocked" warning meant for an actual blocked write. The `403 ENV_FORBIDDEN` response now also
+  carries structured `details` (`environment`, `envVar`, `populationEnabledEnvironments`) — a
+  caller that isn't a human reading the message text (an agent driving this API on someone's
+  behalf) can tell this apart from an ACL failure and act on it without being able to read the
+  site's own `.env`. `content_schema_site`'s tool description (`schema/endpoints.json`, spec
+  bumped to `v1.12`) now says explicitly to check `populationEnabled` before a first write
+  against an unfamiliar target. The wire error code stays `ENV_FORBIDDEN` — already dedicated to
+  this one check, so changing it would be a breaking change to every existing consumer's error
+  handling for a discoverability gap that doesn't need a new code, only better data.
+
 ### Removed
 - **(#150)** `ContentApiController.cors_enabled` — configured and documented but never read
   anywhere in PHP; the controller emitted no `Access-Control-*` headers and had no `OPTIONS`
