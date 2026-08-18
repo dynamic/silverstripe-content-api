@@ -5,6 +5,30 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#119)** New `owns` publish mode on `PublishOrchestrator`, `records/$ClassRef/$ID/publish`
+  (`{"mode": "owns"}`), `pages/$ID/convert`, and batch's `publish`/`defaultPublish`: publishes a
+  record plus every descendant reachable through its `$owns` config
+  (`Dynamic\ContentApi\Verify\OwnedTreeWalker`, built for #120's parity endpoint), authorization-
+  checking every one of them (class `action` verb + `canEdit()`) before writing anything — the
+  same check-everything-first contract `subtree` already has, over an owned-relation graph
+  instead of a `Hierarchy` tree. Takes `dryRun` (preview the would-publish set); `liveOnly` is
+  `subtree`-only and refused with `400 PAYLOAD_INVALID` on `owns`. Spec bumped to `v1.14`.
+
+### Fixed
+- **(#168, closing the last gap #114 left open, see #119)** `CompositionService::publishAll()`
+  and `PageHandler::applyTemplate()` used to publish a composition's/template's elemental area,
+  every element, and every element child via `publish($record, 'single', $member)` — `single`
+  mode performs no authorization at all, and nothing upstream checked the `action` verb for those
+  classes either, since element writes always pass `"publish": "none"` explicitly. Both call
+  sites now route through the new `PublishOrchestrator::publishOwnedTree()` instead of their own
+  hand-rolled publish loops, closing the gap the same way #114 closed it for each cascade's root
+  record. **Behavior change**: a class in the cascade (an element type, most commonly) that
+  grants `create`/`update` in `api_access` but withholds `action` now gets `403 FORBIDDEN_CLASS`
+  on a composition or apply-template publish, where it previously published silently with no
+  error at all. Fix: grant `action` on that class, or pass `publish: "none"` if the cascade was
+  never meant to publish it.
+
 ## [1.8.0] - 2026-08-18
 
 ### Fixed

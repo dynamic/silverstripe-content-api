@@ -31,7 +31,7 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
 | `externalId` | `create`, `upsert`, `update` | Sets/matches the external-id column |
 | `fields` | `create`, `upsert`, `update` | See [Write payloads](06_write-payloads.md#fields) |
 | `relations` | `create`, `upsert`, `update` | See [Write payloads](06_write-payloads.md#relations-has_many--many_many) |
-| `publish` | `create`, `upsert`, `update` | `none`/`single`/`recursive`/`subtree`; falls back to `defaultPublish` when omitted — see [Publishing & stages](10_publishing-and-stages.md#publish-modes) |
+| `publish` | `create`, `upsert`, `update` | `none`/`single`/`recursive`/`subtree`/`owns`; falls back to `defaultPublish` when omitted — see [Publishing & stages](10_publishing-and-stages.md#publish-modes) |
 | `mode` | `delete` | `archive` (default), `unpublish`, or `hard` — see [below](#delete-modes) |
 | `force` | `delete` with `mode: "unpublish"` or `mode: "archive"` | Bypasses the descendant-cascade guard — see [below](#delete-modes) |
 

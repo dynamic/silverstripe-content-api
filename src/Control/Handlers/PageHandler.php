@@ -126,11 +126,8 @@ class PageHandler
             $this->policy->checkRecordAccess($page, 'update', $context->member);
 
             // #114: same gap as convert() above, applied to this action —
-            // 'update' was checked, but 'action' never was before the
-            // recursive publish below (which bypasses PublishOrchestrator
-            // entirely and calls publishSingle()/publishRecursive()
-            // directly, so it isn't covered by RecordWriter::write()'s own
-            // fix either).
+            // 'update' was checked, but 'action' never was before the page
+            // itself gets published below.
             if ($publishMode === 'recursive') {
                 $this->policy->checkClassAccess(get_class($page), 'action', $context->member);
             }
@@ -156,15 +153,19 @@ class PageHandler
             if ($publishMode === 'recursive') {
                 $area = $page->hasMethod('ElementalArea') ? $page->ElementalArea() : null;
 
-                if ($area && $area->exists()) {
-                    $area->publishSingle();
+                // #119/#168: routed through publishOwnedTree() rather than
+                // the area's/elements' own publishSingle() calls this used
+                // to make directly — those performed no authorization at
+                // all. The area and its elements are passed as $additional
+                // (known written targets), the same reasoning as
+                // CompositionService::publishAll() — BaseElement declares
+                // no $owns, so element children aren't walk-reachable on
+                // their own.
+                $additional = ($area && $area->exists())
+                    ? array_merge([$area], iterator_to_array($area->Elements()))
+                    : [];
 
-                    foreach ($area->Elements() as $element) {
-                        $element->publishSingle();
-                    }
-                }
-
-                $page->publishRecursive();
+                $this->publisher->publishOwnedTree($page, $context->member, $additional);
             }
 
             return [

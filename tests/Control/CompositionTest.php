@@ -413,6 +413,53 @@ class CompositionTest extends ContentApiTestCase
     }
 
     /**
+     * #119/#168: `publishAll()` now routes the area/element/child cascade
+     * through `PublishOrchestrator::publishOwnedTree()`, which
+     * authorization-checks every one of them (class `action` verb) before
+     * writing anything — previously `publish($record, 'single', $member)`
+     * performed no authorization at all for these classes. A class granting
+     * `create`/`update` but withholding `action` must refuse the whole
+     * composition publish, the same way #114 already does for the page
+     * itself in the test above.
+     */
+    public function testComposeWithPublishRecursiveRequiresEveryElementClassActionVerb(): void
+    {
+        Config::modify()->set(ApiTestElement::class, 'api_access', 'read,create,update');
+
+        $page = ApiTestBlockPage::create(['Title' => 'Owns Cascade Auth Gap Page']);
+        $page->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'owns-auth-e1',
+                    'fields' => ['Title' => 'Gated Element'],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+
+        // compose() runs the whole request inside one DbTransaction — a
+        // FORBIDDEN_CLASS raised mid-publishAll() rolls back the entire
+        // composition, not just the publish step: the element's own
+        // create() never persists either. Unlike RecordWriter::write()'s
+        // single-record #114 check (see RecordWriterTest), this is a
+        // transactional gate, not a publish-only one.
+        $this->assertFalse(
+            ApiTestBlockPage::get()->byID($page->ID)->isPublished(),
+            'the whole cascade is authorization-checked before any write — the page must not publish either'
+        );
+        $this->assertNull(
+            ApiTestElement::get()->filter('FixtureIdentifier', 'owns-auth-e1')->first(),
+            'the whole composition rolls back, including the element write itself'
+        );
+    }
+
+    /**
      * The positive-space/regression half: a page write with no "publish"
      * key at all (mode defaults to "none" at the composition level) must
      * stay reachable on "update" alone, matching every other #114 gate's
