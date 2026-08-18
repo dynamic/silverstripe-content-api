@@ -420,8 +420,9 @@ class PublishOrchestrator
             }
 
             // getDescendantIDList() is a Hierarchy mixin method, confirmed
-            // present by the hasExtension() check above — PHPStan can't see
-            // that guard applies to this freshly-fetched instance too.
+            // present by the instanceof SiteTree check above — SiteTree
+            // declares the Hierarchy extension, and PHPStan can't see that
+            // this freshly-fetched instance carries it too.
             /** @var DataObject&Hierarchy $staged */
             return $staged->getDescendantIDList();
         });

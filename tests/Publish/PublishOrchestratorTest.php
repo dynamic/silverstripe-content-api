@@ -336,6 +336,12 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $wrapper = $this->publishedHierarchyObject('Non-SiteTree Wrapper');
         $child = $this->publishedHierarchyObject('Non-SiteTree Child', $wrapper->ID);
 
+        // Prove the parent/child relationship is real before relying on the
+        // guard scoping past it — otherwise this test would pass just as
+        // happily if ApiTestHierarchyObject's Hierarchy wiring were broken
+        // and $child were never actually a descendant to begin with.
+        $this->assertSame([(int) $child->ID], $wrapper->getDescendantIDList());
+
         $this->orchestrator->unpublish($wrapper);
 
         $this->assertFalse($this->isLiveHierarchyObject($wrapper->ID));
