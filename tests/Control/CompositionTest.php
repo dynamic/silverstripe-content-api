@@ -378,6 +378,60 @@ class CompositionTest extends ContentApiTestCase
         );
     }
 
+    /**
+     * #114: `compose()`'s own `publishAll()` publishes the page directly
+     * (`$page->publishRecursive()`), bypassing both `RecordWriter::write()`
+     * (the page's own field write here never carries a "publish" key) and
+     * `PublishOrchestrator::publish()`'s own authorization (it never checks
+     * the root at all) — reachable with no `page.convertTo` in the payload,
+     * unlike the `convertPage()` half of #114. A class granting `update`
+     * but withholding `action` must refuse this the same way a payload
+     * write with a "publish" key does.
+     */
+    public function testComposeWithPublishRecursiveRequiresThePageClassActionVerb(): void
+    {
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,update');
+
+        // A fresh, unpublished page rather than the shared `blockPage`
+        // fixture — that fixture's live-stage row can carry over from an
+        // earlier test in this file that legitimately published it, which
+        // would make the "nothing should have published" assertion below
+        // meaningless regardless of whether this fix actually works.
+        $page = ApiTestBlockPage::create(['Title' => 'Fresh Unpublished Block Page']);
+        $page->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertFalse(
+            ApiTestBlockPage::get()->byID($page->ID)->isPublished(),
+            'nothing should have published — the check must run before publishAll()'
+        );
+    }
+
+    /**
+     * The positive-space/regression half: a page write with no "publish"
+     * key at all (mode defaults to "none" at the composition level) must
+     * stay reachable on "update" alone, matching every other #114 gate's
+     * no-op for "none".
+     */
+    public function testComposeWithoutAPublishModeDoesNotRequireThePageClassActionVerb(): void
+    {
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,update');
+
+        $page = ApiTestBlockPage::create(['Title' => 'Fresh No-Publish-Key Block Page']);
+        $page->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+        ], $this->adminToken);
+
+        $this->assertNull($this->decode($response)['error']);
+    }
+
     public function testElementRequiresExternalId(): void
     {
         $payload = [

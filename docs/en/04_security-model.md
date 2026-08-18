@@ -197,6 +197,20 @@ be published has nothing here for `action` to gate). `PageHandler::convert()` an
 the *target* class's `update` verb unconditionally, plus `action` whenever the request's publish
 mode isn't `none` — previously only the *pre-conversion* record's `update` verb was ever checked.
 
+`CompositionService::compose()` has a third, non-conversion path to the same gap:
+`publishAll()` calls `$page->publishRecursive()` directly (not via `RecordWriter` or
+`PublishOrchestrator`'s own authorization), reachable with no `page.convertTo` in the payload at
+all — the page's own field write, if any, never carries a `publish` key, so `RecordWriter`'s
+check above never fires for it either. `compose()` now checks the page's own `action` verb
+before `publishAll()` runs, whenever the composition's own top-level `publish` is `recursive`.
+
+**Not covered by #114, and out of its scope**: `publishAll()` also publishes the composition's
+area and every element (and element child) via `PublishOrchestrator::publish($record, 'single', $member)`
+— `single` mode performs no authorization at all, and nothing upstream checks `action` for those
+classes either, since element writes always pass `"publish": "none"` explicitly. This is the
+owned-relation publish cascade #119 exists to formalize with real authorization, not a single
+root record's own verb.
+
 ## Record-level gate
 
 `PermissionPolicy::checkRecordAccess()` calls the model's own permission method for the verb:

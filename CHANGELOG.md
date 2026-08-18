@@ -50,13 +50,24 @@ All notable changes to this project are documented here. Format loosely follows
   `PageHandler::applyTemplate()` gets the equivalent class-level `action` check for its own
   `"publish": "recursive"` option, since it bypasses `PublishOrchestrator` entirely
   (`publishSingle()`/`publishRecursive()` called directly) and so isn't covered by the
-  `RecordWriter` fix either.
+  `RecordWriter` fix either. `CompositionService::compose()` had a third, non-conversion path to
+  the same gap: `publishAll()` calls `$page->publishRecursive()` directly, reachable with no
+  `page.convertTo` in the payload at all, and the page's own field write (if any) never carries a
+  `publish` key, so `RecordWriter`'s fix above never reaches it either — `compose()` now checks
+  the page's own `action` verb before `publishAll()` runs, whenever the composition's top-level
+  `publish` is `"recursive"`.
 
   **Breaking**: any class whose `api_access` grants `update`/`create` but not `action`, and that
-  receives writes carrying a `publish` key other than `"none"`, now 403s `FORBIDDEN_CLASS` where
-  it previously succeeded. Compositions are unaffected — `CompositionService::compose()` publishes
-  elements via direct `PublishOrchestrator::publish($record, 'single', $member)` calls, never
-  through `RecordWriter`.
+  receives writes carrying a `publish` key other than `"none"` — including a composition's page,
+  whether or not `convertTo` is used — now 403s `FORBIDDEN_CLASS` where it previously succeeded.
+
+  **Not covered, and deliberately out of scope**: `publishAll()` also publishes the composition's
+  *area* and every *element* (and element child) via `PublishOrchestrator::publish($record,
+  'single', $member)` — `single` mode performs no authorization at all, and nothing upstream
+  checks `action` for those classes either, since element writes always pass `"publish": "none"`
+  explicitly. This is the owned-relation publish cascade #119 exists to formalize with real
+  authorization across a whole `$owns` tree, not a single root record's own verb — closing it
+  here would be scope creep onto that issue. Filed as a residual follow-up.
 
 ## [1.7.0] - 2026-08-17
 

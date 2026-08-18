@@ -95,6 +95,23 @@ class CompositionService
         // 1. Page
         [$page, $pageOperation] = $this->resolvePage($pageSpec, $member, $publishMode);
 
+        // #114: publishAll() below calls $page->publishRecursive() directly
+        // — it doesn't go through PublishOrchestrator (which itself never
+        // authorizes the root; see its own docblock) or RecordWriter::write()
+        // (the page's own field write below never carries a "publish" key,
+        // so that class's #114 check never fires for it either). Without
+        // this, a class granting update/create but withholding action could
+        // still have its page published via a composition, the same gap
+        // #114 closed for a payload write's own "publish" key and for
+        // convertPage(). get_class($page) is deliberately read AFTER
+        // resolvePage() (which already ran convertPage()'s own equivalent
+        // check on the target class, if convertTo was used) — checking the
+        // page's final class here is idempotent with that check, not a
+        // conflicting second decision.
+        if ($publishMode === 'recursive') {
+            $this->policy->checkClassAccess(get_class($page), 'action', $member);
+        }
+
         $pageWarnings = [];
 
         if (!empty($pageSpec['fields'])) {

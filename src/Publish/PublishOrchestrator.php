@@ -172,13 +172,26 @@ class PublishOrchestrator
      * `PageHandler::convert()`/`CompositionService::convertPage()` checked
      * the *pre-conversion* record's `update`, never the *target* class's
      * verbs at all before publishing the converted instance as root. Fixed
-     * in #114: `RecordWriter::write()` now also checks the class-level
-     * `action` verb whenever its payload's `publish` key isn't `none`, and
-     * both conversion paths now check the target class's `action` verb
-     * under the same condition. This method itself still can't close the
-     * gap on its own — it only ever sees the root after the caller's own
-     * decision has already been made — so those checks live at each call
-     * site, not here.
+     * in #114 for those three call sites, plus `CompositionService::compose()`'s
+     * own page-level publish (`publishAll()`'s direct `$page->publishRecursive()`
+     * call, reachable with no `convertTo` at all): `RecordWriter::write()`
+     * now also checks the class-level `action` verb whenever its payload's
+     * `publish` key isn't `none`; both conversion paths and `compose()`
+     * itself now check the relevant class's `action` verb under the same
+     * condition. This method itself still can't close the gap on its own —
+     * it only ever sees the root after the caller's own decision has
+     * already been made — so those checks live at each call site, not here.
+     *
+     * NOT covered by #114, and deliberately out of its scope: `publishAll()`
+     * also publishes the composition's *area* and every *element* (and
+     * element child) via `publish($record, 'single', $member)` — 'single'
+     * mode performs no authorization at all, and nothing upstream checks
+     * `action` for those classes either (their own writes always pass
+     * `"publish": "none"` explicitly, so `RecordWriter::write()`'s #114
+     * check never fires for them). This is the owned-relation cascade #119
+     * exists to formalize with real authorization, not a single root
+     * record's own verb — closing it here would be scope creep onto that
+     * issue, not a #114 fix.
      *
      * `$liveOnly` (#102) skips a descendant branch entirely — no
      * collecting it as a target, no recursing into its own children, no
