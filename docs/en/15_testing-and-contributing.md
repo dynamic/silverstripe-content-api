@@ -105,7 +105,11 @@ PR — nothing else will catch a regression for you.
   grant passed on one host and failed on the other — a host-config difference, not a module
   regression. `ContentApiTestCase` now pins `File`/`Image` to `false` for this reason; any new
   test that needs a real (non-stub) framework class to start from a known state should pin that
-  class explicitly rather than relying on either testbed's own config.
+  class explicitly rather than relying on either testbed's own config. Pinning `api_access`
+  specifically only neutralizes a host that grants through that same key — it does nothing
+  against a host granting via `content_api_access` (checked first, always wins) or
+  `discovery_roots`/`discovery_write_policy`; neither testbed does either for `File`/`Image`
+  today, but a class-level pin like this one is only as strong as the specific key it overrides.
 
 ## Keeping `schema/endpoints.json` in sync with the MCP server
 
