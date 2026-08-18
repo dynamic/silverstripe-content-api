@@ -15,6 +15,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateApplicator;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Versioned\Versioned;
 
 class PageActionsTest extends ContentApiTestCase
 {
@@ -272,36 +273,58 @@ class PageActionsTest extends ContentApiTestCase
      */
     private function templateWithChildBearingElement(): ApiTestTemplateModel
     {
-        $template = ApiTestTemplateModel::create(['Title' => 'Hero template']);
-        $template->write();
+        return $this->inDraft(function () {
+            $template = ApiTestTemplateModel::create(['Title' => 'Hero template']);
+            $template->write();
 
-        $area = ElementalArea::create();
-        $area->write();
+            $area = ElementalArea::create();
+            $area->write();
 
-        $template->ElementsID = $area->ID;
-        $template->write();
+            $template->ElementsID = $area->ID;
+            $template->write();
 
-        $element = ApiTestElement::create(['Title' => 'Source element', 'Intro' => 'Hello']);
-        $element->ParentID = $area->ID;
-        $element->write();
+            $element = ApiTestElement::create(['Title' => 'Source element', 'Intro' => 'Hello']);
+            $element->ParentID = $area->ID;
+            $element->write();
 
-        $item = ApiTestElementItem::create(['Title' => 'Versioned child']);
-        $item->ElementID = $element->ID;
-        $item->write();
+            $item = ApiTestElementItem::create(['Title' => 'Versioned child']);
+            $item->ElementID = $element->ID;
+            $item->write();
 
-        $plain = ApiTestPlainChildObject::create(['Title' => 'Unversioned child']);
-        $plain->ElementID = $element->ID;
-        $plain->write();
+            $plain = ApiTestPlainChildObject::create(['Title' => 'Unversioned child']);
+            $plain->ElementID = $element->ID;
+            $plain->write();
 
-        return $template;
+            return $template;
+        });
     }
 
+    /**
+     * Written in an explicit DRAFT stage, which Elemental 6 requires before
+     * it will create the page's `ElementalArea` at all:
+     * `ElementalAreasExtension::allowAlteringElementalArea()` gates
+     * `ensureElementalAreasExist()` on `Versioned::get_stage() === DRAFT`.
+     * Elemental 5 has no such guard, so a bare `write()` happens to work
+     * there and this looks unnecessary until it's run on the other branch.
+     * Also just accurate: every content-api write path operates in draft.
+     */
     private function blockPage(): ApiTestBlockPage
     {
-        $page = ApiTestBlockPage::create(['Title' => 'Template target']);
-        $page->write();
+        return $this->inDraft(function () {
+            $page = ApiTestBlockPage::create(['Title' => 'Template target']);
+            $page->write();
 
-        return $page;
+            return $page;
+        });
+    }
+
+    private function inDraft(callable $callback): mixed
+    {
+        return Versioned::withVersionedMode(function () use ($callback) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            return $callback();
+        });
     }
 
     /**
@@ -432,9 +455,16 @@ class PageActionsTest extends ContentApiTestCase
      * The `class_exists()` gate is unchanged by making the class names
      * config — a project without the package still gets FEATURE_UNAVAILABLE
      * rather than a fatal on a missing class.
+     *
+     * Points the config at a deliberately absent class rather than relying on
+     * the real package being uninstalled: it isn't installed alongside this
+     * module's SS5 test run, but it IS present in the SS6 testbed, where
+     * relying on its absence made this test assert nothing.
      */
     public function testApplyTemplateWithoutThePackageIsFeatureUnavailable(): void
     {
+        Config::modify()->set(PageHandler::class, 'template_class', 'Dynamic\\ContentApi\\Tests\\NoSuchTemplate');
+
         $page = $this->blockPage();
 
         $response = $this->apiPost("pages/{$page->ID}/apply-template", [
