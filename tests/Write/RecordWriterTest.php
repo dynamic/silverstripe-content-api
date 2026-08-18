@@ -2,11 +2,14 @@
 
 namespace Dynamic\ContentApi\Tests\Write;
 
+use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Write\RecordWriter;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Security\Member;
 
@@ -204,5 +207,96 @@ class RecordWriterTest extends ContentApiTestCase
             $result,
             'a created record has no prior state to compare against'
         );
+    }
+
+    /**
+     * #114: `update`/`create` are independently configurable verbs from
+     * `action` (`ClassRegistry::VERBS`) — a class granting `update` but
+     * withholding `action` must not be able to publish its root record
+     * via the payload's "publish" key, since `checkClassAccess()` was
+     * previously only ever called with `update`/`create` here.
+     */
+    public function testWriteWithAPublishKeyRequiresTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,update');
+
+        $record = ApiTestVersionedObject::create(['Title' => 'Needs action to publish']);
+        $record->write();
+
+        try {
+            $this->writer()->update(
+                $record,
+                ['fields' => ['Title' => 'Updated'], 'publish' => 'single'],
+                $this->member()
+            );
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('FORBIDDEN_CLASS', $error->toArray()['code']);
+        }
+    }
+
+    /**
+     * Same narrowed class, no "publish" key at all (the default, "none")
+     * — must stay reachable on "update" alone, matching
+     * PublishOrchestrator::publish()'s own no-op for that mode.
+     */
+    public function testWriteWithoutAPublishKeyDoesNotRequireTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,update');
+
+        $record = ApiTestVersionedObject::create(['Title' => 'No publish key']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Updated without publishing']],
+            $this->member()
+        );
+
+        $this->assertSame('Updated without publishing', $result['record']->Title);
+    }
+
+    /**
+     * The positive half: granting `action` alongside `update` (the
+     * default full access every other test in this file relies on) lets
+     * a payload "publish" key succeed.
+     */
+    public function testWriteWithAPublishKeySucceedsWhenActionVerbIsGranted(): void
+    {
+        $record = ApiTestVersionedObject::create(['Title' => 'Should publish']);
+        $record->write();
+
+        $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Published'], 'publish' => 'single'],
+            $this->member()
+        );
+
+        $this->assertTrue($record->isPublished());
+    }
+
+    /**
+     * A "publish" key on a non-versioned class must NOT require `action`
+     * — PublishOrchestrator::publish() itself is already a no-op for a
+     * non-versioned record, so a class that can never actually be
+     * published has nothing here for `action` to gate. Narrows
+     * ApiTestObject's own api_access (normally `true`, i.e. every verb)
+     * to prove this — if `action` were required, this write would 403
+     * even though nothing was ever going to publish.
+     */
+    public function testWriteWithAPublishKeyOnANonVersionedClassDoesNotRequireTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_access', 'read,update');
+
+        $record = ApiTestObject::create(['Title' => 'Not versioned']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Still not versioned'], 'publish' => 'single'],
+            $this->member()
+        );
+
+        $this->assertSame('Still not versioned', $result['record']->Title);
     }
 }

@@ -64,6 +64,32 @@ class RecordActionsHandler
         $this->policy->checkClassAccess($className, $verb, $context->member);
         $body = $this->jsonBody($request);
 
+        // #80: unpublish's `force: true` bypasses the descendant-cascade
+        // guard, and PublishOrchestrator::unpublish() then hits the exact
+        // same SiteTree::onBeforeDelete() cascade archive/delete does — a
+        // delete-shaped outcome, gated everywhere else in the module
+        // (archive above; the batch delete op via RecordWriter::delete())
+        // on 'delete', not 'action'. Checked here (class-level, once the
+        // body is parseable) in addition to — not instead of — the
+        // 'action' check above: plain unpublish stays reachable on
+        // 'action' alone, only the forced/cascading variant also needs
+        // 'delete'.
+        //
+        // Gated by forceCouldStrandDescendants(), not just "$action ===
+        // 'unpublish' && force" — #89 scoped the guard force actually
+        // bypasses to SiteTree classes with enforce_strict_hierarchy on;
+        // requiring 'delete' unconditionally would demand a verb for a
+        // bypass that was never going to cascade anything on every other
+        // class, a real breaking change for a client that defensively
+        // always sends force:true.
+        $forceUnpublish = $action === 'unpublish'
+            && !empty($body['force'])
+            && $this->publisher->forceCouldStrandDescendants($className);
+
+        if ($forceUnpublish) {
+            $this->policy->checkClassAccess($className, 'delete', $context->member);
+        }
+
         // #130: dryRun is meaningful here only for publish mode "subtree"
         // (checked below, alongside liveOnly, once the mode is known).
         // unpublish/archive have no dry-run support at all — reject
@@ -78,9 +104,13 @@ class RecordActionsHandler
             );
         }
 
-        return $this->inDraft(function () use ($request, $className, $action, $body, $context, $verb) {
+        return $this->inDraft(function () use ($request, $className, $action, $body, $context, $verb, $forceUnpublish) {
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
             $this->policy->checkRecordAccess($record, $verb, $context->member);
+
+            if ($forceUnpublish) {
+                $this->policy->checkRecordAccess($record, 'delete', $context->member);
+            }
 
             $extraMeta = [];
 

@@ -125,6 +125,16 @@ class PageHandler
 
             $this->policy->checkRecordAccess($page, 'update', $context->member);
 
+            // #114: same gap as convert() above, applied to this action —
+            // 'update' was checked, but 'action' never was before the
+            // recursive publish below (which bypasses PublishOrchestrator
+            // entirely and calls publishSingle()/publishRecursive()
+            // directly, so it isn't covered by RecordWriter::write()'s own
+            // fix either).
+            if ($publishMode === 'recursive') {
+                $this->policy->checkClassAccess(get_class($page), 'action', $context->member);
+            }
+
             $template = DataObject::get_by_id($templateClass, $templateId);
 
             if (!$template) {
@@ -195,6 +205,20 @@ class PageHandler
 
         $publishMode = (string) ($body['publish'] ?? 'none');
         $this->publisher->assertValidMode($publishMode);
+
+        // #114: only the *pre-conversion* record's 'update' verb was ever
+        // checked (below, inside the closure) — the *target* class's own
+        // verbs were never checked at all before publishing the converted
+        // instance as root. A populate-scoped member could convert a page
+        // into a class whose api_access denies everything, then (with a
+        // publish mode other than "none") subtree-publish under it as
+        // root. Checked here, class-level, mirroring RecordWriter::write()'s
+        // equivalent gate for the payload-driven write path.
+        $this->policy->checkClassAccess($targetClass, 'update', $context->member);
+
+        if ($publishMode !== 'none') {
+            $this->policy->checkClassAccess($targetClass, 'action', $context->member);
+        }
 
         return Versioned::withVersionedMode(function () use ($request, $targetClass, $publishMode, $body, $context) {
             Versioned::set_stage(Versioned::DRAFT);

@@ -157,6 +157,9 @@ Sets/matches the [external id](#external-ids) column for this write's target rec
 `none` (default — leave on draft), `single` (`publishSingle()`), or `recursive`
 (`publishRecursive()`). See [Publishing & stages](10_publishing-and-stages.md).
 
+Anything other than `none` requires the class's `action` verb, not just `update`/`create` (#114)
+— see [Security model](04_security-model.md#class-level-gate).
+
 ## External ids
 
 The API's idempotency key — `ExternalIdResolver` reads/writes the column named by

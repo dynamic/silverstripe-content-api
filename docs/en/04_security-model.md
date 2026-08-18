@@ -186,6 +186,35 @@ carried over from an earlier tenant-scoped `can*()` implementation that 403'd on
 were never loaded (see the class doc on `PermissionPolicy`). Record checks (below) always run
 on a real, loaded record.
 
+**A payload write's `publish` key requires the class-level `action` verb, not just `update`
+(#114).** `RecordWriter::write()` (`upsert()`/`update()`, and therefore every batch op and
+composition field write that routes through it) checks `update`/`create`, but `update` and
+`action` are independently configurable — a class granting `update` while withholding `action`
+previously had its root record published anyway, including `"publish": "subtree"` turning one
+authorized field write into a whole-tree publish. Checked once, class-level, whenever the
+payload's `publish` key isn't `none`, on a `Versioned` class (matching
+`PublishOrchestrator::publish()`'s own no-op for a non-versioned record — a class that can never
+be published has nothing here for `action` to gate). `PageHandler::convert()` and
+`CompositionService::convertPage()` have the analogous gap closed the same way: both now check
+the *target* class's `update` verb unconditionally, plus `action` whenever the request's publish
+mode isn't `none` — previously only the *pre-conversion* record's `update` verb was ever checked.
+
+`CompositionService::compose()` has a third, non-conversion path to the same gap:
+`publishAll()` calls `$page->publishRecursive()` directly (not via `RecordWriter` or
+`PublishOrchestrator`'s own authorization), reachable with no `page.convertTo` in the payload at
+all — the page's own field write, if any, never carries a `publish` key, so `RecordWriter`'s
+check above never fires for it either. `compose()` now checks the page's own `action` verb
+before `publishAll()` runs, whenever the composition's own top-level `publish` is `recursive`.
+
+**Not covered by #114, and out of its scope**: `publishAll()` also publishes the composition's
+area and every element (and element child) via `PublishOrchestrator::publish($record, 'single', $member)`
+— `single` mode performs no authorization at all, and nothing upstream checks `action` for those
+classes either, since element writes always pass `"publish": "none"` explicitly. This is the
+owned-relation publish cascade #119 exists to formalize with real authorization, not a single
+root record's own verb. The identical cascade, with the identical gap, also exists in
+`PageHandler::applyTemplate()`'s own `publishSingle()` calls on the area and its elements.
+Tracked as #168.
+
 ## Record-level gate
 
 `PermissionPolicy::checkRecordAccess()` calls the model's own permission method for the verb:
@@ -198,6 +227,21 @@ all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit
 **both** gates. Granting `action` in `api_access` to let a consumer publish/unpublish does
 **not** also grant archive; that requires `delete` to also be listed in the class's `api_access`
 **and** `canDelete()` to independently allow it at the record level.
+
+**`unpublish` with `{"force": true}` additionally requires `delete` — but only where forcing can
+actually do anything (#80).** Forcing bypasses the descendant-cascade guard (see [Publishing and
+stages](10_publishing-and-stages.md)), and where that bypass is real, the cascade it uncovers is
+delete-shaped — the same live-subtree loss `archive` produces. But per #89, the guard itself only
+ever has something to bypass on a `SiteTree` class with `enforce_strict_hierarchy` enabled; on
+every other class `force: true` is already a no-op, so this extra `delete` requirement doesn't
+apply there either — demanding a verb for a bypass that was never going to cascade anything would
+itself be a breaking change for a client that defensively always sends `force: true`. Plain,
+non-forced `unpublish` always needs only `action`. Where it does apply, `force: true` needs
+`action` (unpublish's base verb) **and** `delete`, checked at both the class and record level —
+the `delete` requirement mirrors how the batch `delete` op (`RecordWriter::delete()`) has always
+been gated on `delete` alone, regardless of `mode`.
+`PublishOrchestrator::forceCouldStrandDescendants($className)` is the one place this scoping is
+decided — both the guard and this verb gate call it, so they can't drift apart.
 
 **Create** is different: `checkCreateAccess()` calls `canCreate($member, $context)` with a
 `$context` array hydrated from the payload's has_one keys (`buildCreateContext()`), because a

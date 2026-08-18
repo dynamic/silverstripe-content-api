@@ -111,9 +111,18 @@ actions](#publishunpublisharchive-actions) for how to pass them):
   publish it by publishing an ancestor they can edit instead. The whole subtree is checked
   *before* anything is written — a permission gap on descendant #12 refuses the entire call
   rather than leaving descendants #1-11 live with no way to undo it. The *root* record itself is
-  assumed to already be authorized by whichever call site is invoking `publish()` — that
-  assumption doesn't hold everywhere yet; see `PublishOrchestrator::collectSubtreeTargets()`'s
-  docblock (issue #114).
+  assumed to already be authorized by whichever call site is invoking `publish()`. Fixed for
+  every root-record call site (#114): `RecordActionsHandler` checks `action` directly;
+  `RecordWriter::write()` checks the class-level `action` verb whenever the payload's `publish`
+  key isn't `none`; `PageHandler::convert()`/`CompositionService::convertPage()` check the
+  *target* class's `action` verb under the same condition, not just the *pre-conversion*
+  record's `update`; and `CompositionService::compose()` itself checks the page's own `action`
+  verb before `publishAll()`, whether or not `convertTo` was used. See
+  `PublishOrchestrator::collectSubtreeTargets()`'s docblock — including the paragraph naming
+  what's still **not** covered: a composition's *area* and *elements* publish via `publish()`'s
+  `single` mode with no authorization check at all (the same gap exists in
+  `PageHandler::applyTemplate()`'s own `publishSingle()` calls), tracked as #168, a gap #119's
+  owned-relation cascade work is scoped to close, not this issue.
 - **`liveOnly`**: skip a descendant branch — no publish, no recursing into its own children —
   when it isn't already live. See the resurrection-risk warning below.
 - **`dryRun`**: run the full authorization-checked walk (so the same error a real call would
@@ -164,7 +173,7 @@ stranded on draft behind a live page.
 | Action | Effect |
 |---|---|
 | `publish` | `publishSingle()` by default. `{"mode": "recursive"}` or `{"mode": "subtree"}` in the body selects the matching [publish mode](#publish-modes) — `{"recursive": true}` remains supported as a legacy shorthand for `mode: "recursive"`, ignored when `mode` is present. `mode: "subtree"` alone also accepts `{"liveOnly": true}` and `{"dryRun": true}` (see [Publish modes](#publish-modes)); both are `400 PAYLOAD_INVALID` on every other mode. `dryRun` responds with `{"data": {"wouldPublish": [...]}, "meta": {"operation": "publishDryRun", "mode": "subtree"}}` instead of the normal response. A real (non-`dryRun`) `subtree` call keeps the normal serialized-record response but adds `meta.published`: the same `[{id, className}, ...]` list, so a `liveOnly` call still reports what was actually touched |
-| `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below |
+| `unpublish` | Removes from live, keeps draft (`doUnpublish()`) — see the safety guard below. `{"force": true}` also requires the `delete` verb, not just `action` (#80) — see [Security model](04_security-model.md#record-level-gate) |
 | `archive` | Removes from both stages, recoverable via version history (`doArchive()`) — same guard |
 
 `unpublish`/`archive` raise `400 PAYLOAD_INVALID` if called on an unversioned class
@@ -216,8 +225,13 @@ rather than merely not-yet-published, a plain `subtree` call puts it back live. 
 `{"dryRun": true}` first to see exactly what a real call would touch before running it for
 real.
 
-The guard only applies to classes carrying the `Hierarchy` extension — a plain versioned
-`DataObject` with no tree concept is unaffected (nothing to cascade to).
+The guard only applies to `SiteTree` records with `enforce_strict_hierarchy` enabled — the only
+combination `SiteTree::onBeforeDelete()`'s cascade actually fires for (#89). A `Hierarchy`-
+extended, `Versioned` class that isn't `SiteTree`, or a project that has explicitly set
+`SiteTree.enforce_strict_hierarchy: false`, never has this cascade risk in the first place, so
+`unpublish`/`archive` on those succeed directly with no need for `force` — passing `force` there
+was previously required for a cascade that was never actually going to happen. A plain versioned
+`DataObject` with no tree concept is unaffected either way (nothing to cascade to).
 
 ## Composition-level publish restriction
 
