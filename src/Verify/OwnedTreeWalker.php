@@ -125,15 +125,26 @@ class OwnedTreeWalker
      * `DataObject::duplicate()` will actually have created, which is NOT the
      * same as reading `$cascade_duplicates`:
      *
-     * - **Empty `$cascade_duplicates` on a `Versioned` record falls back to
-     *   `$owns`.** `RecursivePublishable::onBeforeDuplicate()` replaces the
-     *   relation list with `$owns ∩ (many_many + belongs_to + has_many)` —
-     *   `duplicate()`'s own docblock calls this out ("If using versioned,
-     *   this will additionally failover to `owns` config"). has_one is
+     * - **An empty `$cascade_duplicates` falls back to `$owns`.**
+     *   `RecursivePublishable::onBeforeDuplicate()` replaces the relation
+     *   list with `$owns ∩ (many_many + belongs_to + has_many)`. has_one is
      *   excluded there deliberately, since an owned has_one may be shared
      *   non-exclusively by clone and original. Without this branch the walk
      *   silently loses grandchildren: a page-level `$owns` walk stops at an
      *   element that declares no `$owns`, so nothing else covers them.
+     *
+     *   This applies to **every** `DataObject`, versioned or not.
+     *   `RecursivePublishable` is attached to `DataObject` itself
+     *   (`versioned/_config/versionedownership.yml`), so the hook fires
+     *   regardless — and `duplicate()`'s docblock line "if using versioned,
+     *   this will additionally failover to `owns` config" means "if
+     *   silverstripe/versioned is installed", not "if this record is
+     *   versioned". Gating on `Versioned` here (an earlier cut of this
+     *   method did) prunes at an unversioned intermediate and loses any
+     *   versioned records below it — the same failure #174 exists to close,
+     *   one node type over, and inconsistent with {@see collect()}, which
+     *   walks through unversioned intermediates rather than stopping at
+     *   them.
      * - **many_many relations create nothing.** Every other type is cloned
      *   record-by-record (`duplicateHasManyRelation()` calls
      *   `$item->duplicate(false)`), but `duplicateManyManyRelation()` copies
@@ -158,7 +169,9 @@ class OwnedTreeWalker
         $manyMany = (array) $record->manyMany();
         $relations = (array) $record->config()->get('cascade_duplicates');
 
-        if ($relations === [] && $record->hasExtension(Versioned::class)) {
+        // No Versioned check: the framework's own guard is just
+        // `if ($relations || $relations === false) return;` — see above.
+        if ($relations === []) {
             $relations = array_intersect(
                 array_merge(
                     array_keys($manyMany),

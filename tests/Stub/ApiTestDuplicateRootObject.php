@@ -30,6 +30,7 @@ class ApiTestDuplicateRootObject extends DataObject implements TestOnly
 
     private static array $has_many = [
         'Nested' => ApiTestDuplicateChildObject::class,
+        'Wrapped' => ApiTestDuplicateUnversionedObject::class,
     ];
 
     private static array $many_many = [
@@ -43,6 +44,7 @@ class ApiTestDuplicateRootObject extends DataObject implements TestOnly
     private static array $cascade_duplicates = [
         'Shared',
         'Nested',
+        'Wrapped',
     ];
 
     private static array $extensions = [

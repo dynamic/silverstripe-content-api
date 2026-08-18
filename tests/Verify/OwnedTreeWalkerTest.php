@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateLeafObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateRootObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestDuplicateUnversionedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
@@ -561,6 +562,50 @@ class OwnedTreeWalkerTest extends ContentApiTestCase
     private function key(\SilverStripe\ORM\DataObject $record): string
     {
         return get_class($record) . ':' . (int) $record->ID;
+    }
+
+    /**
+     * The duplicates-mode counterpart of
+     * {@see testAnUnversionedIntermediateIsWalkedThroughNotPrunedAt}.
+     *
+     * `RecursivePublishable` is attached to `DataObject` itself
+     * (`versioned/_config/versionedownership.yml`), so its
+     * `onBeforeDuplicate()` `$owns` fallback fires for unversioned records
+     * too — `duplicate()` really does clone an unversioned intermediate's
+     * owned has_many children. Gating that fallback on `Versioned` (an
+     * earlier cut did) pruned the branch here and silently lost the
+     * versioned leaf below it, which is #174's own failure mode one node
+     * type over.
+     */
+    public function testWalkDuplicatesFollowsTheFallbackThroughAnUnversionedIntermediate(): void
+    {
+        [$root, $leaf] = $this->inDraft(function () {
+            $root = ApiTestDuplicateRootObject::create(['Title' => 'Root']);
+            $root->write();
+
+            $wrapper = ApiTestDuplicateUnversionedObject::create(['Title' => 'Wrapper', 'RootID' => $root->ID]);
+            $wrapper->write();
+
+            $leaf = ApiTestDuplicateLeafObject::create(['Title' => 'Wrapped leaf', 'WrapperID' => $wrapper->ID]);
+            $leaf->write();
+
+            return [$root, $leaf];
+        });
+
+        $result = $this->inDraft(fn () => $this->walker()->walkDuplicates($root));
+        $keys = array_map(fn ($e) => $this->key($e['record']), $result);
+
+        $this->assertContains(
+            $this->key($leaf),
+            $keys,
+            'a versioned record below an unversioned intermediate must still be walked'
+        );
+
+        // The intermediate itself is walked through, never emitted — it has
+        // no draft/live state to publish.
+        foreach ($result as $entry) {
+            $this->assertNotInstanceOf(ApiTestDuplicateUnversionedObject::class, $entry['record']);
+        }
     }
 
     /**
