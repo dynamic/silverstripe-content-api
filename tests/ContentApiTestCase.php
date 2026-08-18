@@ -22,10 +22,12 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestForceUnpublishPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestHierarchyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedAssetOwnerObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedGrandchildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedPageObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestOwnsCycleObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
@@ -72,6 +74,8 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestOwnedChildObject::class,
         ApiTestOwnedChildSubclassObject::class,
         ApiTestOwnedGrandchildObject::class,
+        ApiTestOwnedAssetOwnerObject::class,
+        ApiTestOwnedPageObject::class,
         ApiTestOwnsCycleObject::class,
         ApiTestUnversionedOwnedWrapperObject::class,
         ApiTestFingerprintRelatedObject::class,
@@ -107,6 +111,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestOwnedParentSubclass' => ApiTestOwnedParentSubclassObject::class,
             'ApiTestOwnedChild' => ApiTestOwnedChildObject::class,
             'ApiTestOwnedGrandchild' => ApiTestOwnedGrandchildObject::class,
+            'ApiTestOwnedAssetOwner' => ApiTestOwnedAssetOwnerObject::class,
             'ApiTestFingerprintRelated' => ApiTestFingerprintRelatedObject::class,
             'ApiTestFingerprintNonVersionedRelated' => ApiTestFingerprintNonVersionedRelatedObject::class,
             'ApiTestFingerprintRestrictedRelated' => ApiTestFingerprintRestrictedRelatedObject::class,
@@ -140,6 +145,13 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedChildSubclassObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedGrandchildObject::class, 'api_access', true);
+        // Deliberately NO api_access grant on SilverStripe\Assets\Image
+        // here — the #119 unpublish-owns shared-asset test
+        // (ApiTestOwnedAssetOwnerObject) only passes if the walk excludes
+        // Image before it's ever authorization-checked, not merely
+        // alongside a grant that happens to also be present.
+        Config::modify()->set(ApiTestOwnedAssetOwnerObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestOwnedPageObject::class, 'api_access', 'action');
         Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintRelatedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintNonVersionedRelatedObject::class, 'api_access', true);
