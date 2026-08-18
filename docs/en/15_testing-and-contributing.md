@@ -94,10 +94,13 @@ PR — nothing else will catch a regression for you.
   CLI `phpunit`/`sake` run picks up the change.
 
 - **A test touching a real framework class (not an `ApiTest*` stub) inherits the host project's
-  own exposure config, not a clean slate.** `ContentApiTestCase::setUp()` grants `api_access` to
-  every `ApiTest*` stub explicitly for exactly this reason, but a class the host project also maps
-  in its own `content-api.yml` (e.g. `SilverStripe\Assets\File`/`Image`) still carries whatever
-  that host declared, layered underneath. #186 was this: one testbed granted `Image` its own
+  own exposure config, not a clean slate.** `ContentApiTestCase::setUp()` already grants
+  `api_access` explicitly to every `ApiTest*` stub (for a different, config-manifest-reliability
+  reason — `TestOnly` classes in a vendored module run aren't reliably in the manifest, see the
+  comment there), which incidentally means a stub was never at risk of this leak in the first
+  place — no host project maps an `ApiTest*` class in its own `content-api.yml`. A class the host
+  project also maps (e.g. `SilverStripe\Assets\File`/`Image`) is different: it still carries
+  whatever that host declared, layered underneath. #186 was this: one testbed granted `Image` its own
   `api_access` and the other didn't, so two `AssetsTest` cases that assumed `Image` carried no
   grant passed on one host and failed on the other — a host-config difference, not a module
   regression. `ContentApiTestCase` now pins `File`/`Image` to `false` for this reason; any new

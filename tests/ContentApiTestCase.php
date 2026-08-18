@@ -154,10 +154,11 @@ abstract class ContentApiTestCase extends FunctionalTest
         // project's grant leaks in and silently decides asset-permission
         // assertions instead of the test. Pin both real asset classes to no
         // access here so AssetHandler::governingAssetClass()'s ancestry walk
-        // starts from a known state on either host; individual tests
-        // (AssetsTest, and the #119 unpublish-owns shared-asset test below,
-        // which needs the walk to exclude Image before it's ever
-        // authorization-checked) set their own grant when they need one.
+        // starts from a known state on either host. Individual tests then
+        // set their own grant when they need one (AssetsTest); the #119
+        // unpublish-owns shared-asset test in PublishOrchestratorTest relies
+        // on the opposite — Image having NO grant at all, so the walk
+        // excludes it before authorization is ever checked.
         Config::modify()->set(File::class, 'api_access', false);
         Config::modify()->set(Image::class, 'api_access', false);
         Config::modify()->set(ApiTestOwnedAssetOwnerObject::class, 'api_access', true);
