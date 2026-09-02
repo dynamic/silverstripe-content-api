@@ -125,6 +125,44 @@ class WriteGuardTest extends ContentApiTestCase
         $this->assertSame(1, (int) $fresh->Rank, 'per-class protected field reverted');
     }
 
+    /**
+     * colymba's deserializer writes every payload key straight to the
+     * model — `WriteGuardExtension::onBeforeWrite()` only ever answered
+     * "may this field change at all," never "is the new value valid," so
+     * an out-of-list Enum value reached this surface untouched even after
+     * `WriteApplicator::applyFields()` learned to reject one on the
+     * batch/composition path (that method is never called for a colymba
+     * write at all). Proven against real DB state: the field must revert
+     * to its prior value, the same way an unwritable field already does on
+     * this surface.
+     */
+    public function testPutRevertsAnOutOfListEnumValue(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $priorStatus = $record->Status;
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Status' => 'Published',
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestObject::get()->byID($record->ID);
+        $this->assertSame($priorStatus, $fresh->Status, 'out-of-list enum value reverted, not silently coerced');
+    }
+
+    public function testPutAcceptsAValidEnumValueOnColymba(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Status' => 'published',
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame('published', ApiTestObject::get()->byID($record->ID)->Status);
+    }
+
     public function testEchoedUnlistedRelationsAreStripped(): void
     {
         // The GET-then-PUT-verbatim scenario: colymba applies present _many

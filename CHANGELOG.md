@@ -6,18 +6,47 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **(#191, #195, #192)** Four write-path gaps that used to accept a request and silently do
+  something other than what was asked, found via a field audit of real usage on two production
+  consumer projects (~1,500 recorded MCP calls mined from session transcripts). All four now
+  reject rather than silently drop or coerce:
+  - `WriteApplicator::applyFields()` (and, on the colymba `/api` write surface,
+    `WriteGuardExtension::onBeforeWrite()`) now validates a DBEnum-backed field's value against
+    its own declared list before writing — `DBEnum::setValue()` never validates, and MySQL
+    itself silently coerces an out-of-list value to `''` rather than rejecting it. New
+    `INVALID_VALUE` error code. `DBMultiEnum` (a `set`-backed multi-select Enum subclass) is
+    handled correctly — each comma-separated value is checked independently.
+  - **(#191)** A has_one relation named under a `relations` payload (has_many/many_many only) is
+    now rejected — with an actionable message — before the record is written, not after: a
+    `relations: {"Parent": 74}` on a create used to silently leave `ParentID` untouched, then
+    fail on unrelated-looking root-level `SiteTree` validation instead of ever surfacing that
+    `Parent` was the actual problem.
+  - **(#195)** `LinkTransformer::transform()` now rejects an unrecognized key in a structured
+    link payload, and a key that's only valid for a *different* link type (e.g. `fileId` with
+    `"type": "ExternalLink"`) — both used to be silently dropped (`DataObject::setCastedField()`
+    falls back to a bare, never-persisted dynamic property when the resolved link class has no
+    matching column), leaving an empty or partially-populated link record with no signal
+    anything was wrong.
+  - **(#192)** `CompositionService::compose()` now also accepts `areaRelation` at the request's
+    top level, as a defensive fallback for a caller reaching the endpoint directly over HTTP
+    (`page.areaRelation` remains the one documented shape); a mismatch between the two locations
+    is reported as a warning rather than resolved silently.
+
+  **Compatibility note:** three of these are newly-rejecting a write that previously returned
+  200 — a consumer currently sending a payload that happened to hit one of these gaps (an
+  out-of-list enum value, a has_one under `relations`, an unrecognized/wrong-type link key) will
+  now get a 422 instead of a silent no-op.
 - **(#198)** `GenerateContentApiExposureTask`/`ExposureScaffolder` generated `api_access:
   'GET,POST,PUT'` for every class — no HTTP method maps to the `action` (publish/unpublish/
   archive) verb, so a project that pasted the generator's own output in as-is had a class that
   looked fully CRUD-configured but could never actually publish a write through this API. Now
   generates `'GET,POST,PUT,action'`.
-- The generator's output now also documents (as a comment, same "propose, never enable"
-  convention as the rest of the file) the separate `Colymba\RESTfulAPI\QueryHandlers\
-  DefaultQueryHandler.models` registration colymba's generic `/api` surface needs — distinct
-  from, and easy to miss alongside, this module's own `ClassRegistry.models` entry the generator
-  already documented. A class configured everywhere else but missing this second registration
-  has `content_schema_class` report a complete, writable schema while every actual `/api/$Model`
-  request 404s or is silently invisible.
+- The generator's output now also documents (as a comment) the separate `Colymba\RESTfulAPI\
+  QueryHandlers\DefaultQueryHandler.models` entry — the base both this module's own
+  `/content-api/v1` endpoints and colymba's generic `/api` surface merge from, per
+  `ClassRegistry`'s own docblock, with `ClassRegistry.models` as the narrower, content-api-only
+  overlay. A class registered only under the overlay resolves for `content_schema_class` while
+  every actual `/api/$Model` request 404s or is silently invisible.
 
 ## [1.12.0] - 2026-08-18
 
