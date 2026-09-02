@@ -93,3 +93,22 @@ differences if client code happened to depend on the old (buggy) shape:
 1.3.0 added the `filePath` alternative to `base64` on asset uploads (MCP-client-resolved, see
 [Assets](09_assets.md)) and fixed `CompositionService::publishAll()` crashing on compositions
 whose has_many children include a non-Versioned class — no action required to adopt.
+
+## Recovering a source install from before 2026-08-07
+
+The 1.x tags were re-cut on 2026-08-07 when the release lines were split onto branches `1` and
+`2` (#193). A source install (`preferred-install: source`) checked out before then still has
+the old tags, which git refuses to move — the next `composer update` fails with:
+
+```
+Failed to execute git fetch --tags composer
+ ! [rejected]        1.0.0      -> 1.0.0  (would clobber existing tag)
+```
+
+Composer's shared vcs mirror is a `--mirror` clone with forced refspecs, so it heals itself;
+only the vendor checkout stays stuck. Remove it and let composer re-clone:
+
+```bash
+rm -rf vendor/dynamic/silverstripe-content-api
+composer update dynamic/silverstripe-content-api
+```

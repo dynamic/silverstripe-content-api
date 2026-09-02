@@ -104,6 +104,18 @@ response itself. The response itself also carries structured `details` (`environ
 agent driving this API on someone's behalf — can tell this apart from an ACL failure without
 being able to read the site's own `.env` (#126).
 
+**Security note: `population_enabled_environments` cannot be narrowed by a project's own YAML
+override.** SilverStripe merges array-typed config additively across every source — a project
+YAML document setting this to `[]` (or any subset of the module's `['dev', 'test']` default) does
+not subtract from that default; the vendor value survives untouched, and the YAML looks correct on
+inspection. Confirmed on a real project: a config file was added specifically as independent
+defense-in-depth, its own comment claiming it would keep the population write surface blocked on
+pre-prod even if the primary gate were ever loosened — it did not, found only hours before a
+merge and deploy by a pre-merge code review (#199). To actually restrict this value below the
+module default, use `Config::modify()->set(EnvironmentGate::class, 'population_enabled_environments', [...])`
+in `_config.php` — a hard set, not a YAML merge. Applies to any array-typed config knob this module
+exposes for security-relevant gating, not just this one.
+
 ## WriteApplicator
 
 `Dynamic\ContentApi\Write\WriteApplicator`

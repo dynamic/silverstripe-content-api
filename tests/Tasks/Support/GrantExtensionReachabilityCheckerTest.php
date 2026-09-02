@@ -5,6 +5,10 @@ namespace Dynamic\ContentApi\Tests\Tasks\Support;
 use Dynamic\ContentApi\Tasks\Support\GrantExtensionReachabilityChecker;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantAbstractObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantExtraSourceObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionReadOnlyObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionSubObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionWritableFieldsOnlyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantReachableObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableObject;
 use ReflectionMethod;
@@ -16,6 +20,10 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
         ApiTestGrantReachableObject::class,
         ApiTestGrantUnreachableObject::class,
         ApiTestGrantExtraSourceObject::class,
+        ApiTestGrantMissingExtensionObject::class,
+        ApiTestGrantMissingExtensionReadOnlyObject::class,
+        ApiTestGrantMissingExtensionWritableFieldsOnlyObject::class,
+        ApiTestGrantMissingExtensionSubObject::class,
     ];
 
     public function testFlagsAClassWhoseCanEditOverrideNeverCallsExtendedCan(): void
@@ -161,5 +169,137 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
             $strip->invoke($checker, $heredoc),
             'a mention inside a heredoc body must not survive stripping'
         );
+    }
+
+    /**
+     * #197: a class declaring write access but carrying no
+     * ContentApiGrantExtension at all is invisible to check() — it never
+     * satisfies check()'s own carriesGrantExtension() filter — so this is
+     * the sibling method's whole reason to exist.
+     */
+    public function testCheckMissingGrantExtensionFlagsAClassWithNoExtensionAtAll(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $matches = array_values(array_filter(
+            $findings,
+            fn (array $finding): bool => $finding['class'] === ApiTestGrantMissingExtensionObject::class
+        ));
+
+        $this->assertCount(
+            1,
+            $matches,
+            'a class with api_access/api_writable_fields but no ContentApiGrantExtension ' .
+                'anywhere in its hierarchy must be flagged'
+        );
+        $this->assertEqualsCanonicalizing(['read', 'create', 'update'], $matches[0]['verbs']);
+        $this->assertSame(['Title'], $matches[0]['writableFields']);
+    }
+
+    /**
+     * check() itself is blind to this class (no extension to check
+     * reachability of) — confirms the two diagnostics really are disjoint,
+     * not that checkMissingGrantExtension() duplicates check()'s job.
+     */
+    public function testCheckItselfDoesNotFlagAClassWithNoExtensionAtAll(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->check();
+
+        $matches = array_filter(
+            $findings,
+            fn (array $finding): bool => $finding['class'] === ApiTestGrantMissingExtensionObject::class
+        );
+
+        $this->assertEmpty(
+            $matches,
+            'check() has no extension to test reachability of on this class — it must not appear there'
+        );
+    }
+
+    /**
+     * Negative control: a class that legitimately carries the extension
+     * must never appear in checkMissingGrantExtension()'s results, however
+     * its own can*() methods behave — that question belongs to check().
+     */
+    public function testCheckMissingGrantExtensionDoesNotFlagAClassThatCarriesTheExtension(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $flaggedClasses = array_column($findings, 'class');
+
+        $this->assertNotContains(ApiTestGrantReachableObject::class, $flaggedClasses);
+        $this->assertNotContains(ApiTestGrantUnreachableObject::class, $flaggedClasses);
+    }
+
+    /**
+     * ApiTestGrantExtraSourceObject only appears to carry
+     * ContentApiGrantExtension (contributed by another extension's own
+     * config, an "extra source" carriesGrantExtension() correctly
+     * excludes — see testDoesNotFlagAClassThatOnlyCarriesTheExtensionViaAnExtraSource()
+     * above). That means there is no *real* grant here, and this class
+     * declares its own write verbs (`create`, `action`) — it should be a
+     * positive finding for checkMissingGrantExtension() too, not just
+     * absent from check()'s different question.
+     */
+    public function testCheckMissingGrantExtensionFlagsAClassThatOnlyCarriesTheExtensionViaAnExtraSource(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $flaggedClasses = array_column($findings, 'class');
+
+        $this->assertContains(
+            ApiTestGrantExtraSourceObject::class,
+            $flaggedClasses,
+            'a class whose only ContentApiGrantExtension "grant" is extra-source pollution ' .
+                'has no real grant hook — it must be flagged the same as a class with no extension at all'
+        );
+    }
+
+    /**
+     * #197 negative control: a class declaring `read` only (no
+     * create/update/delete/action) has nothing for a missing grant
+     * extension to break, and flagging it would point at the wrong fix
+     * (a missing api_access write grant, not a missing extension) —
+     * proves checkMissingGrantExtension() gates on write verbs
+     * specifically, not on "any exposure at all".
+     */
+    public function testCheckMissingGrantExtensionDoesNotFlagAReadOnlyClass(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $flaggedClasses = array_column($findings, 'class');
+
+        $this->assertNotContains(ApiTestGrantMissingExtensionReadOnlyObject::class, $flaggedClasses);
+    }
+
+    /**
+     * #197 negative control: api_writable_fields with no api_access grant
+     * at all isn't exposed for writes through this API in the first place
+     * (WriteApplicator's allowlist only matters once a class is already
+     * exposed) — nothing here for a missing extension to break either.
+     */
+    public function testCheckMissingGrantExtensionDoesNotFlagAClassWithOnlyWritableFieldsAndNoAccessGrant(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $flaggedClasses = array_column($findings, 'class');
+
+        $this->assertNotContains(ApiTestGrantMissingExtensionWritableFieldsOnlyObject::class, $flaggedClasses);
+    }
+
+    /**
+     * #197: a subclass declaring nothing of its own must not produce a
+     * duplicate/spurious finding alongside its parent — only the class
+     * that actually declares the exposure (where adding the extension
+     * fixes the whole family) should be reported.
+     */
+    public function testCheckMissingGrantExtensionFlagsOnlyTheDeclaringParentNotAnInheritingSubclass(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $flaggedClasses = array_column($findings, 'class');
+
+        $this->assertContains(ApiTestGrantMissingExtensionObject::class, $flaggedClasses);
+        $this->assertNotContains(ApiTestGrantMissingExtensionSubObject::class, $flaggedClasses);
     }
 }

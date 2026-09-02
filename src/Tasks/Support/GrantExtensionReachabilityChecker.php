@@ -4,16 +4,19 @@ namespace Dynamic\ContentApi\Tasks\Support;
 
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\ContentApiGrantExtension;
+use Psr\Log\LoggerInterface;
 use ReflectionClass;
 use ReflectionException;
 use ReflectionMethod;
 use SilverStripe\Core\ClassInfo;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
 use Throwable;
 
 /**
- * Diagnostic for #103: `ContentApiGrantExtension` grants a verb's `can*()`
+ * Two independent diagnostics sharing one class walk. {@see check()}, for
+ * #103: `ContentApiGrantExtension` grants a verb's `can*()`
  * hook via `DataObject::extendedCan()`, which only takes effect if the
  * owning class's own `can*()` implementation actually calls `extendedCan()`
  * somewhere in its chain — `SiteTree`'s own `canView()`/`canEdit()`/
@@ -47,6 +50,11 @@ use Throwable;
  * diagnostic that should be safe to run against a live database. If
  * reflection's blind spots turn out to matter in practice, that tradeoff
  * is worth revisiting.
+ *
+ * {@see checkMissingGrantExtension()}, for #197: the check above only ever
+ * examines a class that already carries the extension — it is blind to a
+ * class configured with write access that never got the extension applied
+ * at all.
  */
 class GrantExtensionReachabilityChecker
 {
@@ -54,9 +62,12 @@ class GrantExtensionReachabilityChecker
 
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
+        'logger' => '%$' . LoggerInterface::class,
     ];
 
     public ?ClassRegistry $registry = null;
+
+    public ?LoggerInterface $logger = null;
 
     /**
      * Verb => the `can*()` hook {@see ContentApiGrantExtension} answers it
@@ -120,6 +131,108 @@ class GrantExtensionReachabilityChecker
         }
 
         return $findings;
+    }
+
+    /**
+     * The subset of `ClassRegistry::VERBS` this diagnostic gates on. `read`
+     * is deliberately excluded: a class exposed only for reads has nothing
+     * for a missing grant extension to break (nothing to 403 on), and
+     * flagging it would suggest the wrong fix — the gap on a read-only
+     * class is a missing `api_access` grant, not a missing extension.
+     */
+    private const WRITE_VERBS = ['create', 'update', 'delete', 'action'];
+
+    /**
+     * #197's sibling diagnostic: {@see check()} only ever examines a class
+     * that already carries `ContentApiGrantExtension` — it is structurally
+     * blind to a class that declares write access but has no grant hook
+     * applied at all anywhere in its hierarchy. Confirmed on two real
+     * projects: table-row/table-cell/link-list/slide models extending a
+     * plain `DataObject` ancestor (not `SiteTree`/`BaseElement`, so they
+     * never picked up the extension the module's docs assume every class
+     * gets by default) were fully configured with `api_access`/
+     * `api_writable_fields` and reported clean by {@see check()}, while the
+     * service account genuinely could not write to them.
+     *
+     * Deliberately walks the same class population as {@see check()} but
+     * reads exposure from the **uninherited** declaration only — the class
+     * that itself declares `api_access`/`api_writable_fields` is the one
+     * place adding the extension actually fixes the gap, so reporting an
+     * inherited declaration here would just repeat the same finding once
+     * per subclass. A known consequence of that choice: an *abstract*
+     * ancestor that declares the exposure for a family of concrete,
+     * exposure-less subclasses (the real `AbstractSlide`/`ImageSlide`/
+     * `VideoSlide` shape this diagnostic exists to catch) is invisible
+     * here too — `isConcrete()` skips the abstract class itself, and the
+     * uninherited read means none of its concrete subclasses report
+     * anything either. Only a class that itself declares the exposure is
+     * ever caught; a family whose only declaration sits on an abstract
+     * ancestor needs that ancestor extended manually.
+     *
+     * A single class's `Config` read failing (a broken project extension,
+     * a bad config source — the same risk {@see carriesGrantExtension()}
+     * already guards against for the extension check) must not abort this
+     * read-only diagnostic for every other class; each iteration is
+     * independently guarded and a failure is logged, not silently dropped.
+     *
+     * @return array<int, array{class: string, verbs: string[], writableFields: string[]}>
+     *   one entry per class that declares its own write exposure but
+     *   carries no reachable `ContentApiGrantExtension`
+     */
+    public function checkMissingGrantExtension(): array
+    {
+        $findings = [];
+
+        foreach (ClassInfo::subclassesFor(DataObject::class, false) as $className) {
+            if (!$this->isConcrete($className) || $this->carriesGrantExtension($className)) {
+                continue;
+            }
+
+            try {
+                $verbs = $this->registry->ownAccessVerbs($className);
+
+                if (array_intersect($verbs, self::WRITE_VERBS) === []) {
+                    continue;
+                }
+
+                $writableFields = $this->ownWritableFields($className);
+            } catch (Throwable $exception) {
+                $this->logger->warning(sprintf(
+                    'checkMissingGrantExtension() could not read exposure config for %s: %s',
+                    $className,
+                    $exception->getMessage()
+                ), ['exception' => $exception]);
+
+                continue;
+            }
+
+            $findings[] = [
+                'class' => $className,
+                'verbs' => $verbs,
+                'writableFields' => $writableFields,
+            ];
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Same `Config::UNINHERITED | Config::EXCLUDE_EXTRA_SOURCES` combination
+     * {@see ClassRegistry::ownAccessVerbs()} uses and names as load-bearing
+     * — an inherited or extra-source `api_writable_fields` would misreport
+     * which class actually needs the extension added.
+     *
+     * @return string[]
+     */
+    protected function ownWritableFields(string $className): array
+    {
+        $own = Config::inst()->get(
+            $className,
+            'api_writable_fields',
+            Config::UNINHERITED | Config::EXCLUDE_EXTRA_SOURCES
+        );
+
+        return $own === null ? [] : (array) $own;
     }
 
     protected function isConcrete(string $className): bool

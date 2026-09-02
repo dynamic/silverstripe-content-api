@@ -39,6 +39,7 @@ otherwise.
 | `EXTERNAL_ID_UNSUPPORTED` | 422 | Class lacks the external-id column (`ExternalIdentifierExtension` not applied) |
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
 | `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
+| `ACTION_VERB_MISSING` | 422 | Warning code, never thrown — see below |
 | `PAYLOAD_INVALID` | 400 | Malformed payload shape: bad relation value, missing polymorphic `class` hint, `..` in a folder path, bad `conflict`/`mode` value, missing `filename`, invalid `_stage`, unsupported filter modifier, missing `page.match`, etc. |
 | `HOMEPAGE_CONVERSION_FORBIDDEN` | 403 | Converting the site home page's class without `force: true` |
 | `ASSET_READ_FAILED` | 502 | Uploaded binary is empty/unreadable |
@@ -54,6 +55,18 @@ otherwise.
 auto-suffixed it (`RecordWriter::write()`). A green response never hides that rewrite: check
 `warnings` on any write that sets `URLSegment`, don't assume the segment you sent is the one that
 was saved.
+
+## `ACTION_VERB_MISSING`: a warning code, not a thrown error
+
+Same shape as `URLSEGMENT_COLLISION` above: `ErrorCode::ACTION_VERB_MISSING` is never raised as an
+`ApiError`, only appended to a successful write's `warnings[]` array (`RecordWriter::write()`).
+`api_access: 'GET,POST,PUT'` reads as full CRUD but has no way to ever publish — `action`
+(publish/unpublish/archive) has no HTTP method of its own and must be listed as a bare `action`
+token (see [Configuration](02_configuration.md#classregistry)). Every write to a class with write
+access but no `action` was, before this warning existed, permanently draft-only with nothing in
+the response saying so (#198). Fires once per write to a `Versioned` class whose `api_access`/
+`content_api_access` grants `create` or `update` but not `action` — check `warnings` on any write
+to a class you expect to publish through the payload's `publish` key or the stage-action endpoints.
 
 ## Guarantees worth knowing
 
