@@ -339,7 +339,7 @@ class RecordWriter
         }
 
         $this->applicator->applyFields($record, $fields, $internalFields);
-        $this->assertElementPlacementAllowed($record, $priorParentID);
+        $this->assertElementPlacementAllowed($record, $priorParentID, array_key_exists('ParentID', $internalFields));
 
         // The DB write, any relation writes it enables (has_one FK repoints,
         // has_many/many_many attaches — a relation that resolves to
@@ -431,10 +431,13 @@ class RecordWriter
      * for the related record) and is deliberately deferred; see the
      * CHANGELOG and #64 follow-up issues.
      *
-     * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE
+     * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE | CROSS_PAGE_REPARENT
      */
-    protected function assertElementPlacementAllowed(DataObject $record, int $priorParentID = 0): void
-    {
+    protected function assertElementPlacementAllowed(
+        DataObject $record,
+        int $priorParentID = 0,
+        bool $parentIdIsServerDerived = false
+    ): void {
         if (
             !class_exists('DNADesign\\Elemental\\Models\\BaseElement')
             || !is_a($record, 'DNADesign\\Elemental\\Models\\BaseElement')
@@ -461,6 +464,70 @@ class RecordWriter
         }
 
         $elementClass = get_class($record);
+
+        // #201: only guarded when the NEW ParentID is server-derived
+        // (composition's own resolved-area assignment via $internalFields),
+        // never for a caller's own explicit "fields": {"ParentID": ...} —
+        // that is a deliberate, addressed-by-id move
+        // (testBatchUpdateReparentingAnElementToADisallowedAreaIsRejected
+        // covers exactly that path and is intentionally supported, gated
+        // only by the type-allowlist check below).
+        //
+        // The dangerous case this guards is different: an already-parented
+        // element (priorParentID nonzero) whose area FK silently changes to
+        // a DIFFERENT page's area as a side effect of composition's global
+        // `externalId` lookup (`ExternalIdResolver::tryFind()` is site-wide
+        // by design, unlike `processChild()`'s element-scoped lookup — see
+        // that method's own docblock for the analogous fix already shipped
+        // one level down). A wrong `page.match.id` resolves to an unrelated
+        // page, and every payload `externalId` that happens to already
+        // exist elsewhere on the site gets silently reparented onto it —
+        // the caller never named that record at all, let alone asked to
+        // move it. Confirmed live (Rockline Industrial, module #201):
+        // recovery needed raw SQL, since the API forbids `delete` by
+        // design. Checked before the type-allowlist check below so a
+        // cross-page collision is reported as what it almost certainly is
+        // (the wrong target was resolved), not as an element-type
+        // restriction.
+        if ($parentIdIsServerDerived && $priorParentID !== 0) {
+            $priorArea = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID($priorParentID);
+            $priorPage = $priorArea && $priorArea->hasMethod('getOwnerPage') ? $priorArea->getOwnerPage() : null;
+
+            // ID-only comparison isn't safe here: getOwnerPage() resolves
+            // against EVERY class carrying ElementalAreasExtension, not
+            // just SiteTree subclasses (ElementPlacementPolicy::
+            // isAllowedOnPage() has the same non-page-owner accommodation).
+            // Two owner records from different base tables have
+            // independent auto-increment ids, so a small-integer collision
+            // (e.g. a non-page element-owner #7 vs. a SiteTree page #7)
+            // would otherwise compare equal and silently skip the guard
+            // this method exists to enforce.
+            $sameOwner = $priorPage
+                && (int) $priorPage->ID === (int) $page->ID
+                && $priorPage->baseClass() === $page->baseClass();
+
+            if ($priorPage && !$sameOwner) {
+                $externalId = $this->externalIds->supports($elementClass)
+                    ? $record->getField($this->externalIds->fieldName())
+                    : null;
+
+                throw new ApiError(
+                    ErrorCode::CROSS_PAGE_REPARENT,
+                    sprintf(
+                        '%s #%d%s already belongs to %s (#%d) — refusing to move it onto %s (#%d). '
+                        . 'This usually means the request resolved the wrong target page '
+                        . '("page.match.id", most likely) rather than intending to move the element.',
+                        $elementClass,
+                        (int) $record->ID,
+                        $externalId ? sprintf(' (externalId "%s")', $externalId) : '',
+                        get_class($priorPage),
+                        (int) $priorPage->ID,
+                        get_class($page),
+                        (int) $page->ID
+                    )
+                );
+            }
+        }
 
         if ($this->elementPlacement->isAllowedOnPage($elementClass, $page)) {
             return;
