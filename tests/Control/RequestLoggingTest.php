@@ -64,8 +64,10 @@ class RequestLoggingTest extends ContentApiTestCase
         $this->assertNotNull($record, 'expected exactly one Content API request log entry');
         $this->assertSame('handleReadList', $record['context']['endpoint']);
         $this->assertSame('GET', $record['context']['method']);
+        $this->assertSame('ApiTest', $record['context']['classRef']);
         $this->assertSame(200, $record['context']['status']);
         $this->assertNull($record['context']['errorCode']);
+        $this->assertIsInt($record['context']['memberId'], 'the authenticated caller must be logged as an ID');
     }
 
     public function testA4xxResponseLogsTheMatchingErrorCode(): void
