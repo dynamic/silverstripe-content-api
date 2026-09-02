@@ -493,7 +493,20 @@ class RecordWriter
             $priorArea = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID($priorParentID);
             $priorPage = $priorArea && $priorArea->hasMethod('getOwnerPage') ? $priorArea->getOwnerPage() : null;
 
-            if ($priorPage && (int) $priorPage->ID !== (int) $page->ID) {
+            // ID-only comparison isn't safe here: getOwnerPage() resolves
+            // against EVERY class carrying ElementalAreasExtension, not
+            // just SiteTree subclasses (ElementPlacementPolicy::
+            // isAllowedOnPage() has the same non-page-owner accommodation).
+            // Two owner records from different base tables have
+            // independent auto-increment ids, so a small-integer collision
+            // (e.g. a non-page element-owner #7 vs. a SiteTree page #7)
+            // would otherwise compare equal and silently skip the guard
+            // this method exists to enforce.
+            $sameOwner = $priorPage
+                && (int) $priorPage->ID === (int) $page->ID
+                && $priorPage->baseClass() === $page->baseClass();
+
+            if ($priorPage && !$sameOwner) {
                 $externalId = $this->externalIds->supports($elementClass)
                     ? $record->getField($this->externalIds->fieldName())
                     : null;

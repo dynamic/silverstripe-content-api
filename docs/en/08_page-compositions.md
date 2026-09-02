@@ -70,6 +70,15 @@ untrusted colymba PUT surface (see [Security model](04_security-model.md#the-tru
 Element writes upsert with `publish: "none"` internally regardless of the request's top-level
 `publish` — the composition's own publish pass (below) handles publishing explicitly.
 
+An element matched by `externalId` that already belongs to a **different** page than the one
+just matched by `page.match` is `409 CROSS_PAGE_REPARENT`, not a silent reparent — `externalId`
+is a global, site-wide lookup by design, so a wrong `page.match.id`/`urlSegment`/`externalId`
+resolving to the wrong page would otherwise force every colliding `externalId` in the payload
+onto that unrelated page with no error at all. This check only fires for composition's own
+server-derived `ParentID` assignment; an explicit client `fields.ParentID` write via batch/
+upsert/update is unaffected and stays governed solely by the `ELEMENT_NOT_ALLOWED_ON_PAGE` check
+below (#201).
+
 `class` must also be one of the target page's **allowed** element types — Elemental's own
 per-page-type `allowed_elements`/`disallowed_elements` config (`ElementalAreasExtension::
 getElementalTypes()`, the same check the CMS admin's own "add element" picker uses) is enforced
