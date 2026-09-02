@@ -33,6 +33,13 @@ class ApiTestObject extends DataObject implements TestOnly
         // silently coerced to '' by MySQL's own ENUM column — confirmed
         // live, 46 elements, essentials project).
         'Status' => "Enum('draft,published', 'draft')",
+        // DBMultiEnum extends DBEnum and stores a comma-joined list of
+        // independently-valid values, not one — exists so the enum-value
+        // check's DBMultiEnum branch has a real 'set'-backed column to
+        // test against (validating the whole joined string against
+        // enumValues() directly, instead of each comma-separated piece,
+        // would reject every legitimate multi-value write).
+        'Colors' => "MultiEnum('red,green,blue', 'red')",
     ];
 
     private static array $has_one = [

@@ -127,19 +127,29 @@ class CompositionService
 
         // 2. Area
         //
-        // The MCP tool schema documents `areaRelation` as a top-level
-        // request key (sibling to `page`/`elements`/`publish`), but this
-        // service only ever read it from inside `page` — a request built
-        // against the documented (top-level) shape silently composed
-        // against the DEFAULT area instead of the one actually requested,
+        // `page.areaRelation` is, and has always been, the one documented
+        // shape — both this repo's own schema/endpoints.json and the MCP
+        // server's bundled copy have only ever nested it under `page`; it
+        // was never actually documented top-level (an earlier version of
+        // this comment claimed otherwise — wrong, corrected). #192's live
+        // incident is best explained by a caller reaching this endpoint
+        // directly over HTTP (common for these two consumer projects — see
+        // the audit this fix set came out of) and guessing the intuitive
+        // but undocumented top-level placement, or a hand-rolled client
+        // schema doing the same; a raw HTTP payload isn't bound by the MCP
+        // tool schema's `additionalProperties: false` at all. Whatever the
+        // exact path, the underlying gap is real and worth closing
+        // regardless of how a caller got there: this service silently
+        // composed against the DEFAULT area instead of the one requested,
         // with nothing in the response to say the two differed. Confirmed
         // live on a HomePage-style class with both a generic `ElementalArea`
         // and its real `ElementalHomePage` relation: the write landed in
         // the unused area, `prune` then happily pruned it, and the page's
-        // real content never changed (#192). Both locations are accepted
-        // now; `page.areaRelation` wins if both are given (it's the shape
-        // the backend has always actually read), and a mismatch is
-        // reported as a warning rather than resolved silently.
+        // real content never changed. Both locations are now accepted as a
+        // defensive fallback for a caller outside the documented MCP shape;
+        // `page.areaRelation` wins if both are given (it's the shape the
+        // backend has always actually read), and a mismatch is reported as
+        // a warning rather than resolved silently.
         $topLevelAreaRelation = isset($payload['areaRelation']) ? (string) $payload['areaRelation'] : null;
         $nestedAreaRelation = isset($pageSpec['areaRelation']) ? (string) $pageSpec['areaRelation'] : null;
         $areaRelation = $nestedAreaRelation ?? $topLevelAreaRelation ?? 'ElementalArea';

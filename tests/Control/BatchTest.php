@@ -440,6 +440,50 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('published', ApiTestObject::get()->byID($record->ID)->Status);
     }
 
+    /**
+     * DBMultiEnum extends DBEnum and stores a comma-joined list of
+     * independently-valid values, not one — validating the whole joined
+     * string against enumValues() directly would reject every legitimate
+     * multi-value write. A real regression caught before merge, not a
+     * live incident.
+     */
+    public function testMultiEnumFieldAcceptsACommaJoinedListOfValidValues(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Colors' => 'red,blue'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame('red,blue', ApiTestObject::get()->byID($record->ID)->Colors);
+    }
+
+    public function testMultiEnumFieldRejectsAValueOutsideItsList(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Colors' => 'red,purple'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('INVALID_VALUE', $body['data']['results'][0]['error']['code']);
+    }
+
     public function testAllowlistPolicy(): void
     {
         Config::modify()->set(ApiTestObject::class, 'api_write_policy', 'allowlist');
@@ -1034,6 +1078,65 @@ class BatchTest extends ContentApiTestCase
             $priorBuddyID,
             (int) $record->BuddyID,
             'the has_one FK must be left untouched, not silently written or silently ignored'
+        );
+    }
+
+    /**
+     * validateRelationSpec() special-cases the FK-suffixed form of a
+     * has_one name ("BuddyID") the same way as the bare relation name
+     * ("Buddy") — a separate branch in the same condition, so it needs its
+     * own test rather than assuming the bare-name test above covers it.
+     */
+    public function testHasOneFkSuffixedKeyUnderRelationsIsAlsoRejected(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $buddy = $this->objFromFixture(ApiTestObject::class, 'two');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['BuddyID' => (int) $buddy->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('PAYLOAD_INVALID', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
+     * assertRelationsValid() runs before applyFields() in
+     * RecordWriter::write() specifically so a has_one-under-relations
+     * mistake is rejected before anything is applied at all — proven here
+     * with a co-occurring valid field change in the same operation, not
+     * relations alone, so a future reordering of the two calls (they
+     * aren't adjacent in write()) that let the field write through first
+     * would be caught by this test.
+     */
+    public function testHasOneUnderRelationsRejectionAlsoBlocksACoOccurringFieldWrite(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $buddy = $this->objFromFixture(ApiTestObject::class, 'two');
+        $priorTitle = $record->Title;
+
+        $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Should never land'],
+                    'relations' => ['Buddy' => (int) $buddy->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame(
+            $priorTitle,
+            ApiTestObject::get()->byID($record->ID)->Title,
+            'the co-occurring field write must not apply when relations validation rejects the operation'
         );
     }
 

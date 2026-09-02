@@ -226,6 +226,39 @@ class CompositionTest extends ContentApiTestCase
     }
 
     /**
+     * A second composition against the same page must resolve to the SAME
+     * area both times (idempotency), not create a stray duplicate on the
+     * repeat call — `created` isn't asserted either way here:
+     * `ElementalPageExtension::onBeforeWrite()` eagerly provisions every
+     * `ElementalArea`-typed has_one (not just the conventionally-named
+     * one) on any page write, including the fixture's own initial write
+     * during test setup, so `SecondaryArea` already exists before either
+     * composition call in this test runs — `created: false` on both is
+     * therefore the correct, uninteresting outcome, not evidence either
+     * way about resolveArea()'s create-vs-reuse branching.
+     */
+    public function testTopLevelAreaRelationResolvesToTheSameAreaOnARepeatCall(): void
+    {
+        $page = $this->blockPage();
+
+        $first = $this->decode($this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'areaRelation' => 'SecondaryArea',
+            'elements' => [],
+        ], $this->adminToken));
+        $firstAreaId = (int) $first['data']['area']['id'];
+
+        $second = $this->decode($this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'areaRelation' => 'SecondaryArea',
+            'elements' => [
+                ['class' => 'ElementContent', 'externalId' => 'reuse-area-e1', 'fields' => ['Title' => 'X']],
+            ],
+        ], $this->adminToken));
+        $this->assertSame($firstAreaId, (int) $second['data']['area']['id']);
+    }
+
+    /**
      * When both locations disagree, `page.areaRelation` wins (it is the
      * shape the backend has always actually read) — but the disagreement
      * itself must be visible in the response, not resolved silently.
@@ -963,6 +996,40 @@ class CompositionTest extends ContentApiTestCase
         $this->assertStringContainsString('urll', $body['error']['message']);
 
         $owner = ApiTestElement::get()->filter('FixtureIdentifier', 'unknown-link-key-owner')->first();
+        $this->assertNull($owner, 'the whole composition must have rolled back, not just the link');
+    }
+
+    /**
+     * A key that's valid for a DIFFERENT link type (here: "fileId", the
+     * FileLink key, sent with type "ExternalLink") isn't caught by the
+     * unknown-key check above — it's a real key in FIELD_MAP, just not one
+     * ExternalLink's own table has a column for.
+     * DataObject::setCastedField() falls back to a bare, never-persisted
+     * dynamic property when it finds no matching column, so this used to
+     * be silently dropped the exact same way an unrecognized key was.
+     */
+    public function testLinkPayloadWithAKeyValidForADifferentTypeIsRejected(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'wrong-type-link-key-owner',
+                    'fields' => [
+                        'Title' => 'Owner',
+                        'Cta' => ['type' => 'ExternalLink', 'fileId' => 1],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'UNKNOWN_FIELD', 422);
+        $this->assertStringContainsString('fileId', $body['error']['message']);
+
+        $owner = ApiTestElement::get()->filter('FixtureIdentifier', 'wrong-type-link-key-owner')->first();
         $this->assertNull($owner, 'the whole composition must have rolled back, not just the link');
     }
 

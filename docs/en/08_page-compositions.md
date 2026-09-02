@@ -38,7 +38,7 @@ re-POSTing the same payload is safe and idempotent (updates existing records, ne
 | `createIfMissing` | `{title, parentId, className?}`. Required if `match` finds nothing (`404 NOT_FOUND` otherwise) |
 | `convertTo` | Short class ref; changes the page's class via `newClassInstance()` if it differs. No-op if already that class |
 | `force` | Required `true` to convert the site home page (`403 HOMEPAGE_CONVERSION_FORBIDDEN` otherwise) |
-| `areaRelation` | Default `"ElementalArea"`. Use `"ElementalHomePage"` for HomePage-style page types |
+| `areaRelation` | Default `"ElementalArea"`. Use `"ElementalHomePage"` for HomePage-style page types. This is the one documented location — a top-level `areaRelation` (sibling to `page`) is also accepted, as a defensive fallback for a caller reaching this endpoint directly over HTTP rather than through the MCP tool schema, but `page.areaRelation` always wins if both are given, and a mismatch between the two is reported as a response warning |
 | `elementsRelation` | Default `"Elements"`. The area's has_many relation to its child elements — only needed for a custom area class that names it differently |
 | `fields` | Sparse page field updates — no populate-style whole-field-map copy |
 
