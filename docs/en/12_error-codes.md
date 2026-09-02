@@ -28,6 +28,7 @@ otherwise.
 | `ALREADY_EXISTS` | 409 | A create conflicts with an existing record |
 | `ASSET_CONFLICT` | 409 | Asset path conflict not resolvable by the chosen `conflict` mode |
 | `UNPUBLISH_STRANDS_DESCENDANTS` | 409 | `unpublish` or `archive` (stage action, or batch `delete` with `mode: "unpublish"`/`"archive"`) would cascade-delete `Hierarchy` descendants currently nested under the record (`SiteTree.enforce_strict_hierarchy`, the framework default) — pass `force: true` to bypass and accept the loss (#71) |
+| `CROSS_PAGE_REPARENT` | 409 | A composition's server-derived element placement (never an explicit client `fields.ParentID` write, which stays governed only by `ELEMENT_NOT_ALLOWED_ON_PAGE`) would move an already-parented element onto a DIFFERENT page's `ElementalArea` — almost always means `page.match` resolved to the wrong page, since a global `externalId` lookup matched a record that already belongs elsewhere (#201) |
 | `VALIDATION_FAILED` | 422 | A model's own `ValidationException` on write (mapped to structured `details`, never a raw exception message) |
 | `UNKNOWN_FIELD` | 422 | Payload key isn't a recognized db field/relation, under `api_unknown_fields: strict` |
 | `READONLY_FIELD` | 422 | Field/relation isn't writable per the guarded/allowlist policy, is protected, or is a bare polymorphic `{Name}Class` column set directly |
