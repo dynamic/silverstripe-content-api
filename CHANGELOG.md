@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-09-01
+
 ### Added
 - **(#198)** A write to a `Versioned` class whose `api_access`/`content_api_access` grants
   `create`/`update` but not the bare `action` token now carries an `ACTION_VERB_MISSING` warning
