@@ -17,16 +17,16 @@ All notable changes to this project are documented here. Format loosely follows
   own `api_access`/`api_writable_fields` that carries no `ContentApiGrantExtension` anywhere in its
   hierarchy at all — the existing check only ever examined a class that already had the extension
   applied. Confirmed on two real projects (classes extending a plain `DataObject` ancestor rather
-  than `SiteTree`/`BaseElement`).
+  than `SiteTree`/`BaseElement`). Landed on branch `1` first (1.14.0), merged up here.
 
 ### Changed
 - **(#199)** Documented that `EnvironmentGate::population_enabled_environments` (and any other
   array-typed security-gating config this module exposes) cannot be narrowed by a project's own
   YAML override, due to SilverStripe's additive array-config merge — only `Config::modify()->set()`
-  in `_config.php` actually restricts it.
-- **(#193)** The tag-recovery doc added to branch `2` (PR #194) now also appears on this branch,
-  which never had it; added a companion "published tags are immutable" note to
-  `docs/en/15_testing-and-contributing.md`.
+  in `_config.php` actually restricts it. Landed on branch `1` first (1.14.0), merged up here.
+- **(#193)** Added a companion "published tags are immutable" note to
+  `docs/en/15_testing-and-contributing.md`, cross-linking the tag-recovery steps this branch
+  already carries from PR #194. Landed on branch `1` first (1.14.0), merged up here.
 
 ## [2.7.0] - 2026-09-02
 
