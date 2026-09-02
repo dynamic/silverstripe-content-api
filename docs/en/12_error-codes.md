@@ -31,6 +31,7 @@ otherwise.
 | `VALIDATION_FAILED` | 422 | A model's own `ValidationException` on write (mapped to structured `details`, never a raw exception message) |
 | `UNKNOWN_FIELD` | 422 | Payload key isn't a recognized db field/relation, under `api_unknown_fields: strict` |
 | `READONLY_FIELD` | 422 | Field/relation isn't writable per the guarded/allowlist policy, is protected, or is a bare polymorphic `{Name}Class` column set directly |
+| `INVALID_VALUE` | 422 | A value doesn't fit its column's own constraints — currently: an Enum/MultiEnum field given a value outside its declared list |
 | `UNKNOWN_RELATION` | 422 | has_many/many_many relation name doesn't exist on the class |
 | `UNRESOLVED_REF` | 422 | A composition `$ref` alias never resolves |
 | `CIRCULAR_REF` | 422 | A cycle among only-deferred composition elements (mutual unresolved `$ref`s) |

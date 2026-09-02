@@ -21,6 +21,7 @@ enum ErrorCode: string
     case VALIDATION_FAILED = 'VALIDATION_FAILED';
     case UNKNOWN_FIELD = 'UNKNOWN_FIELD';
     case READONLY_FIELD = 'READONLY_FIELD';
+    case INVALID_VALUE = 'INVALID_VALUE';
     case UNKNOWN_RELATION = 'UNKNOWN_RELATION';
     case UNRESOLVED_REF = 'UNRESOLVED_REF';
     case CIRCULAR_REF = 'CIRCULAR_REF';
@@ -49,7 +50,7 @@ enum ErrorCode: string
             ErrorCode::MULTIPLE_MATCHES, ErrorCode::ALREADY_EXISTS, ErrorCode::ASSET_CONFLICT,
             ErrorCode::URLSEGMENT_COLLISION, ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS => 409,
             ErrorCode::VALIDATION_FAILED, ErrorCode::UNKNOWN_FIELD, ErrorCode::READONLY_FIELD,
-            ErrorCode::UNKNOWN_RELATION, ErrorCode::UNRESOLVED_REF, ErrorCode::CIRCULAR_REF,
+            ErrorCode::INVALID_VALUE, ErrorCode::UNKNOWN_RELATION, ErrorCode::UNRESOLVED_REF, ErrorCode::CIRCULAR_REF,
             ErrorCode::EXTERNAL_ID_UNSUPPORTED, ErrorCode::TOKEN_RESOLUTION_FAILED,
             ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE => 422,
             ErrorCode::PAYLOAD_INVALID => 400,

@@ -196,6 +196,15 @@ class RecordWriter
 
         $this->publisher->assertValidMode($publishMode);
 
+        // Validated before anything else (including applyFields() below,
+        // and well before $record->write()) so a `relations` key that's
+        // actually a has_one (a natural mistake — see
+        // WriteApplicator::assertRelationsValid()'s own docblock) is
+        // rejected with an actionable message, instead of silently
+        // dropping and letting the record's own validation fail later for
+        // an unrelated-looking reason (#191).
+        $this->applicator->assertRelationsValid($record, $relations);
+
         // #114: this class's own checkClassAccess() calls above (in
         // upsert()/update()) only ever check 'update'/'create' — 'update'
         // and 'action' are independently configurable verbs
