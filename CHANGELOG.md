@@ -42,6 +42,16 @@ All notable changes to this project are documented here. Format loosely follows
   a static flag any project write hook or `ValueTransformer` can check to skip a non-DB side
   effect during a dry run — this module can't intercept a project class's side effect on its
   behalf, only make the dry-run state visible to it.
+- **(#204)** Investigated whether non-image (PDF) asset uploads have a working route — they do;
+  `AssetService` has never hardcoded `Image`, and `content_asset_upload` correctly resolves a
+  `.pdf` (or any other extension) to plain `File` via the framework's own
+  `File::get_class_for_file_extension()`. The confirmed field incident's second half was real
+  though: `AssetService::ingest()` let `DBFile::setFromString()`'s `ValidationException` (a
+  disallowed extension, `File.allowed_extensions`) escape unmapped, surfacing as `500
+  SERVER_ERROR` with a raw exception message instead of the `422 VALIDATION_FAILED` every other
+  write path in this module gives for the same failure class. Now mapped the same way. It never
+  silently reported success on a failed write — the controller's own top-level `Throwable` catch
+  already turns an uncaught exception into a proper (if less specific) error envelope.
 - **(#191, #195, #192)** Four write-path gaps that used to accept a request and silently do
   something other than what was asked, found via a field audit of real usage on two production
   consumer projects (~1,500 recorded MCP calls mined from session transcripts). All four now
