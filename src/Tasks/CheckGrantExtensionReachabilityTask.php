@@ -14,6 +14,14 @@ use SilverStripe\Dev\BuildTask;
  * business-logic fix belongs in `GrantExtensionReachabilityChecker`
  * (shared) rather than either adapter.
  *
+ * IMPORTANT — that "no shared entry point" split applies to *logic*, not
+ * to *rendering*: the #197 `checkMissingGrantExtension()` block below is a
+ * second render call this adapter added, and branch `2`'s copy of this
+ * file does not yet call it. On merge-up, port this run()'s two-checker
+ * shape (not just the checker service) to branch `2`'s `execute()` —
+ * otherwise `checkMissingGrantExtension()`'s findings are computed but
+ * never shown on the SS6 line.
+ *
  * Usage: `sake dev/tasks/CheckGrantExtensionReachability`
  */
 class CheckGrantExtensionReachabilityTask extends BuildTask
@@ -72,10 +80,10 @@ class CheckGrantExtensionReachabilityTask extends BuildTask
                 echo "\n";
             }
 
-            echo "Found " . count($missing) . " class(es) declaring api_access/api_writable_fields\n";
-            echo "with no ContentApiGrantExtension anywhere in their hierarchy — every write to\n";
-            echo "these classes either 403s unexpectedly or succeeds only via an unrelated\n";
-            echo "inherited permission (#197):\n\n";
+            echo "Found " . count($missing) . " class(es) declaring their own write access (create/\n";
+            echo "update/delete/action) with no ContentApiGrantExtension anywhere in their\n";
+            echo "hierarchy — every write to these classes either 403s unexpectedly or succeeds\n";
+            echo "only via an unrelated inherited permission (#197):\n\n";
 
             foreach ($missing as $finding) {
                 $verbs = $finding['verbs'] !== [] ? implode('", "', $finding['verbs']) : '(none)';

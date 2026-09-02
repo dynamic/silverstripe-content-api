@@ -70,6 +70,7 @@ PR — nothing else will catch a regression for you.
 | `Control/WriteGuardPolymorphicTest.php` | Polymorphic `{"class","id"}` payload + `{Name}Class` translation on the colymba surface |
 | `Control/WriteGuardEncodeFailureTest.php` | `json_encode` failure path in the guard's re-encode step |
 | `Errors/ApiErrorTest.php` | `fromValidation()` maps structured messages, never a raw exception string |
+| `Errors/ErrorCodeTest.php` | Every `ErrorCode` case maps to a valid HTTP status — guards the exhaustive `httpStatus()` match against an unmapped new case |
 | `Registry/ClassRegistryTest.php` | `accessVerbs()`/`ownAccessVerbs()` inherited-vs-uninherited resolution, discovery (`discovery_roots`/`discovery_write_policy`/`discovery_exclude`), mandatory denylist, manual-model precedence |
 | `Security/ContentApiGrantExtensionTest.php` | `ContentApiGrantExtension`: escalation regression (a declared class's verbs must not leak to an undeclared subclass), per-verb scoping, the never-`false` guard, `VIEW_DRAFT_CONTENT`/`Versioned::canDelete()` interactions, `BaseElement::canCreate()` non-delegation |
 | `Security/PermissionPolicyTest.php` | `buildCreateContext()` has_one hydration, incl. trusted-field-only relations |

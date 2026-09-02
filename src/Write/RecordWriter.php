@@ -6,14 +6,17 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
 use Dynamic\ContentApi\Security\PermissionPolicy;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\ValidationException;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
+use Throwable;
 
 /**
  * Request-independent write pipeline shared by the single-record endpoints,
@@ -32,6 +35,8 @@ class RecordWriter
         'externalIds' => '%$' . ExternalIdResolver::class,
         'policy' => '%$' . PermissionPolicy::class,
         'elementPlacement' => '%$' . ElementPlacementPolicy::class,
+        'registry' => '%$' . ClassRegistry::class,
+        'logger' => '%$' . LoggerInterface::class,
     ];
 
     public ?WriteApplicator $applicator = null;
@@ -43,6 +48,10 @@ class RecordWriter
     public ?PermissionPolicy $policy = null;
 
     public ?ElementPlacementPolicy $elementPlacement = null;
+
+    public ?ClassRegistry $registry = null;
+
+    public ?LoggerInterface $logger = null;
 
     /**
      * Create a record, or upsert by external id when mode is `upsert`.
@@ -425,25 +434,48 @@ class RecordWriter
         // intentionally read/write-but-never-publish class (a legitimate
         // config) doesn't get warned on every single write — only a class
         // that also carries Versioned, where "can write but can never
-        // publish" is very unlikely to be intentional.
-        if ($record->hasExtension(Versioned::class)) {
-            $verbs = $this->policy->registry->accessVerbs(get_class($record));
+        // publish" is very unlikely to be intentional. The condition's
+        // "neither create nor update" case is structurally unreachable
+        // here, not untested dead code: update()/upsert() already call
+        // checkClassAccess() for 'create'/'update' before write() is ever
+        // entered, so this method can't run at all for a class granting
+        // neither.
+        //
+        // Deliberately wrapped in its own try/catch: by this point the
+        // record write (and any publish/relation-republish above) has
+        // already committed inside DbTransaction::run()'s successful path —
+        // this diagnostic-only check runs after that guarantee, not inside
+        // it, so a failure here must never bubble up and be mistaken for
+        // the write itself having failed. That would misreport a
+        // successful write as a 500 to the caller, and for a batch
+        // operation would abort every already-committed result behind it
+        // (BatchProcessor's per-operation loop only catches ApiError).
+        try {
+            if ($record->hasExtension(Versioned::class)) {
+                $verbs = $this->registry->accessVerbs(get_class($record));
 
-            if (
-                (in_array('create', $verbs, true) || in_array('update', $verbs, true))
-                && !in_array('action', $verbs, true)
-            ) {
-                $warnings[] = [
-                    'code' => ErrorCode::ACTION_VERB_MISSING->value,
-                    'message' => sprintf(
-                        '%s grants write access (create/update) but not "action" — this '
-                            . 'record can never be published through the content API. Add '
-                            . '"action" to its api_access config (#198).',
-                        get_class($record)
-                    ),
-                    'field' => 'api_access',
-                ];
+                if (
+                    (in_array('create', $verbs, true) || in_array('update', $verbs, true))
+                    && !in_array('action', $verbs, true)
+                ) {
+                    $warnings[] = [
+                        'code' => ErrorCode::ACTION_VERB_MISSING->value,
+                        'message' => sprintf(
+                            '%s grants write access (create/update) but not "action" — this '
+                                . 'record can never be published through the content API. Add '
+                                . '"action" to its api_access config (#198).',
+                            get_class($record)
+                        ),
+                        'field' => 'api_access',
+                    ];
+                }
             }
+        } catch (Throwable $exception) {
+            $this->logger->warning(sprintf(
+                'ACTION_VERB_MISSING check failed for %s: %s',
+                get_class($record),
+                $exception->getMessage()
+            ), ['exception' => $exception]);
         }
 
         $out = [
