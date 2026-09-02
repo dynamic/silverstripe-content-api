@@ -883,6 +883,99 @@ class CompositionTest extends ContentApiTestCase
         );
     }
 
+    /**
+     * #201: unlike a composition child (see
+     * testChildLookupIsScopedToOwningElement() above — CompositionService::
+     * processChild() scopes its externalId lookup to the owning element's
+     * own relation list), a top-level element's externalId lookup is
+     * genuinely global by design (FixtureIdentifier/idempotency-key
+     * semantics — see this class's own docblock). Confirmed live
+     * (Rockline Industrial): a wrong "page.match.id" resolved to an
+     * unrelated page, and every payload externalId that happened to
+     * already exist there got silently reparented onto it. A second
+     * composition reusing the first's externalId on a DIFFERENT page must
+     * be rejected, not silently reparented.
+     */
+    public function testTopLevelElementLookupRejectsCrossPageReparent(): void
+    {
+        $pageA = $this->blockPage();
+
+        $first = [
+            'page' => ['match' => ['id' => (int) $pageA->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'cross-page-e1',
+                    'fields' => ['Title' => 'Owned by A', 'HTML' => '<p>A</p>'],
+                ],
+            ],
+        ];
+
+        $this->apiPost('compositions/page', $first, $this->adminToken);
+
+        $second = [
+            'page' => [
+                'match' => ['urlSegment' => 'cross-page-b'],
+                'createIfMissing' => ['title' => 'Page B', 'className' => 'BlockPageStub'],
+            ],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'cross-page-e1',
+                    'fields' => ['Title' => 'Hijacked by B'],
+                ],
+            ],
+        ];
+
+        $response = $this->apiPost('compositions/page', $second, $this->adminToken);
+        $body = $this->assertErrorCode($response, 'CROSS_PAGE_REPARENT', 409);
+
+        $this->assertStringContainsString('cross-page-e1', $body['error']['message']);
+
+        $pageA = ApiTestBlockPage::get()->byID($pageA->ID);
+        $element = ElementContent::get()->filter('FixtureIdentifier', 'cross-page-e1')->first();
+
+        $this->assertSame('Owned by A', $element->Title, 'the element must not be edited by the rejected request');
+        $this->assertSame(
+            (int) $pageA->ElementalAreaID,
+            (int) $element->ParentID,
+            'the element must still be parented under page A, not reparented onto page B'
+        );
+    }
+
+    /**
+     * A repeat composition against the SAME page (the ordinary idempotent
+     * re-POST every other composition test relies on) must keep working —
+     * the #201 guard only fires on a genuine cross-page mismatch, not on
+     * re-matching a record that already belongs to the page being composed.
+     */
+    public function testTopLevelElementLookupStillIdempotentOnSamePage(): void
+    {
+        $page = $this->blockPage();
+
+        $payload = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'idempotent-e1',
+                    'fields' => ['Title' => 'First run', 'HTML' => '<p>1</p>'],
+                ],
+            ],
+        ];
+
+        $this->apiPost('compositions/page', $payload, $this->adminToken);
+
+        $payload['elements'][0]['fields']['Title'] = 'Second run';
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+        $body = $this->decode($response);
+
+        $this->assertNull($body['error']);
+
+        $element = ElementContent::get()->filter('FixtureIdentifier', 'idempotent-e1')->first();
+        $this->assertSame('Second run', $element->Title, 'the same-page repeat call must still update in place');
+    }
+
     public function testPageCreationValidationFailureDoesNotLeakRawExceptionText(): void
     {
         Config::modify()->set(ApiTestPage::class, 'api_access', true);

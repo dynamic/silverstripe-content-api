@@ -6,6 +6,20 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **(#201)** A composition's `page.match.id` resolving to the wrong page used to silently
+  reparent every element in the payload whose `externalId` already existed anywhere on the
+  site — `ExternalIdResolver::tryFind()` is a global lookup by design, and composition force-
+  writes the resolved area's id onto whatever record it matches, with no check that the record
+  already belonged to a different page. `RecordWriter::write()` now rejects (new
+  `CROSS_PAGE_REPARENT` error code, 409) when a server-derived `ParentID` assignment (composition
+  only — an explicit client `fields.ParentID` write, e.g. via `content_batch`, is unaffected and
+  still governed solely by the existing element-type-allowed-on-page check) would move an
+  already-parented element onto a different page's area. Confirmed live (Rockline Industrial):
+  recovery needed raw SQL, since the API forbids `delete` by design. The owner comparison checks
+  both id and base class — `getOwnerPage()` resolves against any `ElementalAreasExtension`
+  owner, not just `SiteTree`, so two owners from different base tables can share a numeric id.
+  Documented in `docs/en/12_error-codes.md`, `docs/en/08_page-compositions.md`, and the MCP tool
+  schema (`schema/endpoints.json` v1.17).
 - **(#202)** A `content_batch` has_many `add`, `remove`, or `set` (the `removeAll()` half) that
   touched an already-published, clean related record left it desynced from LIVE with nothing to
   notice or fix it — `HasManyList` unconditionally repoints/clears the related record's foreign

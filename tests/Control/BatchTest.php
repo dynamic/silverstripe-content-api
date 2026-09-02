@@ -1701,6 +1701,49 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #201's guard is scoped to composition's own server-derived ParentID
+     * assignment — an explicit client "fields": {"ParentID": ...} write, as
+     * batch update allows, is a deliberate, addressed-by-id move and must
+     * keep succeeding (governed only by the pre-existing element-type
+     * check above, exercised via the DISALLOWED case in the test above).
+     */
+    public function testBatchUpdateReparentingAnElementToAnAllowedAreaOnADifferentPageSucceeds(): void
+    {
+        $sourceArea = $this->createBlockPageWithArea('Batch Move Source');
+        $targetArea = $this->createBlockPageWithArea('Batch Move Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Move me', 'ParentID' => (int) $sourceArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        $moved = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestElement',
+                    'id' => $elementId,
+                    'fields' => ['ParentID' => (int) $targetArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $moved['data']['results'][0]['status']);
+        $this->assertSame(
+            (int) $targetArea->ID,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'an explicit client-driven cross-page move must still succeed'
+        );
+    }
+
+    /**
      * #202: a relation-only update (no `fields`, just `relations`) that
      * attaches an already-published has_many child must not leave that
      * child stranded `modifiedOnDraft` — `HasManyList::add()`
