@@ -11,8 +11,12 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestDeprecatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedChildObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestSideEffectLog;
+use Dynamic\ContentApi\Tests\Stub\ApiTestSideEffectObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
@@ -382,6 +386,106 @@ class BatchTest extends ContentApiTestCase
         ], $this->adminToken));
 
         $this->assertSame('READONLY_FIELD', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
+     * A write into an Enum column used to accept any string — DBEnum never
+     * validates on setValue(), and MySQL itself doesn't reject an
+     * out-of-list ENUM value, it silently coerces it to the empty string.
+     * The wrong-case value (a very natural mistake — the schema's real
+     * value is lowercase "published") got a 200 and a permanently wrong
+     * field, with no signal anything was wrong (confirmed live — 46
+     * elements, essentials project). Proven here against actual DB state,
+     * not just the error code: the field must be unchanged after the
+     * rejected write.
+     */
+    public function testEnumFieldRejectsAnOutOfListValue(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $priorStatus = $record->Status;
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Status' => 'Published'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $result = $body['data']['results'][0];
+        $this->assertSame('INVALID_VALUE', $result['error']['code']);
+        $detailMessage = $result['error']['details'][0]['message'];
+        $this->assertStringContainsString('draft', $detailMessage);
+        $this->assertStringContainsString('published', $detailMessage);
+
+        $record = ApiTestObject::get()->byID($record->ID);
+        $this->assertSame($priorStatus, $record->Status);
+    }
+
+    public function testEnumFieldAcceptsAValueFromItsDeclaredList(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Status' => 'published'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame('published', ApiTestObject::get()->byID($record->ID)->Status);
+    }
+
+    /**
+     * DBMultiEnum extends DBEnum and stores a comma-joined list of
+     * independently-valid values, not one — validating the whole joined
+     * string against enumValues() directly would reject every legitimate
+     * multi-value write. A real regression caught before merge, not a
+     * live incident.
+     */
+    public function testMultiEnumFieldAcceptsACommaJoinedListOfValidValues(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Colors' => 'red,blue'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame('red,blue', ApiTestObject::get()->byID($record->ID)->Colors);
+    }
+
+    public function testMultiEnumFieldRejectsAValueOutsideItsList(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Colors' => 'red,purple'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('INVALID_VALUE', $body['data']['results'][0]['error']['code']);
     }
 
     public function testAllowlistPolicy(): void
@@ -941,6 +1045,105 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('UNKNOWN_RELATION', $results[1]['error']['code']);
     }
 
+    /**
+     * #191: a has_one named under `relations` (a natural mistake — a
+     * has_one FK belongs under `fields`) used to be silently dropped —
+     * `applyRelations()` never runs until AFTER the record's own write, so
+     * on a class whose own validation would otherwise pass, the write
+     * "succeeded" with the has_one left completely untouched and no error
+     * anywhere. Must now be rejected up front, before any write happens —
+     * proven here by asserting the record's FK is unchanged, not just by
+     * the error code.
+     */
+    public function testHasOneNamedUnderRelationsIsRejectedNotSilentlyDropped(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $buddy = $this->objFromFixture(ApiTestObject::class, 'two');
+        $priorBuddyID = (int) $record->BuddyID;
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Buddy' => (int) $buddy->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $result = $body['data']['results'][0];
+        $this->assertSame('PAYLOAD_INVALID', $result['error']['code']);
+        $this->assertStringContainsString('has_one', $result['error']['message']);
+        $this->assertStringContainsString('"fields"', $result['error']['message']);
+
+        $record = ApiTestObject::get()->byID($record->ID);
+        $this->assertSame(
+            $priorBuddyID,
+            (int) $record->BuddyID,
+            'the has_one FK must be left untouched, not silently written or silently ignored'
+        );
+    }
+
+    /**
+     * validateRelationSpec() special-cases the FK-suffixed form of a
+     * has_one name ("BuddyID") the same way as the bare relation name
+     * ("Buddy") — a separate branch in the same condition, so it needs its
+     * own test rather than assuming the bare-name test above covers it.
+     */
+    public function testHasOneFkSuffixedKeyUnderRelationsIsAlsoRejected(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $buddy = $this->objFromFixture(ApiTestObject::class, 'two');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['BuddyID' => (int) $buddy->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('PAYLOAD_INVALID', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
+     * assertRelationsValid() runs before applyFields() in
+     * RecordWriter::write() specifically so a has_one-under-relations
+     * mistake is rejected before anything is applied at all — proven here
+     * with a co-occurring valid field change in the same operation, not
+     * relations alone, so a future reordering of the two calls (they
+     * aren't adjacent in write()) that let the field write through first
+     * would be caught by this test.
+     */
+    public function testHasOneUnderRelationsRejectionAlsoBlocksACoOccurringFieldWrite(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $buddy = $this->objFromFixture(ApiTestObject::class, 'two');
+        $priorTitle = $record->Title;
+
+        $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Title' => 'Should never land'],
+                    'relations' => ['Buddy' => (int) $buddy->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame(
+            $priorTitle,
+            ApiTestObject::get()->byID($record->ID)->Title,
+            'the co-occurring field write must not apply when relations validation rejects the operation'
+        );
+    }
+
     public function testCreateVerbDenied(): void
     {
         Config::modify()->set(ApiTestObject::class, 'api_access', 'read,update');
@@ -1498,6 +1701,346 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #201's guard is scoped to composition's own server-derived ParentID
+     * assignment — an explicit client "fields": {"ParentID": ...} write, as
+     * batch update allows, is a deliberate, addressed-by-id move and must
+     * keep succeeding (governed only by the pre-existing element-type
+     * check above, exercised via the DISALLOWED case in the test above).
+     */
+    public function testBatchUpdateReparentingAnElementToAnAllowedAreaOnADifferentPageSucceeds(): void
+    {
+        $sourceArea = $this->createBlockPageWithArea('Batch Move Source');
+        $targetArea = $this->createBlockPageWithArea('Batch Move Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Move me', 'ParentID' => (int) $sourceArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        $moved = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestElement',
+                    'id' => $elementId,
+                    'fields' => ['ParentID' => (int) $targetArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $moved['data']['results'][0]['status']);
+        $this->assertSame(
+            (int) $targetArea->ID,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'an explicit client-driven cross-page move must still succeed'
+        );
+    }
+
+    /**
+     * #202: a relation-only update (no `fields`, just `relations`) that
+     * attaches an already-published has_many child must not leave that
+     * child stranded `modifiedOnDraft` — `HasManyList::add()`
+     * unconditionally repoints the child's foreign key via an ordinary
+     * draft write, silently undoing the child's own earlier publish with
+     * nothing in the pipeline noticing. `defaultPublish: "single"` on this
+     * operation now covers every record the relation write actually
+     * touched, not just the operation's own target (the parent).
+     */
+    public function testDefaultPublishCoversAHasManyChildDirtiedByARelationOnlyUpdate(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $created = $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($created['error']);
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202-child')->first();
+        $this->assertTrue($child->isPublished(), 'precondition: the child must start out published');
+
+        $attached = $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($attached['error']);
+
+        $parent = ApiTestOwnedParentObject::get()->filter('FixtureIdentifier', 'b202-parent')->first();
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202-child')->first();
+
+        $this->assertSame((int) $parent->ID, (int) $child->ParentID, 'the relation attach must still take effect');
+        $this->assertFalse(
+            $child->isModifiedOnDraft(),
+            'the relation write must not leave an already-published child stranded on draft'
+        );
+    }
+
+    /**
+     * A relation-only update attaching a child that was NEVER published
+     * must not force-publish it as a side effect — only a child that was
+     * already live before this operation touched it gets put back.
+     */
+    public function testDefaultPublishDoesNotForcePublishAPreviouslyDraftOnlyHasManyChild(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202b-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202b-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202b-child')->first();
+        $this->assertFalse($child->isPublished(), 'precondition: the child must start out draft-only');
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202b-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202b-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202b-child')->first();
+        $this->assertFalse(
+            $child->isPublished(),
+            'a child that was never published must not be force-published as a side effect'
+        );
+    }
+
+    /**
+     * /review-pr on PR #209 (#202): `isPublished()` alone is true for a
+     * record that's live but ALSO mid-edit with its own unpublished draft
+     * changes — republishing that would force an editor's in-progress
+     * draft to LIVE as a side effect of an unrelated relation write, not
+     * merely restore what THIS operation itself disturbed. Only a record
+     * that was clean (published AND NOT already `modifiedOnDraft`) going
+     * in gets put back.
+     */
+    public function testDefaultPublishDoesNotForcePublishAChildThatWasAlreadyDirtyBeforeTheAttach(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202d-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202d-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        // Dirty the child's draft directly (ORM-level, not via the API) so
+        // it's published AND modifiedOnDraft BEFORE the relation attach —
+        // the precondition the fix must not disturb.
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202d-child')->first();
+        $child->Title = 'Unapproved edit in progress';
+        $child->write();
+        $this->assertTrue($child->isPublished());
+        $this->assertTrue($child->isModifiedOnDraft(), 'precondition: already dirty before the attach');
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202d-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202d-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202d-child')->first();
+        $this->assertTrue(
+            $child->isModifiedOnDraft(),
+            'an unrelated relation write must not push an editor\'s in-progress draft edit to LIVE'
+        );
+    }
+
+    /**
+     * /review-pr on PR #209 (#202): `remove` (and the `removeAll()` half of
+     * `set`) has the identical unconditional-write shape as `add` —
+     * confirmed here for `remove`. Left unfixed, the child's LIVE row would
+     * keep the old ParentID after a draft-only detach, so the live site
+     * keeps rendering it under the parent it was just removed from.
+     */
+    public function testDefaultPublishRepublishesAnAlreadyPublishedChildAfterRemove(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202e-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202e-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202e-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202e-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202e-child')->first();
+        $this->assertFalse($child->isModifiedOnDraft(), 'precondition: clean after the attach above');
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202e-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'remove', 'items' => [['externalId' => 'b202e-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202e-child')->first();
+        $this->assertFalse(
+            $child->isModifiedOnDraft(),
+            'the draft-only detach must be republished so LIVE reflects it too, not left stranded'
+        );
+    }
+
+    /**
+     * /review-pr on PR #209 (#202): the new republish step is
+     * authorization-checked the same way #90/#168's subtree/owns cascades
+     * check every non-root record they touch — a caller with `action` on
+     * the operation's own target class (the parent) must not be able to
+     * publish an unrelated class it was never granted `action` on, just by
+     * naming one of its records in a `relations` attach.
+     */
+    public function testHasManyRepublishRequiresTheActionVerbOnTheRelatedClassToo(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202f-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202f-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202f-child')->first();
+        $this->assertTrue($child->isPublished(), 'precondition');
+
+        // Withdrawn AFTER the child is already published — action was
+        // granted for the create above, removed before the relation
+        // attach that would otherwise silently republish it.
+        Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', 'read,create,update');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202f-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202f-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('FORBIDDEN_CLASS', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
      * #130: a dry-run create must leave no record behind and the response
      * must use the `would*` vocabulary, not the real-run one — a caller
      * inspecting `status` must never be able to mistake this for a
@@ -1524,6 +2067,89 @@ class BatchTest extends ContentApiTestCase
         $this->assertNull(
             ApiTestObject::get()->filter('FixtureIdentifier', 'dry-run-create')->first(),
             'a dry run must never leave a real record behind'
+        );
+    }
+
+    /**
+     * #203: a `dryRun: true` probe must be genuinely side-effect-free, not
+     * just leave no trace of the record it explicitly asked about.
+     * `ApiTestSideEffectObject::onBeforeWrite()` mirrors `ElementOembed`'s
+     * real shape (confirmed live, Rockline Industrial) — a write to a
+     * table `verifyRollback()` never looks at, since it never appears in
+     * the batch's own operations/results. `RecordWriter::write()`'s
+     * `DbTransaction::run()` uses the framework's virtual nested-
+     * transaction support (`NestedTransactionManager`), so as long as
+     * every write in the request goes through the SAME `DB::get_conn()`
+     * connection — true here, and true of every write this module
+     * performs — the side effect shares the same outer rollback the
+     * `DryRunCompleteException` throw forces, and is rolled back with it.
+     */
+    public function testDryRunRollsBackASideEffectWriteToAnUnrelatedTable(): void
+    {
+        $before = ApiTestSideEffectLog::get()->count();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'dryRun' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestSideEffect',
+                    'externalId' => 'dry-run-side-effect',
+                    'fields' => ['Title' => 'Would trigger a side effect'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame(['wouldCreate'], array_column($body['data']['results'], 'status'));
+        $this->assertNull(
+            ApiTestSideEffectObject::get()->filter('FixtureIdentifier', 'dry-run-side-effect')->first(),
+            'a dry run must never leave the record itself behind'
+        );
+        $this->assertSame(
+            $before,
+            ApiTestSideEffectLog::get()->count(),
+            'a dry run must not leave the onBeforeWrite() side effect behind either'
+        );
+    }
+
+    /**
+     * Companion to the dry-run case above: a genuine atomic-failure
+     * rollback must roll back the same side-effect write, not just the
+     * record the batch explicitly tracks.
+     */
+    public function testAtomicRollbackRollsBackASideEffectWriteToAnUnrelatedTable(): void
+    {
+        $before = ApiTestSideEffectLog::get()->count();
+
+        $response = $this->apiPost('batch', [
+            'atomic' => true,
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestSideEffect',
+                    'externalId' => 'atomic-side-effect',
+                    'fields' => ['Title' => 'Triggers a side effect'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTest',
+                    'externalId' => 'atomic-side-effect-2',
+                    'fields' => ['Bogus' => 1],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertNull(
+            ApiTestSideEffectObject::get()->filter('FixtureIdentifier', 'atomic-side-effect')->first(),
+            'the rolled-back record itself must be gone'
+        );
+        $this->assertSame(
+            $before,
+            ApiTestSideEffectLog::get()->count(),
+            'the rollback must also undo the onBeforeWrite() side effect'
         );
     }
 

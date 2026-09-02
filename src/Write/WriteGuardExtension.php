@@ -37,11 +37,14 @@ use SilverStripe\ORM\DataObject;
  * Opt-in per model:
  * ```yml
  * DNADesign\Elemental\Models\ElementContent:
- *   api_access: 'GET,POST,PUT'
+ *   api_access: 'GET,POST,PUT,action'
  *   api_writable_fields: [Title, HTML, Sort]
  *   extensions:
  *     - Dynamic\ContentApi\Write\WriteGuardExtension
  * ```
+ * `action` (publish/unpublish/archive) has no HTTP method of its own — it
+ * must be listed as a bare token, not implied by GET/POST/PUT, or the class
+ * can never actually publish a write through this API (#198).
  *
  * SECURITY: never grant write verbs in `api_access` without either this
  * extension or an explicit trusted-caller decision.
@@ -354,7 +357,24 @@ class WriteGuardExtension extends Extension
             $writable = $polymorphicWritable[$column]
                 ?? $applicator->isFieldWritable($className, $column, $relationName);
 
-            if (!$writable && array_key_exists($column, $changed)) {
+            // A plain (non-relation) column colymba's deserializer already
+            // wrote straight to the model gets no value validation from
+            // colymba itself — writability above only answers "may this
+            // field change at all," never "is the new value valid." An
+            // Enum-backed column accepted an out-of-list value here the
+            // same way `WriteApplicator::applyFields()` used to (#confirmed
+            // live, 46 elements, essentials project) — silently MySQL-
+            // coerced to '' — on this surface too, since it never routes
+            // through `applyFields()` at all. Reverted the same way an
+            // unwritable field already is (colymba's controller has no
+            // clean way to reject mid-write with this API's structured
+            // error shape), rather than left as a second, inconsistent
+            // failure mode on this one surface.
+            $invalidValue = $relationName === null
+                && array_key_exists($column, $changed)
+                && !$applicator->isEnumValueAcceptable($owner, $column, $changed[$column]['after']);
+
+            if (($invalidValue || !$writable) && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);
             }
         }

@@ -10,6 +10,7 @@ use SilverStripe\Assets\Folder;
 use SilverStripe\Assets\Storage\AssetStore;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Core\Validation\ValidationException;
 
 /**
  * First-class asset ingestion — the API replacement for populate's
@@ -75,6 +76,34 @@ class AssetService
      * @throws ApiError
      */
     public function ingest(string $binary, array $meta): array
+    {
+        // #204: this was the one write path in the module that let
+        // `ValidationException` escape unmapped — `DBFile::setFromString()`
+        // (both call sites below) throws it directly via
+        // `assertFilenameValid()` for a disallowed extension
+        // (`File.allowed_extensions`), surfacing as an unmapped `500
+        // SERVER_ERROR` carrying the raw exception message instead of the
+        // `422 VALIDATION_FAILED` every other write path in this module
+        // gives for the same failure class. It never silently reported
+        // success on a failed write — the controller's own top-level
+        // `Throwable` catch already turns an uncaught exception into a
+        // proper (if less specific) error envelope — but the inconsistent
+        // status code and unstructured message were worth closing anyway.
+        try {
+            return $this->doIngest($binary, $meta);
+        } catch (ValidationException $exception) {
+            throw ApiError::fromValidation($exception);
+        }
+    }
+
+    /**
+     * @param array{filename: string, folder?: string, title?: string,
+     *   externalId?: string, conflict?: string, publish?: bool} $meta
+     * @return array{record: File, existed: bool}
+     * @throws ApiError
+     * @throws ValidationException mapped by ingest() above
+     */
+    protected function doIngest(string $binary, array $meta): array
     {
         $filename = basename(trim((string) ($meta['filename'] ?? '')));
         $folder = trim((string) ($meta['folder'] ?? ''), '/');
@@ -149,6 +178,9 @@ class AssetService
 
     /**
      * Apply metadata (title, external id), write and optionally publish.
+     * A `ValidationException` from `$file->write()` here is mapped by
+     * `ingest()`'s own try/catch, same as `setFromString()`'s (see that
+     * method's docblock).
      */
     protected function finalize(File $file, array $meta, bool $publish): File
     {

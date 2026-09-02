@@ -24,7 +24,11 @@ Populate's `PopulateFileFrom` handling. Population-domain endpoint: requires
 
 An empty binary is `502 ASSET_READ_FAILED`. The target class is resolved from the file
 extension (`File::get_class_for_file_extension()`), or from an existing file's class at the
-same path when `conflict` is `skip`/`overwrite`.
+same path when `conflict` is `skip`/`overwrite`. Non-image types (PDF, DOCX, etc.) resolve to
+plain `File` and upload the same way images do — there is no hardcoded `Image`-only path (#204).
+An extension outside `File.allowed_extensions` is `422 VALIDATION_FAILED`, not a silent no-op or
+an unmapped `500` — a caller must never see success (or a `File` id) for a write that didn't
+actually land.
 
 ### Conflict modes
 

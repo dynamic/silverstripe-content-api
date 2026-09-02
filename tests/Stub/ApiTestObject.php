@@ -26,6 +26,20 @@ class ApiTestObject extends DataObject implements TestOnly
         // against (see
         // RecordWriterTest::testPreImageOfACompositeFieldIsAnImmutableSnapshotNotALiveReference()).
         'Price' => 'Money',
+        // An Enum field — exists solely so write-path enum-value validation
+        // has a real enum column to test against (WriteApplicator never
+        // validated a write against the field's own declared value list;
+        // an out-of-list value was accepted and written as-is, then
+        // silently coerced to '' by MySQL's own ENUM column — confirmed
+        // live, 46 elements, essentials project).
+        'Status' => "Enum('draft,published', 'draft')",
+        // DBMultiEnum extends DBEnum and stores a comma-joined list of
+        // independently-valid values, not one — exists so the enum-value
+        // check's DBMultiEnum branch has a real 'set'-backed column to
+        // test against (validating the whole joined string against
+        // enumValues() directly, instead of each comma-separated piece,
+        // would reject every legitimate multi-value write).
+        'Colors' => "MultiEnum('red,green,blue', 'red')",
     ];
 
     private static array $has_one = [

@@ -38,7 +38,7 @@ re-POSTing the same payload is safe and idempotent (updates existing records, ne
 | `createIfMissing` | `{title, parentId, className?}`. Required if `match` finds nothing (`404 NOT_FOUND` otherwise) |
 | `convertTo` | Short class ref; changes the page's class via `newClassInstance()` if it differs. No-op if already that class |
 | `force` | Required `true` to convert the site home page (`403 HOMEPAGE_CONVERSION_FORBIDDEN` otherwise) |
-| `areaRelation` | Default `"ElementalArea"`. Use `"ElementalHomePage"` for HomePage-style page types |
+| `areaRelation` | Default `"ElementalArea"`. Use `"ElementalHomePage"` for HomePage-style page types. This is the one documented location — a top-level `areaRelation` (sibling to `page`) is also accepted, as a defensive fallback for a caller reaching this endpoint directly over HTTP rather than through the MCP tool schema, but `page.areaRelation` always wins if both are given, and a mismatch between the two is reported as a response warning |
 | `elementsRelation` | Default `"Elements"`. The area's has_many relation to its child elements — only needed for a custom area class that names it differently |
 | `fields` | Sparse page field updates — no populate-style whole-field-map copy |
 
@@ -69,6 +69,15 @@ untrusted colymba PUT surface (see [Security model](04_security-model.md#the-tru
 
 Element writes upsert with `publish: "none"` internally regardless of the request's top-level
 `publish` — the composition's own publish pass (below) handles publishing explicitly.
+
+An element matched by `externalId` that already belongs to a **different** page than the one
+just matched by `page.match` is `409 CROSS_PAGE_REPARENT`, not a silent reparent — `externalId`
+is a global, site-wide lookup by design, so a wrong `page.match.id`/`urlSegment`/`externalId`
+resolving to the wrong page would otherwise force every colliding `externalId` in the payload
+onto that unrelated page with no error at all. This check only fires for composition's own
+server-derived `ParentID` assignment; an explicit client `fields.ParentID` write via batch/
+upsert/update is unaffected and stays governed solely by the `ELEMENT_NOT_ALLOWED_ON_PAGE` check
+below (#201).
 
 `class` must also be one of the target page's **allowed** element types — Elemental's own
 per-page-type `allowed_elements`/`disallowed_elements` config (`ElementalAreasExtension::

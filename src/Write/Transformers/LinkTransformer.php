@@ -107,6 +107,63 @@ class LinkTransformer implements ValueTransformer
             $link = Injector::inst()->create($linkClass);
         }
 
+        // Any payload key other than "type" and FIELD_MAP's own keys used
+        // to be silently ignored below — a caller sending "fileID"/"file"/
+        // "target" instead of the real key "fileId" got a 200 and an empty
+        // link record, with nothing in the response to say the key never
+        // matched anything (confirmed live — #195).
+        //
+        // FIELD_MAP is a flat union across every link TYPE — checking a key
+        // against it alone isn't enough, because a key valid for a
+        // DIFFERENT type (e.g. "fileId" with "type": "ExternalLink") would
+        // still pass that check and reach setCastedField() below.
+        // DataObject::setCastedField() falls back to a bare, never-
+        // persisted dynamic property when dbObject() finds no matching
+        // column on the class actually being written — the exact same
+        // silent-no-op shape #195 was filed for, just reachable through a
+        // cross-type key instead of a wholly unrecognized one (confirmed:
+        // FileID has no column on ExternalLink). So each key is validated
+        // against the RESOLVED $linkClass's own schema, not just FIELD_MAP.
+        $unknown = [];
+        $wrongType = [];
+
+        foreach (array_keys($value) as $payloadKey) {
+            if ($payloadKey === 'type') {
+                continue;
+            }
+
+            if (!array_key_exists($payloadKey, LinkTransformer::FIELD_MAP)) {
+                $unknown[] = $payloadKey;
+                continue;
+            }
+
+            if (DataObject::getSchema()->fieldSpec($linkClass, LinkTransformer::FIELD_MAP[$payloadKey]) === null) {
+                $wrongType[] = $payloadKey;
+            }
+        }
+
+        if ($unknown !== [] || $wrongType !== []) {
+            $messages = [];
+
+            if ($unknown !== []) {
+                $messages[] = sprintf('unknown: %s', implode(', ', $unknown));
+            }
+
+            if ($wrongType !== []) {
+                $messages[] = sprintf('not valid for type "%s": %s', $type, implode(', ', $wrongType));
+            }
+
+            throw new ApiError(
+                ErrorCode::UNKNOWN_FIELD,
+                sprintf(
+                    'Link field(s) for "%s" %s. Valid keys: type, %s.',
+                    $fieldName,
+                    implode('; ', $messages),
+                    implode(', ', array_keys(LinkTransformer::FIELD_MAP))
+                )
+            );
+        }
+
         foreach (LinkTransformer::FIELD_MAP as $payloadKey => $linkField) {
             if (array_key_exists($payloadKey, $value)) {
                 $link->setCastedField($linkField, $value[$payloadKey]);

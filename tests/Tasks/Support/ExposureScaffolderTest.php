@@ -83,6 +83,66 @@ class ExposureScaffolderTest extends SapphireTest
     }
 
     /**
+     * #198: no HTTP method maps to the 'action' (publish/unpublish/archive)
+     * verb — a generated 'GET,POST,PUT' string looks like full CRUD but
+     * silently has no way to ever publish a write through this API. The
+     * generator itself had this exact bug (found auditing the file, not
+     * previously filed against the generator specifically) — proven here
+     * against the actual generated api_access line, not just presence of
+     * the substring "action" anywhere in the output.
+     */
+    public function testGeneratedApiAccessIncludesTheActionVerb(): void
+    {
+        $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
+
+        $this->assertMatchesRegularExpression(
+            "/api_access: 'GET,POST,PUT,action'/",
+            $yaml,
+            'a generated api_access missing the action token silently blocks publish forever (#198)'
+        );
+    }
+
+    /**
+     * The extensions block includes WriteGuardExtension, which protects
+     * writes on colymba's generic /api surface — but colymba only ever
+     * routes to a class listed in DefaultQueryHandler.models.
+     * ClassRegistry::manualModels() merges that config as the BASE and
+     * overlays this module's own ClassRegistry.models on top, so
+     * registering ONLY under ClassRegistry.models (this generator's own
+     * earlier output, before a review corrected the framing here) resolves
+     * for this module's /content-api/v1 endpoints but leaves colymba's
+     * surface unable to route to the class at all. Confirmed live: a class
+     * configured everywhere else but missing the DefaultQueryHandler entry
+     * has content_schema_class report a complete, writable schema while
+     * every actual /api/$Model request 404s or is silently invisible.
+     *
+     * Both entries must still appear (DefaultQueryHandler covers both
+     * surfaces in one entry; ClassRegistry is the content-api-only
+     * overlay for the rarer case), with DefaultQueryHandler's the one
+     * presented first as the default choice.
+     */
+    public function testDocumentsBothRegistryEntriesWithDefaultQueryHandlerFirst(): void
+    {
+        $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
+
+        $this->assertMatchesRegularExpression(
+            '/DefaultQueryHandler:\s*\n#\s*models:\s*\n#\s*\S+: ' . preg_quote(ApiTestElement::class, '/') . '/',
+            $yaml
+        );
+        $this->assertMatchesRegularExpression(
+            '/Dynamic\\\\ContentApi\\\\Registry\\\\ClassRegistry:\s*\n#\s*models:\s*\n#\s*\S+: '
+                . preg_quote(ApiTestElement::class, '/') . '/',
+            $yaml
+        );
+        $this->assertLessThan(
+            strpos($yaml, 'Dynamic\ContentApi\Registry\ClassRegistry:'),
+            strpos($yaml, 'Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler:'),
+            'DefaultQueryHandler (covers both surfaces) should be presented before the '
+                . 'content-api-only ClassRegistry overlay, not after'
+        );
+    }
+
+    /**
      * BaseElement's own `Parent` has_one targets `ElementalArea` — the
      * framework auto-provisions this FK, and WriteApplicator::
      * isFieldWritable() blocks it from direct client writes for every
