@@ -78,8 +78,11 @@ Dynamic\ContentApi\Registry\ClassRegistry:
     ElementalArea: DNADesign\Elemental\Models\ElementalArea
 
 DNADesign\Elemental\Models\ElementContent:
-  api_access: 'GET,POST,PUT'            # colymba HTTP verbs; the module maps them to
-                                        # read/create/update (plus: delete, action)
+  api_access: 'GET,POST,PUT,action'     # colymba HTTP verbs map to read/create/update;
+                                        # 'action' (publish/unpublish/archive) has no HTTP
+                                        # method of its own and must be listed explicitly — a
+                                        # class configured without it can never publish a
+                                        # write through this API (#198), with no error saying so
   api_writable_fields: [Title, HTML, Sort, ShowTitle]
   extensions:
     - Dynamic\ContentApi\Write\WriteGuardExtension

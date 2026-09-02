@@ -33,6 +33,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestOwnsCycleObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestSideEffectLog;
+use Dynamic\ContentApi\Tests\Stub\ApiTestSideEffectObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
@@ -90,6 +92,8 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestDuplicateChildObject::class,
         ApiTestDuplicateLeafObject::class,
         ApiTestDuplicateUnversionedObject::class,
+        ApiTestSideEffectObject::class,
+        ApiTestSideEffectLog::class,
     ];
 
     protected function setUp(): void
@@ -117,6 +121,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestFingerprintRelated' => ApiTestFingerprintRelatedObject::class,
             'ApiTestFingerprintNonVersionedRelated' => ApiTestFingerprintNonVersionedRelatedObject::class,
             'ApiTestFingerprintRestrictedRelated' => ApiTestFingerprintRestrictedRelatedObject::class,
+            'ApiTestSideEffect' => ApiTestSideEffectObject::class,
         ]);
 
         // Explicit here rather than as private statics on the stubs: TestOnly
@@ -182,6 +187,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestFingerprintRelatedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintNonVersionedRelatedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestFingerprintRestrictedRelatedObject::class, 'api_access', true);
+        Config::modify()->set(ApiTestSideEffectObject::class, 'api_access', true);
         // Explicit deny on the SUBCLASS despite its parent being exposed
         // — the fixture the ApiTestFingerprintRelatedDeniedSubclassObject
         // regression test depends on.

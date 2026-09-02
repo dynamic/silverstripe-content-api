@@ -37,11 +37,14 @@ use SilverStripe\ORM\DataObject;
  * Opt-in per model:
  * ```yml
  * DNADesign\Elemental\Models\ElementContent:
- *   api_access: 'GET,POST,PUT'
+ *   api_access: 'GET,POST,PUT,action'
  *   api_writable_fields: [Title, HTML, Sort]
  *   extensions:
  *     - Dynamic\ContentApi\Write\WriteGuardExtension
  * ```
+ * `action` (publish/unpublish/archive) has no HTTP method of its own — it
+ * must be listed as a bare token, not implied by GET/POST/PUT, or the class
+ * can never actually publish a write through this API (#198).
  *
  * SECURITY: never grant write verbs in `api_access` without either this
  * extension or an explicit trusted-caller decision.
@@ -354,7 +357,35 @@ class WriteGuardExtension extends Extension
             $writable = $polymorphicWritable[$column]
                 ?? $applicator->isFieldWritable($className, $column, $relationName);
 
-            if (!$writable && array_key_exists($column, $changed)) {
+            // A plain (non-relation) column colymba's deserializer already
+            // wrote straight to the model gets no value validation from
+            // colymba itself — writability above only answers "may this
+            // field change at all," never "is the new value valid." An
+            // Enum-backed column accepted an out-of-list value here the
+            // same way `WriteApplicator::applyFields()` used to (#confirmed
+            // live, 46 elements, essentials project) — silently MySQL-
+            // coerced to '' — on this surface too, since it never routes
+            // through `applyFields()` at all. Reverted the same way an
+            // unwritable field already is (colymba's controller has no
+            // clean way to reject mid-write with this API's structured
+            // error shape), rather than left as a second, inconsistent
+            // failure mode on this one surface.
+            //
+            // Structurally dead on THIS branch specifically: SS6's
+            // DBEnum declares a field_validators entry (OptionFieldValidator,
+            // new in this major version), and DataObject::preWrite()/
+            // validate() throws before onBeforeWrite() ever runs — so an
+            // out-of-list value never reaches this line at all here; the
+            // framework itself now rejects it first (see
+            // WriteGuardTest::testPutRejectsAnOutOfListEnumValue()). Kept
+            // for branch parity (this class is shared source with branch
+            // `1`, where SS5's DBEnum has no such validator and this path
+            // is the only thing preventing the silent-coercion bug).
+            $invalidValue = $relationName === null
+                && array_key_exists($column, $changed)
+                && !$applicator->isEnumValueAcceptable($owner, $column, $changed[$column]['after']);
+
+            if (($invalidValue || !$writable) && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);
             }
         }

@@ -8,6 +8,7 @@ use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
 use Dynamic\ContentApi\Write\DbTransaction;
+use Dynamic\ContentApi\Write\DryRunContext;
 use Dynamic\ContentApi\Write\RecordWriter;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
@@ -170,21 +171,29 @@ class BatchProcessor
         array &$preImages
     ): array {
         try {
-            DbTransaction::run(function () use ($operations, $defaultPublish, $member, $atomic, &$preImages) {
-                $failedIndex = null;
+            // #203: DryRunContext::isActive() is readable by ANY project
+            // code (a write hook, a ValueTransformer) with a side effect
+            // this transaction can't reach — an external HTTP call, a
+            // queued job, a non-DB cache write. See that class's own
+            // docblock for why an ordinary DB-only side effect needs no
+            // such opt-in (already covered by the transaction below).
+            DryRunContext::run(function () use ($operations, $defaultPublish, $member, $atomic, &$preImages) {
+                DbTransaction::run(function () use ($operations, $defaultPublish, $member, $atomic, &$preImages) {
+                    $failedIndex = null;
 
-                try {
-                    $outcome = $this->run($operations, $defaultPublish, $member, $atomic, $preImages);
-                } catch (BatchAbortException $aborted) {
-                    $outcome = $aborted->partialOutcome;
-                    $failedIndex = $aborted->failedIndex;
-                }
+                    try {
+                        $outcome = $this->run($operations, $defaultPublish, $member, $atomic, $preImages);
+                    } catch (BatchAbortException $aborted) {
+                        $outcome = $aborted->partialOutcome;
+                        $failedIndex = $aborted->failedIndex;
+                    }
 
-                // Always throws — see this method's own docblock for why
-                // an exception must escape the transaction closure
-                // unconditionally, whether $outcome came from a normal
-                // return or an atomic abort.
-                throw new DryRunCompleteException($outcome, $failedIndex);
+                    // Always throws — see this method's own docblock for
+                    // why an exception must escape the transaction closure
+                    // unconditionally, whether $outcome came from a normal
+                    // return or an atomic abort.
+                    throw new DryRunCompleteException($outcome, $failedIndex);
+                });
             });
 
             // DbTransaction::run() never returns normally from the closure

@@ -196,6 +196,15 @@ class RecordWriter
 
         $this->publisher->assertValidMode($publishMode);
 
+        // Validated before anything else (including applyFields() below,
+        // and well before $record->write()) so a `relations` key that's
+        // actually a has_one (a natural mistake — see
+        // WriteApplicator::assertRelationsValid()'s own docblock) is
+        // rejected with an actionable message, instead of silently
+        // dropping and letting the record's own validation fail later for
+        // an unrelated-looking reason (#191).
+        $this->applicator->assertRelationsValid($record, $relations);
+
         // #114: this class's own checkClassAccess() calls above (in
         // upsert()/update()) only ever check 'update'/'create' — 'update'
         // and 'action' are independently configurable verbs
@@ -330,7 +339,7 @@ class RecordWriter
         }
 
         $this->applicator->applyFields($record, $fields, $internalFields);
-        $this->assertElementPlacementAllowed($record, $priorParentID);
+        $this->assertElementPlacementAllowed($record, $priorParentID, array_key_exists('ParentID', $internalFields));
 
         // The DB write, any relation writes it enables (has_one FK repoints,
         // has_many/many_many attaches — a relation that resolves to
@@ -348,8 +357,44 @@ class RecordWriter
         try {
             DbTransaction::run(function () use ($record, $relations, $publishMode, $member) {
                 $record->write();
-                $this->applicator->applyRelations($record, $relations);
+                $dirtiedPublished = $this->applicator->applyRelations($record, $relations);
                 $this->publisher->publish($record, $publishMode, $member);
+
+                // #202: a has_many `add`/`set`/`remove` unconditionally
+                // writes the related record to repoint (or clear) its
+                // foreign key — dirtying an already-published, otherwise-
+                // clean record back to `modifiedOnDraft` with nothing else
+                // in this pipeline to notice or resync it.
+                // `WriteApplicator::applyRelations()` only ever collects a
+                // record that was published AND NOT already
+                // `modifiedOnDraft` going in — republishing here restores
+                // its pre-existing live/draft congruence, it never forces
+                // forward an editor's unrelated in-progress draft edits.
+                // Gated on $publishMode (not unconditional): "publish" is
+                // this API's explicit, single source of truth for stage
+                // transitions (docs/en/07_batch-operations.md), so a
+                // "publish": "none" operation must still leave everything
+                // it touches on draft, exactly as a field-only write would.
+                // When the caller DID ask this operation to publish, that
+                // now covers every record the operation actually touched,
+                // not just its own explicit target — closing the gap
+                // between "defaultPublish: single" and what it visibly did.
+                //
+                // Authorization-checked the same way #90/#168's
+                // subtree/owns cascades check every non-root record they
+                // touch (PublishOrchestrator::assertDescendantPublishable())
+                // — a caller with `action` on the operation's own target
+                // class must not be able to publish an unrelated class (or
+                // record) it was never granted `action` on, just by naming
+                // it in a `relations` attach/detach.
+                if ($publishMode !== 'none') {
+                    foreach ($dirtiedPublished as $related) {
+                        $relatedClass = get_class($related);
+                        $this->policy->checkClassAccess($relatedClass, 'action', $member);
+                        $this->policy->checkRecordAccess($related, 'action', $member);
+                        $related->publishSingle();
+                    }
+                }
             });
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception);
@@ -422,10 +467,13 @@ class RecordWriter
      * for the related record) and is deliberately deferred; see the
      * CHANGELOG and #64 follow-up issues.
      *
-     * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE
+     * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE | CROSS_PAGE_REPARENT
      */
-    protected function assertElementPlacementAllowed(DataObject $record, int $priorParentID = 0): void
-    {
+    protected function assertElementPlacementAllowed(
+        DataObject $record,
+        int $priorParentID = 0,
+        bool $parentIdIsServerDerived = false
+    ): void {
         if (
             !class_exists('DNADesign\\Elemental\\Models\\BaseElement')
             || !is_a($record, 'DNADesign\\Elemental\\Models\\BaseElement')
@@ -452,6 +500,70 @@ class RecordWriter
         }
 
         $elementClass = get_class($record);
+
+        // #201: only guarded when the NEW ParentID is server-derived
+        // (composition's own resolved-area assignment via $internalFields),
+        // never for a caller's own explicit "fields": {"ParentID": ...} —
+        // that is a deliberate, addressed-by-id move
+        // (testBatchUpdateReparentingAnElementToADisallowedAreaIsRejected
+        // covers exactly that path and is intentionally supported, gated
+        // only by the type-allowlist check below).
+        //
+        // The dangerous case this guards is different: an already-parented
+        // element (priorParentID nonzero) whose area FK silently changes to
+        // a DIFFERENT page's area as a side effect of composition's global
+        // `externalId` lookup (`ExternalIdResolver::tryFind()` is site-wide
+        // by design, unlike `processChild()`'s element-scoped lookup — see
+        // that method's own docblock for the analogous fix already shipped
+        // one level down). A wrong `page.match.id` resolves to an unrelated
+        // page, and every payload `externalId` that happens to already
+        // exist elsewhere on the site gets silently reparented onto it —
+        // the caller never named that record at all, let alone asked to
+        // move it. Confirmed live (Rockline Industrial, module #201):
+        // recovery needed raw SQL, since the API forbids `delete` by
+        // design. Checked before the type-allowlist check below so a
+        // cross-page collision is reported as what it almost certainly is
+        // (the wrong target was resolved), not as an element-type
+        // restriction.
+        if ($parentIdIsServerDerived && $priorParentID !== 0) {
+            $priorArea = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID($priorParentID);
+            $priorPage = $priorArea && $priorArea->hasMethod('getOwnerPage') ? $priorArea->getOwnerPage() : null;
+
+            // ID-only comparison isn't safe here: getOwnerPage() resolves
+            // against EVERY class carrying ElementalAreasExtension, not
+            // just SiteTree subclasses (ElementPlacementPolicy::
+            // isAllowedOnPage() has the same non-page-owner accommodation).
+            // Two owner records from different base tables have
+            // independent auto-increment ids, so a small-integer collision
+            // (e.g. a non-page element-owner #7 vs. a SiteTree page #7)
+            // would otherwise compare equal and silently skip the guard
+            // this method exists to enforce.
+            $sameOwner = $priorPage
+                && (int) $priorPage->ID === (int) $page->ID
+                && $priorPage->baseClass() === $page->baseClass();
+
+            if ($priorPage && !$sameOwner) {
+                $externalId = $this->externalIds->supports($elementClass)
+                    ? $record->getField($this->externalIds->fieldName())
+                    : null;
+
+                throw new ApiError(
+                    ErrorCode::CROSS_PAGE_REPARENT,
+                    sprintf(
+                        '%s #%d%s already belongs to %s (#%d) — refusing to move it onto %s (#%d). '
+                        . 'This usually means the request resolved the wrong target page '
+                        . '("page.match.id", most likely) rather than intending to move the element.',
+                        $elementClass,
+                        (int) $record->ID,
+                        $externalId ? sprintf(' (externalId "%s")', $externalId) : '',
+                        get_class($priorPage),
+                        (int) $priorPage->ID,
+                        get_class($page),
+                        (int) $page->ID
+                    )
+                );
+            }
+        }
 
         if ($this->elementPlacement->isAllowedOnPage($elementClass, $page)) {
             return;

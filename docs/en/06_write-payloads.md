@@ -24,7 +24,10 @@ PascalCase field names round-trip between GET responses and write payloads on bo
 
 Sparse — only keys present in the payload are touched (`WriteApplicator::applyFields()`; the
 anti-clobber guarantee). Unknown keys are rejected (`422 UNKNOWN_FIELD`) or warned-and-ignored
-depending on `api_unknown_fields`.
+depending on `api_unknown_fields`. An Enum/MultiEnum-backed field's value is validated against
+its own declared list — see `schema/$ClassRef`'s `values` — and rejected with
+`422 INVALID_VALUE` if it isn't in it; a MultiEnum's comma-separated values are each checked
+independently.
 
 ### has_one values
 
@@ -108,6 +111,10 @@ already points at a link of the *same* type, that record is updated in place; a 
 writes a new link record. Owner fields are never set by this transformer — linkfield derives
 ownership from the pointing has_one.
 
+A key that's neither in the table above nor `title`/`openInNew` is rejected with
+`422 UNKNOWN_FIELD` — including a key that's valid for a *different* `type` (e.g. `fileId` sent
+with `"type": "ExternalLink"`), not just one that's unrecognized outright.
+
 ### Color tokens
 
 Requires `dynamic/silverstripe-essentials-tools`. On fields listed in `token_fields` (default
@@ -134,7 +141,24 @@ Populate-fixtures resolver, which logged and left the literal token string in pl
 - The relation must be listed in the class's `api_writable_relations` — this is a separate
   allowlist from `api_writable_fields` and applies under **both** write policies.
 - Unknown relation → `422 UNKNOWN_RELATION`; not in the allowlist → `422 READONLY_FIELD`;
-  malformed `mode`/`items` → `400 PAYLOAD_INVALID`.
+  malformed `mode`/`items` → `400 PAYLOAD_INVALID`. This block is has_many/many_many only — a
+  has_one name here (a natural mistake) is rejected the same way, `400 PAYLOAD_INVALID`, before
+  the record is written at all: put it under `fields` instead.
+
+A has_many `add`, `remove`, or the `removeAll()` half of `set`, that touches an
+**already-published, clean** related record republishes it (when this operation's own `publish`
+isn't `none`) — `HasManyList` unconditionally repoints (or clears) the related record's foreign
+key via an ordinary draft write regardless of its Versioned state, which would otherwise leave an
+attach stranded `modifiedOnDraft`, or worse, leave a detach's LIVE row still pointing at the old
+parent while draft says it's gone (#202). "Clean" matters: a record that's published but already
+`modifiedOnDraft` from unrelated in-progress edits is left exactly as it was — this never forces
+an editor's own draft to LIVE as a side effect of a relation write it has nothing to do with. A
+related record that was never published is also left exactly as it was. The republish is
+authorization-checked the same way a `subtree`/`owns` publish cascade checks every non-root record
+it touches — a caller needs the related record's own class `action` verb, not just the operation's
+own target class's, or the whole operation (including the relation write itself) is rejected and
+rolled back. A many_many `add` has no equivalent gap for the related record item: it only writes
+it at all when it isn't already in the database.
 
 `extraFields` round-trips on read too: a GET response serializes a many_many relation that
 carries extra join data as `[{"id", "extraFields"}, ...]` (`RecordSerializer`), not a bare id

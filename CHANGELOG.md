@@ -6,6 +6,92 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **(#201)** A composition's `page.match.id` resolving to the wrong page used to silently
+  reparent every element in the payload whose `externalId` already existed anywhere on the
+  site — `ExternalIdResolver::tryFind()` is a global lookup by design, and composition force-
+  writes the resolved area's id onto whatever record it matches, with no check that the record
+  already belonged to a different page. `RecordWriter::write()` now rejects (new
+  `CROSS_PAGE_REPARENT` error code, 409) when a server-derived `ParentID` assignment (composition
+  only — an explicit client `fields.ParentID` write, e.g. via `content_batch`, is unaffected and
+  still governed solely by the existing element-type-allowed-on-page check) would move an
+  already-parented element onto a different page's area. Confirmed live (Rockline Industrial):
+  recovery needed raw SQL, since the API forbids `delete` by design. The owner comparison checks
+  both id and base class — `getOwnerPage()` resolves against any `ElementalAreasExtension`
+  owner, not just `SiteTree`, so two owners from different base tables can share a numeric id.
+  Documented in `docs/en/12_error-codes.md`, `docs/en/08_page-compositions.md`, and the MCP tool
+  schema (`schema/endpoints.json` v1.17). Landed on branch `1` first (1.13.0), merged up here.
+- **(#202)** A `content_batch` has_many `add`, `remove`, or `set` (the `removeAll()` half) that
+  touched an already-published, clean related record left it desynced from LIVE with nothing to
+  notice or fix it — `HasManyList` unconditionally repoints/clears the related record's foreign
+  key via an ordinary draft write regardless of its Versioned state, leaving an attach stranded
+  `modifiedOnDraft` or a detach's LIVE row still pointing at the old parent. `RecordWriter::write()`
+  now republishes any already-published, NOT-already-`modifiedOnDraft` record a has_many relation
+  write touches this way, when the operation's own `publish`/`defaultPublish` isn't `none` —
+  authorization-checked against the related record's own class `action` verb first, the same way a
+  `subtree`/`owns` publish cascade checks every non-root record it touches. A record that was never
+  published, or that already had unrelated in-progress draft edits before this write touched it, is
+  left exactly as it was — this never forces an editor's own draft to LIVE. A many_many `add` was
+  already unaffected for the related item (it only writes it when it isn't already in the
+  database). Landed on branch `1` first (1.13.0), merged up here.
+- **(#203)** `dryRun: true` (and a genuine atomic-failure rollback) already correctly roll back
+  an ordinary DB-only `onBeforeWrite()`/`ValueTransformer` side effect — verified with new
+  regression coverage rather than assumed. What no DB transaction can ever undo is a side effect
+  OUTSIDE the database (an HTTP call, a queued job, an external cache write) — confirmed live,
+  `ElementOembed`'s oEmbed lookup left orphan `EmbedObject` rows behind both a rolled-back
+  composition and a `dryRun` probe. Added `Dynamic\ContentApi\Write\DryRunContext::isActive()`,
+  a static flag any project write hook or `ValueTransformer` can check to skip a non-DB side
+  effect during a dry run — this module can't intercept a project class's side effect on its
+  behalf, only make the dry-run state visible to it. Landed on branch `1` first (1.13.0), merged
+  up here.
+- **(#204)** Investigated whether non-image (PDF) asset uploads have a working route — they do;
+  `AssetService` has never hardcoded `Image`, and `content_asset_upload` correctly resolves a
+  `.pdf` (or any other extension) to plain `File` via the framework's own
+  `File::get_class_for_file_extension()`. The confirmed field incident's second half was real
+  though: `AssetService::ingest()` let `SilverStripe\Core\Validation\ValidationException` (a
+  disallowed extension, `File.allowed_extensions`) escape unmapped, surfacing as `500
+  SERVER_ERROR` with a raw exception message instead of the `422 VALIDATION_FAILED` every other
+  write path in this module gives for the same failure class. Now mapped the same way. It never
+  silently reported success on a failed write — the controller's own top-level `Throwable` catch
+  already turns an uncaught exception into a proper (if less specific) error envelope. Landed on
+  branch `1` first (1.13.0, as `SilverStripe\ORM\ValidationException` there — branch `1` is SS5)
+  — merged up here with the exception import swapped to this branch's SS6 namespace.
+- **(#191, #195, #192, #205)** Four write-path gaps that used to accept a request and silently do
+  something other than what was asked, found via a field audit of real usage on two production
+  consumer projects (~1,500 recorded MCP calls mined from session transcripts). All four now
+  reject rather than silently drop or coerce:
+  - `WriteApplicator::applyFields()` (and, on the colymba `/api` write surface,
+    `WriteGuardExtension::onBeforeWrite()`) now validates a DBEnum-backed field's value against
+    its own declared list before writing — `DBEnum::setValue()` never validates, and MySQL
+    itself silently coerces an out-of-list value to `''` rather than rejecting it. New
+    `INVALID_VALUE` error code. `DBMultiEnum` (a `set`-backed multi-select Enum subclass) is
+    handled correctly — each comma-separated value is checked independently.
+  - **(#191)** A has_one relation named under a `relations` payload (has_many/many_many only) is
+    now rejected — with an actionable message — before the record is written, not after: a
+    `relations: {"Parent": 74}` on a create used to silently leave `ParentID` untouched, then
+    fail on unrelated-looking root-level `SiteTree` validation instead of ever surfacing that
+    `Parent` was the actual problem.
+  - **(#195)** `LinkTransformer::transform()` now rejects an unrecognized key in a structured
+    link payload, and a key that's only valid for a *different* link type (e.g. `fileId` with
+    `"type": "ExternalLink"`) — both used to be silently dropped (`DataObject::setCastedField()`
+    falls back to a bare, never-persisted dynamic property when the resolved link class has no
+    matching column), leaving an empty or partially-populated link record with no signal
+    anything was wrong.
+  - **(#192)** `CompositionService::compose()` now also accepts `areaRelation` at the request's
+    top level, as a defensive fallback for a caller reaching the endpoint directly over HTTP
+    (`page.areaRelation` remains the one documented shape); a mismatch between the two locations
+    is reported as a warning rather than resolved silently.
+
+  **Compatibility note:** three of these are newly-rejecting a write that previously returned
+  200 — a consumer currently sending a payload that happened to hit one of these gaps will now
+  get an error instead of a silent no-op: `422 INVALID_VALUE` for an out-of-list enum value,
+  `400 PAYLOAD_INVALID` for a has_one under `relations`, or `422 UNKNOWN_FIELD` for an
+  unrecognized/wrong-type link key. Landed on branch `1` first (1.12.0), merged up here.
+- **(#198)** `GenerateContentApiExposureTask`/`ExposureScaffolder` generated `api_access:
+  'GET,POST,PUT'` for every class — no HTTP method maps to the `action` (publish/unpublish/
+  archive) verb, so a project that pasted the generator's own output in as-is had a class that
+  looked fully CRUD-configured but could never actually publish a write through this API. Now
+  generates `'GET,POST,PUT,action'`. Landed on branch `1` first (1.13.0), merged up here — this
+  branch's own `ExposureScaffolder` (shared with branch `1`) gets the same fix.
 - **(#186)** `ContentApiTestCase` now pins `SilverStripe\Assets\File`/`Image` to
   `api_access: false` in `setUp()`. Two `AssetsTest` cases failed on this branch's testbed
   specifically: its own exposure config grants `Image` its own `api_access` (added while closing
@@ -23,6 +109,13 @@ All notable changes to this project are documented here. Format loosely follows
   invocation syntax directly into the generated YAML's own header comment (it needed to stop
   doing that so branch `1`'s `key=value` adapter could reuse the same class); the emitted banner
   text is worded generically now instead.
+- The shared `ExposureScaffolder`'s generated output now also documents (as a comment) the
+  separate `Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler.models` entry — the base both
+  this module's own `/content-api/v1` endpoints and colymba's generic `/api` surface merge from,
+  per `ClassRegistry`'s own docblock, with `ClassRegistry.models` as the narrower,
+  content-api-only overlay. A class registered only under the overlay resolves for
+  `content_schema_class` while every actual `/api/$Model` request 404s or is silently invisible.
+  Landed on branch `1` first (1.13.0), merged up here.
 
 ## [2.6.0] - 2026-08-18
 

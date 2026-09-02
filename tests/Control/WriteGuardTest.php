@@ -125,6 +125,63 @@ class WriteGuardTest extends ContentApiTestCase
         $this->assertSame(1, (int) $fresh->Rank, 'per-class protected field reverted');
     }
 
+    /**
+     * colymba's deserializer writes every payload key straight to the
+     * model — `WriteGuardExtension::onBeforeWrite()` only ever answered
+     * "may this field change at all," never "is the new value valid," so
+     * an out-of-list Enum value reached this surface untouched even after
+     * `WriteApplicator::applyFields()` learned to reject one on the
+     * batch/composition path (that method is never called for a colymba
+     * write at all). `WriteGuardExtension` now carries an
+     * `isEnumValueAcceptable()` revert for exactly this gap (merged up
+     * from branch `1`, #191/#205) — but on THIS branch it's structurally
+     * dead code for every Enum value, not merely unreachable in this one
+     * test's scenario: SilverStripe 6's `DBEnum` declares a
+     * `field_validators` entry (`OptionFieldValidator`, new in this major
+     * version), and `DataObject::validate()`/`preWrite()` runs that
+     * validation and throws before `onBeforeWrite()` is ever called at
+     * all — not a colymba version difference (colymba's own deserializer
+     * does no value validation itself on either branch; verified by
+     * tracing `DefaultQueryHandler`'s write path, which catches the
+     * `ValidationException` `$model->write()` throws and maps it to this
+     * 400). Confirmed live on this branch's stack. Asserting the
+     * revert-to-200 behavior branch `1`'s otherwise-identical test
+     * expects would be asserting something this branch's own SS6
+     * framework makes unreachable. Either shape satisfies the actual
+     * goal here (reject or revert, never silently coerce); this branch's
+     * is arguably stronger, since nothing is written at all.
+     */
+    public function testPutRejectsAnOutOfListEnumValue(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $priorStatus = $record->Status;
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Status' => 'Published',
+        ]);
+
+        $this->assertSame(400, $response->getStatusCode(), (string) $response->getBody());
+
+        $fresh = ApiTestObject::get()->byID($record->ID);
+        $this->assertSame(
+            $priorStatus,
+            $fresh->Status,
+            'out-of-list enum value must never be written, not silently coerced'
+        );
+    }
+
+    public function testPutAcceptsAValidEnumValueOnColymba(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Status' => 'published',
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame('published', ApiTestObject::get()->byID($record->ID)->Status);
+    }
+
     public function testEchoedUnlistedRelationsAreStripped(): void
     {
         // The GET-then-PUT-verbatim scenario: colymba applies present _many

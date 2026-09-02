@@ -175,6 +175,124 @@ class CompositionTest extends ContentApiTestCase
         $this->assertTrue($fresh->isPublished());
     }
 
+    /**
+     * #192: `areaRelation` at the request's top level (the shape the MCP
+     * tool schema itself documents) used to be silently ignored —
+     * `compose()` only ever read it from `page.areaRelation`, so a
+     * top-level request composed against the DEFAULT `ElementalArea`
+     * instead of the area actually requested, with no error and no
+     * warning. Proven against real DB state, on a page with two distinct
+     * ElementalArea-typed has_ones (the exact shape that surfaced this
+     * live: a HomePage-style class with both a generic default area and
+     * its real, differently-named one) — the element must land in
+     * `SecondaryArea`, not `ElementalArea`.
+     */
+    public function testTopLevelAreaRelationIsHonoredNotSilentlyIgnored(): void
+    {
+        $page = $this->blockPage();
+
+        $payload = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'areaRelation' => 'SecondaryArea',
+            'publish' => 'none',
+            'elements' => [
+                ['class' => 'ElementContent', 'externalId' => 'top-level-area-e1', 'fields' => ['Title' => 'X']],
+            ],
+        ];
+
+        $body = $this->decode($this->apiPost('compositions/page', $payload, $this->adminToken));
+
+        $this->assertNull($body['error'], (string) json_encode($body));
+
+        $fresh = ApiTestBlockPage::get()->byID($page->ID);
+        $this->assertGreaterThan(0, (int) $fresh->SecondaryAreaID, 'SecondaryArea must have been created/attached');
+        $this->assertSame(
+            (int) $fresh->SecondaryAreaID,
+            (int) $body['data']['area']['id'],
+            'the composed area must be the one requested via top-level areaRelation'
+        );
+
+        $element = ElementContent::get()->byID($body['data']['elements'][0]['id']);
+        $this->assertSame(
+            (int) $fresh->SecondaryAreaID,
+            (int) $element->ParentID,
+            'the element must be attached to SecondaryArea, not the default ElementalArea'
+        );
+        $this->assertNotSame(
+            (int) $fresh->ElementalAreaID,
+            (int) $element->ParentID,
+            'must not have silently landed in the default area instead'
+        );
+    }
+
+    /**
+     * A second composition against the same page must resolve to the SAME
+     * area both times (idempotency), not create a stray duplicate on the
+     * repeat call — `created` isn't asserted either way here:
+     * `ElementalPageExtension::onBeforeWrite()` eagerly provisions every
+     * `ElementalArea`-typed has_one (not just the conventionally-named
+     * one) on any page write, including the fixture's own initial write
+     * during test setup, so `SecondaryArea` already exists before either
+     * composition call in this test runs — `created: false` on both is
+     * therefore the correct, uninteresting outcome, not evidence either
+     * way about resolveArea()'s create-vs-reuse branching.
+     */
+    public function testTopLevelAreaRelationResolvesToTheSameAreaOnARepeatCall(): void
+    {
+        $page = $this->blockPage();
+
+        $first = $this->decode($this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'areaRelation' => 'SecondaryArea',
+            'elements' => [],
+        ], $this->adminToken));
+        $firstAreaId = (int) $first['data']['area']['id'];
+
+        $second = $this->decode($this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'areaRelation' => 'SecondaryArea',
+            'elements' => [
+                ['class' => 'ElementContent', 'externalId' => 'reuse-area-e1', 'fields' => ['Title' => 'X']],
+            ],
+        ], $this->adminToken));
+        $this->assertSame($firstAreaId, (int) $second['data']['area']['id']);
+    }
+
+    /**
+     * When both locations disagree, `page.areaRelation` wins (it is the
+     * shape the backend has always actually read) — but the disagreement
+     * itself must be visible in the response, not resolved silently.
+     */
+    public function testConflictingAreaRelationValuesAreReportedAsAWarning(): void
+    {
+        $page = $this->blockPage();
+
+        $payload = [
+            'page' => [
+                'match' => ['id' => (int) $page->ID],
+                'areaRelation' => 'SecondaryArea',
+            ],
+            'areaRelation' => 'ElementalArea',
+            'publish' => 'none',
+            'elements' => [],
+        ];
+
+        $body = $this->decode($this->apiPost('compositions/page', $payload, $this->adminToken));
+
+        $this->assertNull($body['error']);
+
+        $fresh = ApiTestBlockPage::get()->byID($page->ID);
+        $this->assertSame(
+            (int) $fresh->SecondaryAreaID,
+            (int) $body['data']['area']['id'],
+            'page.areaRelation wins on conflict'
+        );
+
+        $warnings = $body['data']['page']['warnings'] ?? [];
+        $this->assertNotEmpty($warnings, 'the conflict must be surfaced, not resolved silently');
+        $this->assertSame('areaRelation', $warnings[0]['field']);
+    }
+
     public function testCompositionIsIdempotent(): void
     {
         $page = $this->blockPage();
@@ -765,6 +883,99 @@ class CompositionTest extends ContentApiTestCase
         );
     }
 
+    /**
+     * #201: unlike a composition child (see
+     * testChildLookupIsScopedToOwningElement() above — CompositionService::
+     * processChild() scopes its externalId lookup to the owning element's
+     * own relation list), a top-level element's externalId lookup is
+     * genuinely global by design (FixtureIdentifier/idempotency-key
+     * semantics — see this class's own docblock). Confirmed live
+     * (Rockline Industrial): a wrong "page.match.id" resolved to an
+     * unrelated page, and every payload externalId that happened to
+     * already exist there got silently reparented onto it. A second
+     * composition reusing the first's externalId on a DIFFERENT page must
+     * be rejected, not silently reparented.
+     */
+    public function testTopLevelElementLookupRejectsCrossPageReparent(): void
+    {
+        $pageA = $this->blockPage();
+
+        $first = [
+            'page' => ['match' => ['id' => (int) $pageA->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'cross-page-e1',
+                    'fields' => ['Title' => 'Owned by A', 'HTML' => '<p>A</p>'],
+                ],
+            ],
+        ];
+
+        $this->apiPost('compositions/page', $first, $this->adminToken);
+
+        $second = [
+            'page' => [
+                'match' => ['urlSegment' => 'cross-page-b'],
+                'createIfMissing' => ['title' => 'Page B', 'className' => 'BlockPageStub'],
+            ],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'cross-page-e1',
+                    'fields' => ['Title' => 'Hijacked by B'],
+                ],
+            ],
+        ];
+
+        $response = $this->apiPost('compositions/page', $second, $this->adminToken);
+        $body = $this->assertErrorCode($response, 'CROSS_PAGE_REPARENT', 409);
+
+        $this->assertStringContainsString('cross-page-e1', $body['error']['message']);
+
+        $pageA = ApiTestBlockPage::get()->byID($pageA->ID);
+        $element = ElementContent::get()->filter('FixtureIdentifier', 'cross-page-e1')->first();
+
+        $this->assertSame('Owned by A', $element->Title, 'the element must not be edited by the rejected request');
+        $this->assertSame(
+            (int) $pageA->ElementalAreaID,
+            (int) $element->ParentID,
+            'the element must still be parented under page A, not reparented onto page B'
+        );
+    }
+
+    /**
+     * A repeat composition against the SAME page (the ordinary idempotent
+     * re-POST every other composition test relies on) must keep working —
+     * the #201 guard only fires on a genuine cross-page mismatch, not on
+     * re-matching a record that already belongs to the page being composed.
+     */
+    public function testTopLevelElementLookupStillIdempotentOnSamePage(): void
+    {
+        $page = $this->blockPage();
+
+        $payload = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'idempotent-e1',
+                    'fields' => ['Title' => 'First run', 'HTML' => '<p>1</p>'],
+                ],
+            ],
+        ];
+
+        $this->apiPost('compositions/page', $payload, $this->adminToken);
+
+        $payload['elements'][0]['fields']['Title'] = 'Second run';
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+        $body = $this->decode($response);
+
+        $this->assertNull($body['error']);
+
+        $element = ElementContent::get()->filter('FixtureIdentifier', 'idempotent-e1')->first();
+        $this->assertSame('Second run', $element->Title, 'the same-page repeat call must still update in place');
+    }
+
     public function testPageCreationValidationFailureDoesNotLeakRawExceptionText(): void
     {
         Config::modify()->set(ApiTestPage::class, 'api_access', true);
@@ -843,6 +1054,76 @@ class CompositionTest extends ContentApiTestCase
             $body['error']['message']
         );
         $this->assertSame('LinkText', $body['error']['details'][0]['field']);
+    }
+
+    /**
+     * #195: a link payload key not in LinkTransformer's FIELD_MAP used to
+     * be silently ignored (`fileID`/`file`/`target` instead of the real
+     * key `fileId`, for example) — the link record was still created, just
+     * empty, with a 200 response and nothing to say the key never matched
+     * anything. Proven against real DB state, not just the error code: no
+     * link record must be left behind by the rejected write.
+     */
+    public function testLinkPayloadWithAnUnknownKeyIsRejectedNotSilentlyDropped(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'unknown-link-key-owner',
+                    'fields' => [
+                        'Title' => 'Owner',
+                        // "urll" is a plausible typo for the real key "url"
+                        // — FIELD_MAP has no entry for it, so this used to
+                        // write an ExternalLink with no ExternalUrl at all.
+                        'Cta' => ['type' => 'ExternalLink', 'urll' => '/contact'],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'UNKNOWN_FIELD', 422);
+        $this->assertStringContainsString('urll', $body['error']['message']);
+
+        $owner = ApiTestElement::get()->filter('FixtureIdentifier', 'unknown-link-key-owner')->first();
+        $this->assertNull($owner, 'the whole composition must have rolled back, not just the link');
+    }
+
+    /**
+     * A key that's valid for a DIFFERENT link type (here: "fileId", the
+     * FileLink key, sent with type "ExternalLink") isn't caught by the
+     * unknown-key check above — it's a real key in FIELD_MAP, just not one
+     * ExternalLink's own table has a column for.
+     * DataObject::setCastedField() falls back to a bare, never-persisted
+     * dynamic property when it finds no matching column, so this used to
+     * be silently dropped the exact same way an unrecognized key was.
+     */
+    public function testLinkPayloadWithAKeyValidForADifferentTypeIsRejected(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'wrong-type-link-key-owner',
+                    'fields' => [
+                        'Title' => 'Owner',
+                        'Cta' => ['type' => 'ExternalLink', 'fileId' => 1],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'UNKNOWN_FIELD', 422);
+        $this->assertStringContainsString('fileId', $body['error']['message']);
+
+        $owner = ApiTestElement::get()->filter('FixtureIdentifier', 'wrong-type-link-key-owner')->first();
+        $this->assertNull($owner, 'the whole composition must have rolled back, not just the link');
     }
 
     /**
