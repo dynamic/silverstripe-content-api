@@ -6,13 +6,19 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
-- **(#202)** A `content_batch` has_many `add`/`set` that attached an already-published record
-  left it `modifiedOnDraft` with nothing to notice or fix it — `HasManyList::add()`
-  unconditionally repoints the related record's foreign key via an ordinary draft write.
-  `RecordWriter::write()` now republishes any already-published record a has_many relation write
-  dirtied this way, when the operation's own `publish`/`defaultPublish` isn't `none`. A record
-  that was never published is left alone; a many_many `add` was already unaffected (it only
-  writes the related record when it isn't already in the database).
+- **(#202)** A `content_batch` has_many `add`, `remove`, or `set` (the `removeAll()` half) that
+  touched an already-published, clean related record left it desynced from LIVE with nothing to
+  notice or fix it — `HasManyList` unconditionally repoints/clears the related record's foreign
+  key via an ordinary draft write regardless of its Versioned state, leaving an attach stranded
+  `modifiedOnDraft` or a detach's LIVE row still pointing at the old parent. `RecordWriter::write()`
+  now republishes any already-published, NOT-already-`modifiedOnDraft` record a has_many relation
+  write touches this way, when the operation's own `publish`/`defaultPublish` isn't `none` —
+  authorization-checked against the related record's own class `action` verb first, the same way a
+  `subtree`/`owns` publish cascade checks every non-root record it touches. A record that was never
+  published, or that already had unrelated in-progress draft edits before this write touched it, is
+  left exactly as it was — this never forces an editor's own draft to LIVE. A many_many `add` was
+  already unaffected for the related item (it only writes it when it isn't already in the
+  database).
 - **(#203)** `dryRun: true` (and a genuine atomic-failure rollback) already correctly roll back
   an ordinary DB-only `onBeforeWrite()`/`ValueTransformer` side effect — verified with new
   regression coverage rather than assumed. What no DB transaction can ever undo is a side effect

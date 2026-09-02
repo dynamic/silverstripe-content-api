@@ -145,13 +145,20 @@ Populate-fixtures resolver, which logged and left the literal token string in pl
   has_one name here (a natural mistake) is rejected the same way, `400 PAYLOAD_INVALID`, before
   the record is written at all: put it under `fields` instead.
 
-A has_many `add`/`set` that attaches an **already-published** record republishes it (when this
-operation's own `publish` isn't `none`) — `HasManyList::add()` unconditionally repoints the
-related record's foreign key via an ordinary draft write, which would otherwise leave it stranded
-`modifiedOnDraft` even though nothing about its own content changed (#202). A related record that
-was never published is left exactly as it was — only a record that was already live before this
-operation touched it gets put back. A many_many `add` has no equivalent gap: it only writes the
-related record at all when it isn't already in the database.
+A has_many `add`, `remove`, or the `removeAll()` half of `set`, that touches an
+**already-published, clean** related record republishes it (when this operation's own `publish`
+isn't `none`) — `HasManyList` unconditionally repoints (or clears) the related record's foreign
+key via an ordinary draft write regardless of its Versioned state, which would otherwise leave an
+attach stranded `modifiedOnDraft`, or worse, leave a detach's LIVE row still pointing at the old
+parent while draft says it's gone (#202). "Clean" matters: a record that's published but already
+`modifiedOnDraft` from unrelated in-progress edits is left exactly as it was — this never forces
+an editor's own draft to LIVE as a side effect of a relation write it has nothing to do with. A
+related record that was never published is also left exactly as it was. The republish is
+authorization-checked the same way a `subtree`/`owns` publish cascade checks every non-root record
+it touches — a caller needs the related record's own class `action` verb, not just the operation's
+own target class's, or the whole operation (including the relation write itself) is rejected and
+rolled back. A many_many `add` has no equivalent gap for the related record item: it only writes
+it at all when it isn't already in the database.
 
 `extraFields` round-trips on read too: a GET response serializes a many_many relation that
 carries extra join data as `[{"id", "extraFields"}, ...]` (`RecordSerializer`), not a bare id

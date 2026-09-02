@@ -1814,6 +1814,190 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * /review-pr on PR #209 (#202): `isPublished()` alone is true for a
+     * record that's live but ALSO mid-edit with its own unpublished draft
+     * changes — republishing that would force an editor's in-progress
+     * draft to LIVE as a side effect of an unrelated relation write, not
+     * merely restore what THIS operation itself disturbed. Only a record
+     * that was clean (published AND NOT already `modifiedOnDraft`) going
+     * in gets put back.
+     */
+    public function testDefaultPublishDoesNotForcePublishAChildThatWasAlreadyDirtyBeforeTheAttach(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202d-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202d-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        // Dirty the child's draft directly (ORM-level, not via the API) so
+        // it's published AND modifiedOnDraft BEFORE the relation attach —
+        // the precondition the fix must not disturb.
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202d-child')->first();
+        $child->Title = 'Unapproved edit in progress';
+        $child->write();
+        $this->assertTrue($child->isPublished());
+        $this->assertTrue($child->isModifiedOnDraft(), 'precondition: already dirty before the attach');
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202d-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202d-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202d-child')->first();
+        $this->assertTrue(
+            $child->isModifiedOnDraft(),
+            'an unrelated relation write must not push an editor\'s in-progress draft edit to LIVE'
+        );
+    }
+
+    /**
+     * /review-pr on PR #209 (#202): `remove` (and the `removeAll()` half of
+     * `set`) has the identical unconditional-write shape as `add` —
+     * confirmed here for `remove`. Left unfixed, the child's LIVE row would
+     * keep the old ParentID after a draft-only detach, so the live site
+     * keeps rendering it under the parent it was just removed from.
+     */
+    public function testDefaultPublishRepublishesAnAlreadyPublishedChildAfterRemove(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202e-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202e-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202e-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202e-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202e-child')->first();
+        $this->assertFalse($child->isModifiedOnDraft(), 'precondition: clean after the attach above');
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202e-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'remove', 'items' => [['externalId' => 'b202e-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202e-child')->first();
+        $this->assertFalse(
+            $child->isModifiedOnDraft(),
+            'the draft-only detach must be republished so LIVE reflects it too, not left stranded'
+        );
+    }
+
+    /**
+     * /review-pr on PR #209 (#202): the new republish step is
+     * authorization-checked the same way #90/#168's subtree/owns cascades
+     * check every non-root record they touch — a caller with `action` on
+     * the operation's own target class (the parent) must not be able to
+     * publish an unrelated class it was never granted `action` on, just by
+     * naming one of its records in a `relations` attach.
+     */
+    public function testHasManyRepublishRequiresTheActionVerbOnTheRelatedClassToo(): void
+    {
+        Config::modify()->set(ApiTestOwnedParentObject::class, 'api_writable_relations', ['Children']);
+
+        $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202f-parent',
+                    'fields' => ['Title' => 'Parent'],
+                ],
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestOwnedChild',
+                    'externalId' => 'b202f-child',
+                    'fields' => ['Title' => 'Child'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $child = ApiTestOwnedChildObject::get()->filter('FixtureIdentifier', 'b202f-child')->first();
+        $this->assertTrue($child->isPublished(), 'precondition');
+
+        // Withdrawn AFTER the child is already published — action was
+        // granted for the create above, removed before the relation
+        // attach that would otherwise silently republish it.
+        Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', 'read,create,update');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'defaultPublish' => 'single',
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTestOwnedParent',
+                    'externalId' => 'b202f-parent',
+                    'relations' => [
+                        'Children' => ['mode' => 'add', 'items' => [['externalId' => 'b202f-child']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('FORBIDDEN_CLASS', $body['data']['results'][0]['error']['code']);
+    }
+
+    /**
      * #130: a dry-run create must leave no record behind and the response
      * must use the `would*` vocabulary, not the real-run one — a caller
      * inspecting `status` must never be able to mistake this for a

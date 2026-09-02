@@ -434,11 +434,35 @@ class WriteApplicator
      * where each item is an int ID, `{"id": n}` or `{"externalId": "..."}`,
      * optionally with `"extraFields"` for many_many.
      *
+     * #202: a has_many relation write (`add`, `remove`, or the `removeAll()`
+     * half of `set`) unconditionally writes the FAR SIDE of the relation to
+     * repoint or clear its foreign key — an ordinary draft write, regardless
+     * of that record's own Versioned state. Left unaddressed, an
+     * already-published, otherwise-clean record gets silently left
+     * `modifiedOnDraft` (attach) or, worse, left LIVE-attached to a page it
+     * was just draft-detached from (`remove`/`set`'s removeAll half — the
+     * live site keeps rendering it under the old parent while draft says
+     * it's gone). `ManyManyList::add()` has no equivalent gap for the
+     * related record ITEM: it only calls `write()` on it when it isn't
+     * already in the database, so an existing (already write()-once) item
+     * is never touched by it at all. (`ManyManyThroughList::add()` can
+     * still write the JOIN record when `extraFields` are supplied against
+     * an already-existing join row — out of scope here, since that's a
+     * write to the join class, not to `$related` itself, and this
+     * module's own join stub is a plain, non-Versioned `DataObject`.)
+     *
+     * Only a record that was published AND NOT already `modifiedOnDraft`
+     * going in is collected — `isPublished()` alone is true for a
+     * record that's live but also mid-edit with unrelated unpublished
+     * draft changes, and republishing that would force an editor's
+     * in-progress draft to LIVE as a side effect of an unrelated relation
+     * write, not merely restore what this operation itself disturbed.
+     *
      * @param array<string, mixed> $relations
-     * @return DataObject[] Already-published related records whose OWN
-     *   Versioned state a has_many `add`/`set` just dirtied as a write side
-     *   effect (see the return value's docblock note below) — the caller
-     *   (`RecordWriter::write()`) republishes these to close #202.
+     * @return DataObject[] Deduplicated (by class + id) — see this method's
+     *   own docblock above for exactly which records qualify. The caller
+     *   (`RecordWriter::write()`) authorization-checks and republishes each
+     *   one to close #202.
      * @throws ApiError
      */
     public function applyRelations(DataObject $record, array $relations): array
@@ -468,6 +492,12 @@ class WriteApplicator
             $list = $record->{$name}();
 
             if ($mode === 'set') {
+                if ($isHasMany) {
+                    foreach ($list as $existing) {
+                        $this->collectIfCleanlyPublished($existing, $dirtiedPublished);
+                    }
+                }
+
                 $list->removeAll();
             }
 
@@ -475,38 +505,46 @@ class WriteApplicator
                 [$related, $extraFields] = $this->resolveRelationItem($relationClass, $name, $item);
 
                 if ($mode === 'remove') {
+                    if ($isHasMany) {
+                        $this->collectIfCleanlyPublished($related, $dirtiedPublished);
+                    }
+
                     $list->remove($related);
                     continue;
                 }
 
-                // #202: HasManyList::add() unconditionally calls
-                // $item->write() to repoint its foreign key — an ordinary
-                // draft write, regardless of whether $related was already
-                // published. A record published moments earlier by its own
-                // "publish": "single" create op (the exact shape a batch
-                // uses when a many_many-style relation attach needs
-                // content_compose_page's `children` to not exist yet — see
-                // module #196) is silently left `modifiedOnDraft` after
-                // this write, with nothing here to republish it.
-                // ManyManyList::add() has no equivalent gap: it only calls
-                // write() when the item isn't already in the DB, so an
-                // existing (and therefore already write()-once) $related is
-                // never touched by it at all — captured here for
-                // completeness in case a future relation type does dirty
-                // it, but not expected to fire in practice.
-                $wasPublished = $isHasMany
-                    && $related->hasExtension(Versioned::class)
-                    && $related->isPublished();
+                if ($isHasMany) {
+                    $this->collectIfCleanlyPublished($related, $dirtiedPublished);
+                }
 
                 $extraFields === [] ? $list->add($related) : $list->add($related, $extraFields);
-
-                if ($wasPublished) {
-                    $dirtiedPublished[] = $related;
-                }
             }
         }
 
-        return $dirtiedPublished;
+        return array_values($dirtiedPublished);
+    }
+
+    /**
+     * Records into `$dirtiedPublished` (keyed by class+id to dedupe a
+     * record reached more than once, e.g. named under both a `remove` and
+     * a later `add` in the same request) when `$related` was published AND
+     * NOT already `modifiedOnDraft` before this relation write touches it
+     * — see `applyRelations()`'s own docblock for why that second
+     * condition matters.
+     *
+     * @param array<string, DataObject> $dirtiedPublished
+     */
+    private function collectIfCleanlyPublished(DataObject $related, array &$dirtiedPublished): void
+    {
+        if (
+            !$related->hasExtension(Versioned::class)
+            || !$related->isPublished()
+            || $related->isModifiedOnDraft()
+        ) {
+            return;
+        }
+
+        $dirtiedPublished[get_class($related) . ':' . $related->ID] = $related;
     }
 
     /**

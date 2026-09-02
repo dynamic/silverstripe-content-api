@@ -360,10 +360,16 @@ class RecordWriter
                 $dirtiedPublished = $this->applicator->applyRelations($record, $relations);
                 $this->publisher->publish($record, $publishMode, $member);
 
-                // #202: a has_many `add`/`set` unconditionally writes the
-                // related record to repoint its foreign key — dirtying an
-                // already-published child back to `modifiedOnDraft` with
-                // nothing else in this pipeline to notice or republish it.
+                // #202: a has_many `add`/`set`/`remove` unconditionally
+                // writes the related record to repoint (or clear) its
+                // foreign key — dirtying an already-published, otherwise-
+                // clean record back to `modifiedOnDraft` with nothing else
+                // in this pipeline to notice or resync it.
+                // `WriteApplicator::applyRelations()` only ever collects a
+                // record that was published AND NOT already
+                // `modifiedOnDraft` going in — republishing here restores
+                // its pre-existing live/draft congruence, it never forces
+                // forward an editor's unrelated in-progress draft edits.
                 // Gated on $publishMode (not unconditional): "publish" is
                 // this API's explicit, single source of truth for stage
                 // transitions (docs/en/07_batch-operations.md), so a
@@ -373,8 +379,19 @@ class RecordWriter
                 // now covers every record the operation actually touched,
                 // not just its own explicit target — closing the gap
                 // between "defaultPublish: single" and what it visibly did.
+                //
+                // Authorization-checked the same way #90/#168's
+                // subtree/owns cascades check every non-root record they
+                // touch (PublishOrchestrator::assertDescendantPublishable())
+                // — a caller with `action` on the operation's own target
+                // class must not be able to publish an unrelated class (or
+                // record) it was never granted `action` on, just by naming
+                // it in a `relations` attach/detach.
                 if ($publishMode !== 'none') {
                     foreach ($dirtiedPublished as $related) {
+                        $relatedClass = get_class($related);
+                        $this->policy->checkClassAccess($relatedClass, 'action', $member);
+                        $this->policy->checkRecordAccess($related, 'action', $member);
                         $related->publishSingle();
                     }
                 }
