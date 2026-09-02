@@ -83,6 +83,51 @@ class ExposureScaffolderTest extends SapphireTest
     }
 
     /**
+     * #198: no HTTP method maps to the 'action' (publish/unpublish/archive)
+     * verb — a generated 'GET,POST,PUT' string looks like full CRUD but
+     * silently has no way to ever publish a write through this API. The
+     * generator itself had this exact bug (found auditing the file, not
+     * previously filed against the generator specifically) — proven here
+     * against the actual generated api_access line, not just presence of
+     * the substring "action" anywhere in the output.
+     */
+    public function testGeneratedApiAccessIncludesTheActionVerb(): void
+    {
+        $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
+
+        $this->assertMatchesRegularExpression(
+            "/api_access: 'GET,POST,PUT,action'/",
+            $yaml,
+            'a generated api_access missing the action token silently blocks publish forever (#198)'
+        );
+    }
+
+    /**
+     * The extensions block includes WriteGuardExtension, which protects
+     * writes on colymba's generic /api surface — but colymba only ever
+     * routes to a class listed in its OWN, separate
+     * DefaultQueryHandler.models config; this module's ClassRegistry.models
+     * (already documented in the output) doesn't cover it. Confirmed live:
+     * a class configured everywhere else but missing this second
+     * registration has content_schema_class report a complete, writable
+     * schema while every actual /api/$Model request 404s or is silently
+     * invisible.
+     */
+    public function testDocumentsTheSeparateColymbaRegistryEntry(): void
+    {
+        $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
+
+        $this->assertStringContainsString(
+            'Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler:',
+            $yaml
+        );
+        $this->assertMatchesRegularExpression(
+            '/DefaultQueryHandler:\s*\n#\s*models:\s*\n#\s*\S+: ' . preg_quote(ApiTestElement::class, '/') . '/',
+            $yaml
+        );
+    }
+
+    /**
      * BaseElement's own `Parent` has_one targets `ElementalArea` — the
      * framework auto-provisions this FK, and WriteApplicator::
      * isFieldWritable() blocks it from direct client writes for every

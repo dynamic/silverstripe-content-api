@@ -274,7 +274,22 @@ class ExposureScaffolder
         $lines = [];
         $lines[] = sprintf('# %s', $class);
         $lines[] = sprintf('%s:', $class);
-        $lines[] = "  api_access: 'GET,POST,PUT'";
+        // 'action' (publish/unpublish/archive) is included alongside the
+        // CRUD-shaped HTTP verbs deliberately, not just GET/POST/PUT — no
+        // HTTP method maps to it (ClassRegistry::METHOD_VERB_MAP), so the
+        // previously-generated 'GET,POST,PUT' string looked like full
+        // CRUD-minus-delete while silently having no way to ever publish a
+        // write through this API — the exact #198 trap, which this
+        // generator was itself producing (found auditing this file, not
+        // reported against the generator specifically). #198's own field
+        // evidence (16 records across two projects stuck permanently
+        // draft-only) is from hand-written configs, not confirmed to be
+        // this generator's output — but the generator had the identical
+        // bug regardless of whether it's what caused either incident. A
+        // class that turns out not to need publishing loses nothing by
+        // having the verb: 'action' maps to the same canEdit() check
+        // 'update' already does.
+        $lines[] = "  api_access: 'GET,POST,PUT,action'";
 
         if ($fields !== []) {
             $lines[] = '  api_writable_fields:';
@@ -296,6 +311,24 @@ class ExposureScaffolder
         $lines[] = sprintf('# Registry ref (only needed if %s isn\'t already covered by a', $ref);
         $lines[] = "# discovery_roots entry, or you'd rather address it by this short name):";
         $lines[] = '# Dynamic\ContentApi\Registry\ClassRegistry:';
+        $lines[] = '#   models:';
+        $lines[] = sprintf('#     %s: %s', $ref, $class);
+        $lines[] = '';
+        // A SEPARATE registration from the one above, easy to miss because
+        // it's a different registry entirely — ClassRegistry.models above
+        // is what this module's OWN /content-api/v1 endpoints (schema,
+        // batch, compositions) read; colymba's generic /api surface (the
+        // WriteGuardExtension block above only protects writes on THAT
+        // surface, and does nothing if colymba never routes to the class
+        // at all) reads its own, independent DefaultQueryHandler.models.
+        // Confirmed live: a class fully configured here but missing this
+        // second entry has content_schema_class report a complete,
+        // writable schema while every actual /api/$Model request 404s or
+        // is silently invisible.
+        $lines[] = '# Colymba\'s generic /api surface needs its OWN, separate registration —';
+        $lines[] = '# only needed if you intend to use that surface for this class, not the';
+        $lines[] = "# module's own /content-api/v1 endpoints above:";
+        $lines[] = '# Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler:';
         $lines[] = '#   models:';
         $lines[] = sprintf('#     %s: %s', $ref, $class);
 

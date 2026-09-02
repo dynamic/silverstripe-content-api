@@ -5,6 +5,20 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **(#198)** `GenerateContentApiExposureTask`/`ExposureScaffolder` generated `api_access:
+  'GET,POST,PUT'` for every class — no HTTP method maps to the `action` (publish/unpublish/
+  archive) verb, so a project that pasted the generator's own output in as-is had a class that
+  looked fully CRUD-configured but could never actually publish a write through this API. Now
+  generates `'GET,POST,PUT,action'`.
+- The generator's output now also documents (as a comment, same "propose, never enable"
+  convention as the rest of the file) the separate `Colymba\RESTfulAPI\QueryHandlers\
+  DefaultQueryHandler.models` registration colymba's generic `/api` surface needs — distinct
+  from, and easy to miss alongside, this module's own `ClassRegistry.models` entry the generator
+  already documented. A class configured everywhere else but missing this second registration
+  has `content_schema_class` report a complete, writable schema while every actual `/api/$Model`
+  request 404s or is silently invisible.
+
 ## [1.12.0] - 2026-08-18
 
 ### Added
