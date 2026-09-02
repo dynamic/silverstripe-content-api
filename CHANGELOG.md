@@ -82,9 +82,10 @@ All notable changes to this project are documented here. Format loosely follows
     is reported as a warning rather than resolved silently.
 
   **Compatibility note:** three of these are newly-rejecting a write that previously returned
-  200 — a consumer currently sending a payload that happened to hit one of these gaps (an
-  out-of-list enum value, a has_one under `relations`, an unrecognized/wrong-type link key) will
-  now get a 422 instead of a silent no-op. Landed on branch `1` first (1.12.0), merged up here.
+  200 — a consumer currently sending a payload that happened to hit one of these gaps will now
+  get an error instead of a silent no-op: `422 INVALID_VALUE` for an out-of-list enum value,
+  `400 PAYLOAD_INVALID` for a has_one under `relations`, or `422 UNKNOWN_FIELD` for an
+  unrecognized/wrong-type link key. Landed on branch `1` first (1.12.0), merged up here.
 - **(#198)** `GenerateContentApiExposureTask`/`ExposureScaffolder` generated `api_access:
   'GET,POST,PUT'` for every class — no HTTP method maps to the `action` (publish/unpublish/
   archive) verb, so a project that pasted the generator's own output in as-is had a class that

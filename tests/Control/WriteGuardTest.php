@@ -134,19 +134,22 @@ class WriteGuardTest extends ContentApiTestCase
      * batch/composition path (that method is never called for a colymba
      * write at all). `WriteGuardExtension` now carries an
      * `isEnumValueAcceptable()` revert for exactly this gap (merged up
-     * from branch `1`, #191/#205) — but on THIS branch it's provably
-     * unreachable in practice: this branch's `colymba/silverstripe-
-     * restfulapi` fork (`dev-feature/cms-6-compatibility`, unlike branch
-     * `1`'s `5.0.0`) rejects an out-of-list Enum value in its OWN
-     * deserializer before the model is ever written, so
-     * `onBeforeWrite()`'s revert logic never runs at all. Confirmed live
-     * on this branch's stack (400, colymba's own native error shape, not
-     * this module's error envelope) — asserting the revert-to-200
-     * behavior branch `1`'s otherwise-identical test expects would be
-     * asserting something this branch's own dependency graph makes
-     * unreachable. Either shape satisfies the actual goal here (reject
-     * or revert, never silently coerce); this branch's is arguably
-     * stronger, since nothing is written at all.
+     * from branch `1`, #191/#205) — but on THIS branch it's structurally
+     * dead code for every Enum value, not merely unreachable in this one
+     * test's scenario: SilverStripe 6's `DBEnum` declares a
+     * `field_validators` entry (`OptionFieldValidator`, new in this major
+     * version), and `DataObject::validate()`/`preWrite()` runs that
+     * validation and throws before `onBeforeWrite()` is ever called at
+     * all — not a colymba version difference (colymba's own deserializer
+     * does no value validation itself on either branch; verified by
+     * tracing `DefaultQueryHandler`'s write path, which catches the
+     * `ValidationException` `$model->write()` throws and maps it to this
+     * 400). Confirmed live on this branch's stack. Asserting the
+     * revert-to-200 behavior branch `1`'s otherwise-identical test
+     * expects would be asserting something this branch's own SS6
+     * framework makes unreachable. Either shape satisfies the actual
+     * goal here (reject or revert, never silently coerce); this branch's
+     * is arguably stronger, since nothing is written at all.
      */
     public function testPutRejectsAnOutOfListEnumValue(): void
     {

@@ -370,6 +370,17 @@ class WriteGuardExtension extends Extension
             // clean way to reject mid-write with this API's structured
             // error shape), rather than left as a second, inconsistent
             // failure mode on this one surface.
+            //
+            // Structurally dead on THIS branch specifically: SS6's
+            // DBEnum declares a field_validators entry (OptionFieldValidator,
+            // new in this major version), and DataObject::preWrite()/
+            // validate() throws before onBeforeWrite() ever runs — so an
+            // out-of-list value never reaches this line at all here; the
+            // framework itself now rejects it first (see
+            // WriteGuardTest::testPutRejectsAnOutOfListEnumValue()). Kept
+            // for branch parity (this class is shared source with branch
+            // `1`, where SS5's DBEnum has no such validator and this path
+            // is the only thing preventing the silent-coercion bug).
             $invalidValue = $relationName === null
                 && array_key_exists($column, $changed)
                 && !$applicator->isEnumValueAcceptable($owner, $column, $changed[$column]['after']);
