@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **(#201)** A composition's `page.match.id` resolving to the wrong page used to silently
+  reparent every element in the payload whose `externalId` already existed anywhere on the
+  site — `ExternalIdResolver::tryFind()` is a global lookup by design, and composition force-
+  writes the resolved area's id onto whatever record it matches, with no check that the record
+  already belonged to a different page. `RecordWriter::write()` now rejects (new
+  `CROSS_PAGE_REPARENT` error code, 409) when a server-derived `ParentID` assignment (composition
+  only — an explicit client `fields.ParentID` write, e.g. via `content_batch`, is unaffected and
+  still governed solely by the existing element-type-allowed-on-page check) would move an
+  already-parented element onto a different page's area. Confirmed live (Rockline Industrial):
+  recovery needed raw SQL, since the API forbids `delete` by design.
 - **(#191, #195, #192)** Four write-path gaps that used to accept a request and silently do
   something other than what was asked, found via a field audit of real usage on two production
   consumer projects (~1,500 recorded MCP calls mined from session transcripts). All four now
