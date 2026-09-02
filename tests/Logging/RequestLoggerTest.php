@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Logging;
 
+use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Logging\RequestLogger;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Monolog\Handler\TestHandler;
@@ -100,20 +101,24 @@ class RequestLoggerTest extends ContentApiTestCase
     {
         Config::modify()->set(RequestLogger::class, 'enabled_environments', ['dev']);
 
+        // setRouteParams() simulates what a real matched content-api/v1
+        // request already has by the time withEnvelope() calls log() — a
+        // bare, unrouted HTTPRequest has no route params at all, so
+        // param('ClassRef') would be null regardless of what's under test
+        // here.
         $request = new HTTPRequest('GET', 'content-api/v1/records/ApiTest/1');
-        $response = new HTTPResponse('{}', 404);
+        $request->setRouteParams(['ClassRef' => 'ApiTest', 'ID' => '1']);
+        $response = new HTTPResponse('{"error":{"code":"NOT_FOUND"}}', 404);
 
-        (new RequestLogger())->log($request, $response, null, [
-            'endpoint' => 'handleReadOne',
-            'method' => 'GET',
-            'classRef' => 'ApiTest',
-            'action' => null,
-            'status' => 404,
-            'errorCode' => 'NOT_FOUND',
-            'durationMs' => 12.34,
-            'responseBytes' => 2,
-            'opFailures' => null,
-        ]);
+        (new RequestLogger())->log(
+            $request,
+            $response,
+            null,
+            'handleReadOne',
+            ErrorCode::NOT_FOUND,
+            microtime(true) - 0.01234,
+            null
+        );
 
         $record = $this->logHandler->getRecords()[0];
         $this->assertSame('handleReadOne', $record['context']['endpoint']);
@@ -121,6 +126,10 @@ class RequestLoggerTest extends ContentApiTestCase
         $this->assertSame('ApiTest', $record['context']['classRef']);
         $this->assertSame(404, $record['context']['status']);
         $this->assertSame('NOT_FOUND', $record['context']['errorCode']);
+        $this->assertNull($record['context']['action']);
+        $this->assertNull($record['context']['opFailures']);
+        $this->assertGreaterThan(0, $record['context']['durationMs']);
+        $this->assertSame(strlen((string) $response->getBody()), $record['context']['responseBytes']);
         $this->assertNull($record['context']['memberId'], 'no authenticated member on this call');
     }
 
@@ -154,18 +163,9 @@ class RequestLoggerTest extends ContentApiTestCase
     private function log(RequestLogger $logger): void
     {
         $request = new HTTPRequest('GET', 'content-api/v1/records/ApiTest');
+        $request->setRouteParams(['ClassRef' => 'ApiTest']);
         $response = new HTTPResponse('{}', 200);
 
-        $logger->log($request, $response, null, [
-            'endpoint' => 'handleReadList',
-            'method' => 'GET',
-            'classRef' => 'ApiTest',
-            'action' => null,
-            'status' => 200,
-            'errorCode' => null,
-            'durationMs' => 1.0,
-            'responseBytes' => 2,
-            'opFailures' => null,
-        ]);
+        $logger->log($request, $response, null, 'handleReadList', null, microtime(true), null);
     }
 }

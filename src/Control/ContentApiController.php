@@ -422,25 +422,24 @@ class ContentApiController extends Controller
             );
         }
 
-        // #207: opFailures surfaces `POST batch`'s per-operation error
-        // count even though a partially-failed batch still returns HTTP
-        // 200 — see BatchProcessor::run()'s $summary. A log keyed only on
-        // HTTP status would record that case as a clean success.
-        $opFailures = $result['data']['summary']['errors'] ?? null;
-
-        $request = $this->getRequest();
-
-        $this->requestLogger->log($request, $response, $this->authContext?->member, [
-            'endpoint' => $this->getAction(),
-            'method' => $request->httpMethod(),
-            'classRef' => $request->param('ClassRef'),
-            'action' => $request->param('RecordAction') ?? $request->param('PageAction'),
-            'status' => $response->getStatusCode(),
-            'errorCode' => $errorCode?->value,
-            'durationMs' => round((microtime(true) - $startTime) * 1000, 2),
-            'responseBytes' => strlen((string) $response->getBody()),
-            'opFailures' => is_int($opFailures) ? $opFailures : null,
-        ]);
+        // #207: null-safe — a null requestLogger is unreachable in practice
+        // (Injector::create() always resolves $dependencies), but this
+        // point is reached after withEnvelope()'s own try/catch/finally has
+        // already closed, so nothing here may throw and discard an
+        // already-built response. RequestLogger::log() derives every
+        // logged field itself (including the `opFailures` count a
+        // partially-failed `POST batch` needs despite its HTTP 200 — see
+        // BatchProcessor::run()'s $summary) and wraps its own body in a
+        // try/catch for exactly this reason.
+        $this->requestLogger?->log(
+            $this->getRequest(),
+            $response,
+            $this->authContext?->member,
+            $this->getAction(),
+            $errorCode,
+            $startTime,
+            $result
+        );
 
         return $response;
     }
