@@ -115,6 +115,17 @@ database for real.
   `AUTO_INCREMENT` value, so don't treat a `wouldCreate` result's `id` as reusable or as evidence
   of what a real run's id will be. A `wouldDelete` result's `deleted` field is always `false` (the
   record still exists) even though the same field is `true` on a real delete's response.
+- **Rollback covers the database only, on the connection this module's writes use** —
+  `DbTransaction::run()` layered under the framework's own nested-transaction (savepoint)
+  support correctly rolls back an ordinary `onBeforeWrite()`/`ValueTransformer` side effect that
+  writes through the ORM, even to an unrelated table `dryRun`'s own verification never looks at
+  (#203; see `BatchTest::testDryRunRollsBackASideEffectWriteToAnUnrelatedTable()`). What no DB
+  transaction can undo is a side effect OUTSIDE the database — an HTTP call, a queued job, a
+  write to an external cache or service (confirmed live: `EmbedObject` rows from an oEmbed
+  lookup survived both a rolled-back composition and a `dryRun` probe). Project code with a
+  side effect like that should check `Dynamic\ContentApi\Write\DryRunContext::isActive()` in its
+  own hook/transformer and skip it when true — this module can't do that on a project class's
+  behalf.
 - `dryRun` is a `POST batch` feature only — every other write endpoint (`compositions/page`,
   `pages/$ID/convert`/`apply-template`, `records/$ClassRef/$ID/unpublish`/`archive`, `assets`)
   rejects it outright (`400 PAYLOAD_INVALID`) rather than silently ignoring it.
