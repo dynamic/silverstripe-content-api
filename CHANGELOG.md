@@ -6,6 +6,22 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **(#202)** A `content_batch` has_many `add`/`set` that attached an already-published record
+  left it `modifiedOnDraft` with nothing to notice or fix it — `HasManyList::add()`
+  unconditionally repoints the related record's foreign key via an ordinary draft write.
+  `RecordWriter::write()` now republishes any already-published record a has_many relation write
+  dirtied this way, when the operation's own `publish`/`defaultPublish` isn't `none`. A record
+  that was never published is left alone; a many_many `add` was already unaffected (it only
+  writes the related record when it isn't already in the database).
+- **(#203)** `dryRun: true` (and a genuine atomic-failure rollback) already correctly roll back
+  an ordinary DB-only `onBeforeWrite()`/`ValueTransformer` side effect — verified with new
+  regression coverage rather than assumed. What no DB transaction can ever undo is a side effect
+  OUTSIDE the database (an HTTP call, a queued job, an external cache write) — confirmed live,
+  `ElementOembed`'s oEmbed lookup left orphan `EmbedObject` rows behind both a rolled-back
+  composition and a `dryRun` probe. Added `Dynamic\ContentApi\Write\DryRunContext::isActive()`,
+  a static flag any project write hook or `ValueTransformer` can check to skip a non-DB side
+  effect during a dry run — this module can't intercept a project class's side effect on its
+  behalf, only make the dry-run state visible to it.
 - **(#191, #195, #192)** Four write-path gaps that used to accept a request and silently do
   something other than what was asked, found via a field audit of real usage on two production
   consumer projects (~1,500 recorded MCP calls mined from session transcripts). All four now

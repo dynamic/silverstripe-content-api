@@ -357,8 +357,27 @@ class RecordWriter
         try {
             DbTransaction::run(function () use ($record, $relations, $publishMode, $member) {
                 $record->write();
-                $this->applicator->applyRelations($record, $relations);
+                $dirtiedPublished = $this->applicator->applyRelations($record, $relations);
                 $this->publisher->publish($record, $publishMode, $member);
+
+                // #202: a has_many `add`/`set` unconditionally writes the
+                // related record to repoint its foreign key — dirtying an
+                // already-published child back to `modifiedOnDraft` with
+                // nothing else in this pipeline to notice or republish it.
+                // Gated on $publishMode (not unconditional): "publish" is
+                // this API's explicit, single source of truth for stage
+                // transitions (docs/en/07_batch-operations.md), so a
+                // "publish": "none" operation must still leave everything
+                // it touches on draft, exactly as a field-only write would.
+                // When the caller DID ask this operation to publish, that
+                // now covers every record the operation actually touched,
+                // not just its own explicit target — closing the gap
+                // between "defaultPublish: single" and what it visibly did.
+                if ($publishMode !== 'none') {
+                    foreach ($dirtiedPublished as $related) {
+                        $related->publishSingle();
+                    }
+                }
             });
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception);

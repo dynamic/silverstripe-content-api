@@ -145,6 +145,14 @@ Populate-fixtures resolver, which logged and left the literal token string in pl
   has_one name here (a natural mistake) is rejected the same way, `400 PAYLOAD_INVALID`, before
   the record is written at all: put it under `fields` instead.
 
+A has_many `add`/`set` that attaches an **already-published** record republishes it (when this
+operation's own `publish` isn't `none`) — `HasManyList::add()` unconditionally repoints the
+related record's foreign key via an ordinary draft write, which would otherwise leave it stranded
+`modifiedOnDraft` even though nothing about its own content changed (#202). A related record that
+was never published is left exactly as it was — only a record that was already live before this
+operation touched it gets put back. A many_many `add` has no equivalent gap: it only writes the
+related record at all when it isn't already in the database.
+
 `extraFields` round-trips on read too: a GET response serializes a many_many relation that
 carries extra join data as `[{"id", "extraFields"}, ...]` (`RecordSerializer`), not a bare id
 array — the same shape `items` accepts on write. Two relation shapes carry extra data:

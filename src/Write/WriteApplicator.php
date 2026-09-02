@@ -12,6 +12,7 @@ use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\FieldType\DBEnum;
 use SilverStripe\ORM\FieldType\DBMultiEnum;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * Applies a sparse write payload to a record: only keys present in the
@@ -434,15 +435,20 @@ class WriteApplicator
      * optionally with `"extraFields"` for many_many.
      *
      * @param array<string, mixed> $relations
+     * @return DataObject[] Already-published related records whose OWN
+     *   Versioned state a has_many `add`/`set` just dirtied as a write side
+     *   effect (see the return value's docblock note below) — the caller
+     *   (`RecordWriter::write()`) republishes these to close #202.
      * @throws ApiError
      */
-    public function applyRelations(DataObject $record, array $relations): void
+    public function applyRelations(DataObject $record, array $relations): array
     {
         $className = get_class($record);
         $hasOne = (array) $record->hasOne();
         $hasMany = (array) $record->hasMany();
         $manyMany = (array) $record->manyMany();
         $writable = (array) Config::inst()->get($className, 'api_writable_relations');
+        $dirtiedPublished = [];
 
         foreach ($relations as $name => $spec) {
             $name = (string) $name;
@@ -457,6 +463,7 @@ class WriteApplicator
             );
             $mode = (string) $spec['mode'];
             $items = (array) ($spec['items'] ?? []);
+            $isHasMany = isset($hasMany[$name]);
 
             $list = $record->{$name}();
 
@@ -469,11 +476,37 @@ class WriteApplicator
 
                 if ($mode === 'remove') {
                     $list->remove($related);
-                } else {
-                    $extraFields === [] ? $list->add($related) : $list->add($related, $extraFields);
+                    continue;
+                }
+
+                // #202: HasManyList::add() unconditionally calls
+                // $item->write() to repoint its foreign key — an ordinary
+                // draft write, regardless of whether $related was already
+                // published. A record published moments earlier by its own
+                // "publish": "single" create op (the exact shape a batch
+                // uses when a many_many-style relation attach needs
+                // content_compose_page's `children` to not exist yet — see
+                // module #196) is silently left `modifiedOnDraft` after
+                // this write, with nothing here to republish it.
+                // ManyManyList::add() has no equivalent gap: it only calls
+                // write() when the item isn't already in the DB, so an
+                // existing (and therefore already write()-once) $related is
+                // never touched by it at all — captured here for
+                // completeness in case a future relation type does dirty
+                // it, but not expected to fire in practice.
+                $wasPublished = $isHasMany
+                    && $related->hasExtension(Versioned::class)
+                    && $related->isPublished();
+
+                $extraFields === [] ? $list->add($related) : $list->add($related, $extraFields);
+
+                if ($wasPublished) {
+                    $dirtiedPublished[] = $related;
                 }
             }
         }
+
+        return $dirtiedPublished;
     }
 
     /**
