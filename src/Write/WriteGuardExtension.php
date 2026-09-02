@@ -37,11 +37,14 @@ use SilverStripe\ORM\DataObject;
  * Opt-in per model:
  * ```yml
  * DNADesign\Elemental\Models\ElementContent:
- *   api_access: 'GET,POST,PUT'
+ *   api_access: 'GET,POST,PUT,action'
  *   api_writable_fields: [Title, HTML, Sort]
  *   extensions:
  *     - Dynamic\ContentApi\Write\WriteGuardExtension
  * ```
+ * `action` (publish/unpublish/archive) has no HTTP method of its own — it
+ * must be listed as a bare token, not implied by GET/POST/PUT, or the class
+ * can never actually publish a write through this API (#198).
  *
  * SECURITY: never grant write verbs in `api_access` without either this
  * extension or an explicit trusted-caller decision.

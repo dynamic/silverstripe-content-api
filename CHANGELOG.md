@@ -36,6 +36,17 @@ All notable changes to this project are documented here. Format loosely follows
   200 — a consumer currently sending a payload that happened to hit one of these gaps (an
   out-of-list enum value, a has_one under `relations`, an unrecognized/wrong-type link key) will
   now get a 422 instead of a silent no-op.
+- **(#198)** `GenerateContentApiExposureTask`/`ExposureScaffolder` generated `api_access:
+  'GET,POST,PUT'` for every class — no HTTP method maps to the `action` (publish/unpublish/
+  archive) verb, so a project that pasted the generator's own output in as-is had a class that
+  looked fully CRUD-configured but could never actually publish a write through this API. Now
+  generates `'GET,POST,PUT,action'`.
+- The generator's output now also documents (as a comment) the separate `Colymba\RESTfulAPI\
+  QueryHandlers\DefaultQueryHandler.models` entry — the base both this module's own
+  `/content-api/v1` endpoints and colymba's generic `/api` surface merge from, per
+  `ClassRegistry`'s own docblock, with `ClassRegistry.models` as the narrower, content-api-only
+  overlay. A class registered only under the overlay resolves for `content_schema_class` while
+  every actual `/api/$Model` request 404s or is silently invisible.
 
 ## [1.12.0] - 2026-08-18
 
