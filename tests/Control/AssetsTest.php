@@ -66,6 +66,55 @@ class AssetsTest extends ContentApiTestCase
         );
     }
 
+    /**
+     * #204 reproduction: confirm whether a non-image (PDF) upload actually
+     * lands a File row, before assuming the issue's hypothesis (a hardcoded
+     * Image class) is the real cause.
+     */
+    public function testUploadCreatesPdfAsAPlainFile(): void
+    {
+        $response = $this->apiPost('assets', [
+            'filename' => 'terms.pdf',
+            'folder' => 'api-test',
+            'base64' => base64_encode("%PDF-1.4\n%\xE2\xE3\xCF\xD3\ntrailer<</Root 1 0 R>>"),
+            'externalId' => 'doc-terms',
+        ], $this->adminToken);
+        $body = $this->decode($response);
+
+        $this->assertSame(201, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(File::class, $body['data']['className']);
+        $this->assertSame('api-test/terms.pdf', $body['data']['filename']);
+
+        $record = File::get()->filter('FixtureIdentifier', 'doc-terms')->first();
+        $this->assertNotNull($record, 'the response reported success — the File row must actually exist');
+        $this->assertSame('api-test/terms.pdf', $record->getFilename());
+    }
+
+    /**
+     * #204: `AssetService::finalize()`'s `$file->write()` was the one write
+     * path in this module that didn't map `ValidationException` to a
+     * structured error — a disallowed extension (`File.allowed_extensions`)
+     * surfaced as an unmapped `500 SERVER_ERROR` carrying the raw exception
+     * message, instead of the `422 VALIDATION_FAILED` every other write
+     * path in this module gives for the same failure class.
+     */
+    public function testUploadOfADisallowedExtensionReturnsValidationFailedNotServerError(): void
+    {
+        $response = $this->apiPost('assets', [
+            'filename' => 'malware.exe',
+            'folder' => 'api-test',
+            'base64' => base64_encode('anything'),
+            'externalId' => 'disallowed-ext',
+        ], $this->adminToken);
+        $body = $this->assertErrorCode($response, 'VALIDATION_FAILED', 422);
+
+        $this->assertNull(
+            File::get()->filter('FileFilename', 'api-test/malware.exe')->first(),
+            'a rejected upload must not leave a File row behind'
+        );
+        $this->assertIsArray($body['error']['details']);
+    }
+
     public function testUploadCreatesImage(): void
     {
         [$response, $body] = $this->uploadPixel();
