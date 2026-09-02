@@ -384,6 +384,62 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('READONLY_FIELD', $body['data']['results'][0]['error']['code']);
     }
 
+    /**
+     * A write into an Enum column used to accept any string — DBEnum never
+     * validates on setValue(), and MySQL itself doesn't reject an
+     * out-of-list ENUM value, it silently coerces it to the empty string.
+     * The wrong-case value (a very natural mistake — the schema's real
+     * value is lowercase "published") got a 200 and a permanently wrong
+     * field, with no signal anything was wrong (confirmed live — 46
+     * elements, essentials project). Proven here against actual DB state,
+     * not just the error code: the field must be unchanged after the
+     * rejected write.
+     */
+    public function testEnumFieldRejectsAnOutOfListValue(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $priorStatus = $record->Status;
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Status' => 'Published'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $result = $body['data']['results'][0];
+        $this->assertSame('INVALID_VALUE', $result['error']['code']);
+        $detailMessage = $result['error']['details'][0]['message'];
+        $this->assertStringContainsString('draft', $detailMessage);
+        $this->assertStringContainsString('published', $detailMessage);
+
+        $record = ApiTestObject::get()->byID($record->ID);
+        $this->assertSame($priorStatus, $record->Status);
+    }
+
+    public function testEnumFieldAcceptsAValueFromItsDeclaredList(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'fields' => ['Status' => 'published'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame('published', ApiTestObject::get()->byID($record->ID)->Status);
+    }
+
     public function testAllowlistPolicy(): void
     {
         Config::modify()->set(ApiTestObject::class, 'api_write_policy', 'allowlist');
@@ -939,6 +995,46 @@ class BatchTest extends ContentApiTestCase
         $results = $body['data']['results'];
         $this->assertSame('READONLY_FIELD', $results[0]['error']['code']);
         $this->assertSame('UNKNOWN_RELATION', $results[1]['error']['code']);
+    }
+
+    /**
+     * #191: a has_one named under `relations` (a natural mistake — a
+     * has_one FK belongs under `fields`) used to be silently dropped —
+     * `applyRelations()` never runs until AFTER the record's own write, so
+     * on a class whose own validation would otherwise pass, the write
+     * "succeeded" with the has_one left completely untouched and no error
+     * anywhere. Must now be rejected up front, before any write happens —
+     * proven here by asserting the record's FK is unchanged, not just by
+     * the error code.
+     */
+    public function testHasOneNamedUnderRelationsIsRejectedNotSilentlyDropped(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $buddy = $this->objFromFixture(ApiTestObject::class, 'two');
+        $priorBuddyID = (int) $record->BuddyID;
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ApiTest',
+                    'id' => (int) $record->ID,
+                    'relations' => ['Buddy' => (int) $buddy->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $result = $body['data']['results'][0];
+        $this->assertSame('PAYLOAD_INVALID', $result['error']['code']);
+        $this->assertStringContainsString('has_one', $result['error']['message']);
+        $this->assertStringContainsString('"fields"', $result['error']['message']);
+
+        $record = ApiTestObject::get()->byID($record->ID);
+        $this->assertSame(
+            $priorBuddyID,
+            (int) $record->BuddyID,
+            'the has_one FK must be left untouched, not silently written or silently ignored'
+        );
     }
 
     public function testCreateVerbDenied(): void

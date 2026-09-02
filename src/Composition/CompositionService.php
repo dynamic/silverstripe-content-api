@@ -126,7 +126,42 @@ class CompositionService
         }
 
         // 2. Area
-        [$area, $areaCreated] = $this->resolveArea($page, (string) ($pageSpec['areaRelation'] ?? 'ElementalArea'));
+        //
+        // The MCP tool schema documents `areaRelation` as a top-level
+        // request key (sibling to `page`/`elements`/`publish`), but this
+        // service only ever read it from inside `page` — a request built
+        // against the documented (top-level) shape silently composed
+        // against the DEFAULT area instead of the one actually requested,
+        // with nothing in the response to say the two differed. Confirmed
+        // live on a HomePage-style class with both a generic `ElementalArea`
+        // and its real `ElementalHomePage` relation: the write landed in
+        // the unused area, `prune` then happily pruned it, and the page's
+        // real content never changed (#192). Both locations are accepted
+        // now; `page.areaRelation` wins if both are given (it's the shape
+        // the backend has always actually read), and a mismatch is
+        // reported as a warning rather than resolved silently.
+        $topLevelAreaRelation = isset($payload['areaRelation']) ? (string) $payload['areaRelation'] : null;
+        $nestedAreaRelation = isset($pageSpec['areaRelation']) ? (string) $pageSpec['areaRelation'] : null;
+        $areaRelation = $nestedAreaRelation ?? $topLevelAreaRelation ?? 'ElementalArea';
+
+        if (
+            $topLevelAreaRelation !== null
+            && $nestedAreaRelation !== null
+            && $topLevelAreaRelation !== $nestedAreaRelation
+        ) {
+            $pageWarnings[] = [
+                'code' => ErrorCode::PAYLOAD_INVALID->value,
+                'message' => sprintf(
+                    'Both top-level "areaRelation" ("%s") and "page.areaRelation" ("%s") were given — '
+                        . '"page.areaRelation" was used.',
+                    $topLevelAreaRelation,
+                    $nestedAreaRelation
+                ),
+                'field' => 'areaRelation',
+            ];
+        }
+
+        [$area, $areaCreated] = $this->resolveArea($page, $areaRelation);
         $elementsRelation = (string) ($pageSpec['elementsRelation'] ?? 'Elements');
 
         // 3. Assets

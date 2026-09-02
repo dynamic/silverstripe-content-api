@@ -10,6 +10,7 @@ use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\FieldType\DBEnum;
 
 /**
  * Applies a sparse write payload to a record: only keys present in the
@@ -229,6 +230,43 @@ class WriteApplicator
                 continue;
             }
 
+            // A DBEnum field accepts any string SilverStripe's own ORM would
+            // — including one outside the declared value list — because
+            // DBEnum::setValue() never validates; only the DB column's own
+            // ENUM constraint would eventually reject it, and MySQL doesn't
+            // reject an out-of-list ENUM value either, it silently coerces
+            // it to the empty string. A client sending the wrong case
+            // (`"Image"` instead of the schema's own `"image"`) got a 200
+            // and a permanently unrendered field with no signal anything
+            // was wrong — confirmed live (46 elements, essentials
+            // project). `SchemaService` already advertises the real value
+            // list via the same `enumValues()` call; this is the write-side
+            // half of the same contract. Skipped for a relation column (has
+            // no dbObject of its own) and for a null/empty value (clearing
+            // the field is always allowed, same as any other nullable
+            // column).
+            if ($relationName === null && $isDbField && $value !== null && $value !== '') {
+                $dbObject = $record->dbObject($columnName);
+
+                if ($dbObject instanceof DBEnum) {
+                    $enumValues = $dbObject->enumValues();
+
+                    if (!in_array((string) $value, $enumValues, true)) {
+                        $problems[] = [
+                            'field' => $name,
+                            'code' => ErrorCode::INVALID_VALUE->value,
+                            'message' => sprintf(
+                                'Field "%s" must be one of: %s. Got "%s".',
+                                $name,
+                                implode(', ', $enumValues),
+                                (string) $value
+                            ),
+                        ];
+                        continue;
+                    }
+                }
+            }
+
             $plan[] = [$name, $columnName, $relationName, $value];
         }
 
@@ -283,6 +321,40 @@ class WriteApplicator
     }
 
     /**
+     * Validates every key/spec in a `relations` payload (has_many /
+     * many_many only) without applying anything — safe, and intended, to
+     * call before the record itself has been written.
+     *
+     * `RecordWriter::write()` calls this ahead of `$record->write()`
+     * specifically so a has_one relation named under `relations` — a
+     * natural mistake, since "Parent" reads like a relation to a caller,
+     * but this module's `relations` payload is has_many/many_many only; a
+     * has_one belongs under `fields` — is rejected with an actionable
+     * message instead of being silently dropped while the record's own
+     * validation then fails on the FK it never received, for an unrelated-
+     * looking reason (confirmed live: a `BlogPost` create with
+     * `relations: {"Parent": 74}` 422'd "not allowed on the root level"
+     * with no indication `Parent` itself was the problem — #191).
+     * `applyRelations()` calls this at its own entry too, so it stays safe
+     * for any other caller.
+     *
+     * @param array<string, mixed> $relations
+     * @throws ApiError
+     */
+    public function assertRelationsValid(DataObject $record, array $relations): void
+    {
+        $className = get_class($record);
+        $hasOne = (array) $record->hasOne();
+        $hasMany = (array) $record->hasMany();
+        $manyMany = (array) $record->manyMany();
+        $writable = (array) Config::inst()->get($className, 'api_writable_relations');
+
+        foreach ($relations as $name => $spec) {
+            $this->validateRelationSpec($className, (string) $name, $spec, $hasOne, $hasMany, $manyMany, $writable);
+        }
+    }
+
+    /**
      * Apply `relations` payload (has_many / many_many) to a saved record.
      *
      * Payload per relation: `{ "mode": "set|add|remove", "items": [ ... ] }`
@@ -295,66 +367,24 @@ class WriteApplicator
     public function applyRelations(DataObject $record, array $relations): void
     {
         $className = get_class($record);
+        $hasOne = (array) $record->hasOne();
         $hasMany = (array) $record->hasMany();
         $manyMany = (array) $record->manyMany();
         $writable = (array) Config::inst()->get($className, 'api_writable_relations');
 
         foreach ($relations as $name => $spec) {
-            $relationClass = null;
-
-            if (isset($hasMany[$name])) {
-                $relationClass = $hasMany[$name];
-            } elseif (isset($manyMany[$name])) {
-                $classes = $manyMany[$name];
-
-                // A many_many through spec's 'to' is the *name* of a
-                // has_one on the join class, not a class name (framework
-                // DataObjectSchema::parseManyManyComponent()) — resolve the
-                // actual target class via the schema helper rather than
-                // reading ['to'] as if it were one.
-                $relationClass = is_array($classes)
-                    ? (DataObject::getSchema()->manyManyComponent($className, $name)['childClass'] ?? null)
-                    : $classes;
-            }
-
-            if (!$relationClass) {
-                throw new ApiError(
-                    ErrorCode::UNKNOWN_RELATION,
-                    sprintf('Unknown relation "%s" on %s.', $name, $className)
-                );
-            }
-
-            if (!in_array($name, $writable, true)) {
-                throw new ApiError(
-                    ErrorCode::READONLY_FIELD,
-                    sprintf(
-                        'Relation "%s" is not writable — add it to %s.api_writable_relations.',
-                        $name,
-                        $className
-                    )
-                );
-            }
-
-            if (!is_array($spec) || !isset($spec['mode'])) {
-                throw new ApiError(
-                    ErrorCode::PAYLOAD_INVALID,
-                    sprintf('Relation "%s" requires {"mode": "set|add|remove", "items": [...]}.', $name)
-                );
-            }
-
+            $name = (string) $name;
+            $relationClass = $this->validateRelationSpec(
+                $className,
+                $name,
+                $spec,
+                $hasOne,
+                $hasMany,
+                $manyMany,
+                $writable
+            );
             $mode = (string) $spec['mode'];
             $items = (array) ($spec['items'] ?? []);
-
-            if (!in_array($mode, ['set', 'add', 'remove'], true)) {
-                throw new ApiError(
-                    ErrorCode::PAYLOAD_INVALID,
-                    sprintf('Relation mode "%s" must be set, add or remove.', $mode)
-                );
-            }
-
-            // Strip the relation-class suffix from dot notation (has_many keys
-            // may be Class.FKField).
-            $relationClass = strtok($relationClass, '.');
 
             $list = $record->{$name}();
 
@@ -372,6 +402,97 @@ class WriteApplicator
                 }
             }
         }
+    }
+
+    /**
+     * Shared validation for a single `relations` entry — everything
+     * `applyRelations()` and `assertRelationsValid()` both need to decide
+     * before an item is ever resolved. Returns the relation's target class
+     * (dot-notation suffix already stripped) for the caller that goes on to
+     * apply it; the validate-only caller just discards it.
+     *
+     * @throws ApiError
+     */
+    private function validateRelationSpec(
+        string $className,
+        string $name,
+        mixed $spec,
+        array $hasOne,
+        array $hasMany,
+        array $manyMany,
+        array $writable
+    ): string {
+        // A has_one name (or its own FK-suffixed key) under `relations` is
+        // always a client mistake — has_one FKs are written via `fields`,
+        // never `relations` — and must be rejected here, before the caller
+        // ever reaches `$record->write()`, or the has_one silently stays
+        // untouched while an unrelated-looking validation error (or none at
+        // all) follows.
+        if (isset($hasOne[$name]) || (str_ends_with($name, 'ID') && isset($hasOne[substr($name, 0, -2)]))) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf(
+                    '"%s" is a has_one relation on %s — pass it under "fields", not "relations".',
+                    $name,
+                    $className
+                )
+            );
+        }
+
+        $relationClass = null;
+
+        if (isset($hasMany[$name])) {
+            $relationClass = $hasMany[$name];
+        } elseif (isset($manyMany[$name])) {
+            $classes = $manyMany[$name];
+
+            // A many_many through spec's 'to' is the *name* of a has_one on
+            // the join class, not a class name (framework
+            // DataObjectSchema::parseManyManyComponent()) — resolve the
+            // actual target class via the schema helper rather than reading
+            // ['to'] as if it were one.
+            $relationClass = is_array($classes)
+                ? (DataObject::getSchema()->manyManyComponent($className, $name)['childClass'] ?? null)
+                : $classes;
+        }
+
+        if (!$relationClass) {
+            throw new ApiError(
+                ErrorCode::UNKNOWN_RELATION,
+                sprintf('Unknown relation "%s" on %s.', $name, $className)
+            );
+        }
+
+        if (!in_array($name, $writable, true)) {
+            throw new ApiError(
+                ErrorCode::READONLY_FIELD,
+                sprintf(
+                    'Relation "%s" is not writable — add it to %s.api_writable_relations.',
+                    $name,
+                    $className
+                )
+            );
+        }
+
+        if (!is_array($spec) || !isset($spec['mode'])) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('Relation "%s" requires {"mode": "set|add|remove", "items": [...]}.', $name)
+            );
+        }
+
+        $mode = (string) $spec['mode'];
+
+        if (!in_array($mode, ['set', 'add', 'remove'], true)) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('Relation mode "%s" must be set, add or remove.', $mode)
+            );
+        }
+
+        // Strip the relation-class suffix from dot notation (has_many keys
+        // may be Class.FKField).
+        return strtok((string) $relationClass, '.');
     }
 
     /**

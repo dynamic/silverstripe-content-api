@@ -175,6 +175,91 @@ class CompositionTest extends ContentApiTestCase
         $this->assertTrue($fresh->isPublished());
     }
 
+    /**
+     * #192: `areaRelation` at the request's top level (the shape the MCP
+     * tool schema itself documents) used to be silently ignored —
+     * `compose()` only ever read it from `page.areaRelation`, so a
+     * top-level request composed against the DEFAULT `ElementalArea`
+     * instead of the area actually requested, with no error and no
+     * warning. Proven against real DB state, on a page with two distinct
+     * ElementalArea-typed has_ones (the exact shape that surfaced this
+     * live: a HomePage-style class with both a generic default area and
+     * its real, differently-named one) — the element must land in
+     * `SecondaryArea`, not `ElementalArea`.
+     */
+    public function testTopLevelAreaRelationIsHonoredNotSilentlyIgnored(): void
+    {
+        $page = $this->blockPage();
+
+        $payload = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'areaRelation' => 'SecondaryArea',
+            'publish' => 'none',
+            'elements' => [
+                ['class' => 'ElementContent', 'externalId' => 'top-level-area-e1', 'fields' => ['Title' => 'X']],
+            ],
+        ];
+
+        $body = $this->decode($this->apiPost('compositions/page', $payload, $this->adminToken));
+
+        $this->assertNull($body['error'], (string) json_encode($body));
+
+        $fresh = ApiTestBlockPage::get()->byID($page->ID);
+        $this->assertGreaterThan(0, (int) $fresh->SecondaryAreaID, 'SecondaryArea must have been created/attached');
+        $this->assertSame(
+            (int) $fresh->SecondaryAreaID,
+            (int) $body['data']['area']['id'],
+            'the composed area must be the one requested via top-level areaRelation'
+        );
+
+        $element = ElementContent::get()->byID($body['data']['elements'][0]['id']);
+        $this->assertSame(
+            (int) $fresh->SecondaryAreaID,
+            (int) $element->ParentID,
+            'the element must be attached to SecondaryArea, not the default ElementalArea'
+        );
+        $this->assertNotSame(
+            (int) $fresh->ElementalAreaID,
+            (int) $element->ParentID,
+            'must not have silently landed in the default area instead'
+        );
+    }
+
+    /**
+     * When both locations disagree, `page.areaRelation` wins (it is the
+     * shape the backend has always actually read) — but the disagreement
+     * itself must be visible in the response, not resolved silently.
+     */
+    public function testConflictingAreaRelationValuesAreReportedAsAWarning(): void
+    {
+        $page = $this->blockPage();
+
+        $payload = [
+            'page' => [
+                'match' => ['id' => (int) $page->ID],
+                'areaRelation' => 'SecondaryArea',
+            ],
+            'areaRelation' => 'ElementalArea',
+            'publish' => 'none',
+            'elements' => [],
+        ];
+
+        $body = $this->decode($this->apiPost('compositions/page', $payload, $this->adminToken));
+
+        $this->assertNull($body['error']);
+
+        $fresh = ApiTestBlockPage::get()->byID($page->ID);
+        $this->assertSame(
+            (int) $fresh->SecondaryAreaID,
+            (int) $body['data']['area']['id'],
+            'page.areaRelation wins on conflict'
+        );
+
+        $warnings = $body['data']['page']['warnings'] ?? [];
+        $this->assertNotEmpty($warnings, 'the conflict must be surfaced, not resolved silently');
+        $this->assertSame('areaRelation', $warnings[0]['field']);
+    }
+
     public function testCompositionIsIdempotent(): void
     {
         $page = $this->blockPage();
@@ -843,6 +928,42 @@ class CompositionTest extends ContentApiTestCase
             $body['error']['message']
         );
         $this->assertSame('LinkText', $body['error']['details'][0]['field']);
+    }
+
+    /**
+     * #195: a link payload key not in LinkTransformer's FIELD_MAP used to
+     * be silently ignored (`fileID`/`file`/`target` instead of the real
+     * key `fileId`, for example) — the link record was still created, just
+     * empty, with a 200 response and nothing to say the key never matched
+     * anything. Proven against real DB state, not just the error code: no
+     * link record must be left behind by the rejected write.
+     */
+    public function testLinkPayloadWithAnUnknownKeyIsRejectedNotSilentlyDropped(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'unknown-link-key-owner',
+                    'fields' => [
+                        'Title' => 'Owner',
+                        // "urll" is a plausible typo for the real key "url"
+                        // — FIELD_MAP has no entry for it, so this used to
+                        // write an ExternalLink with no ExternalUrl at all.
+                        'Cta' => ['type' => 'ExternalLink', 'urll' => '/contact'],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'UNKNOWN_FIELD', 422);
+        $this->assertStringContainsString('urll', $body['error']['message']);
+
+        $owner = ApiTestElement::get()->filter('FixtureIdentifier', 'unknown-link-key-owner')->first();
+        $this->assertNull($owner, 'the whole composition must have rolled back, not just the link');
     }
 
     /**

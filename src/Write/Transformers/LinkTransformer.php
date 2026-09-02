@@ -107,6 +107,26 @@ class LinkTransformer implements ValueTransformer
             $link = Injector::inst()->create($linkClass);
         }
 
+        // Any payload key other than "type" and FIELD_MAP's own keys used
+        // to be silently ignored below — a caller sending "fileID"/"file"/
+        // "target" instead of the real key "fileId" got a 200 and an empty
+        // link record, with nothing in the response to say the key never
+        // matched anything (confirmed live — #195). Reject unrecognized
+        // keys instead of dropping them.
+        $unknown = array_diff(array_keys($value), ['type'], array_keys(LinkTransformer::FIELD_MAP));
+
+        if ($unknown !== []) {
+            throw new ApiError(
+                ErrorCode::UNKNOWN_FIELD,
+                sprintf(
+                    'Unknown link field(s) for "%s": %s. Valid keys: type, %s.',
+                    $fieldName,
+                    implode(', ', $unknown),
+                    implode(', ', array_keys(LinkTransformer::FIELD_MAP))
+                )
+            );
+        }
+
         foreach (LinkTransformer::FIELD_MAP as $payloadKey => $linkField) {
             if (array_key_exists($payloadKey, $value)) {
                 $link->setCastedField($linkField, $value[$payloadKey]);
