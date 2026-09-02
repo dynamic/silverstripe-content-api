@@ -5,6 +5,29 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#198)** A write to a `Versioned` class whose `api_access`/`content_api_access` grants
+  `create`/`update` but not the bare `action` token now carries an `ACTION_VERB_MISSING` warning
+  in the response — that combination reads as full CRUD but has no way to ever publish, leaving
+  writes permanently draft-only with previously nothing anywhere saying so. Confirmed on two real
+  projects. A non-versioned class, or a class already granting `action`, is unaffected. Landed on
+  branch `1` first (1.14.0), merged up here.
+- **(#197)** `CheckGrantExtensionReachabilityTask` gained a second diagnostic,
+  `GrantExtensionReachabilityChecker::checkMissingGrantExtension()`: flags any class declaring its
+  own `api_access`/`api_writable_fields` that carries no `ContentApiGrantExtension` anywhere in its
+  hierarchy at all — the existing check only ever examined a class that already had the extension
+  applied. Confirmed on two real projects (classes extending a plain `DataObject` ancestor rather
+  than `SiteTree`/`BaseElement`). Landed on branch `1` first (1.14.0), merged up here.
+
+### Changed
+- **(#199)** Documented that `EnvironmentGate::population_enabled_environments` (and any other
+  array-typed security-gating config this module exposes) cannot be narrowed by a project's own
+  YAML override, due to SilverStripe's additive array-config merge — only `Config::modify()->set()`
+  in `_config.php` actually restricts it. Landed on branch `1` first (1.14.0), merged up here.
+- **(#193)** Added a companion "published tags are immutable" note to
+  `docs/en/15_testing-and-contributing.md`, cross-linking the tag-recovery steps this branch
+  already carries from PR #194. Landed on branch `1` first (1.14.0), merged up here.
+
 ## [2.7.0] - 2026-09-02
 
 ### Fixed

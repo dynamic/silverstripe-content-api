@@ -70,11 +70,14 @@ PR — nothing else will catch a regression for you.
 | `Control/WriteGuardPolymorphicTest.php` | Polymorphic `{"class","id"}` payload + `{Name}Class` translation on the colymba surface |
 | `Control/WriteGuardEncodeFailureTest.php` | `json_encode` failure path in the guard's re-encode step |
 | `Errors/ApiErrorTest.php` | `fromValidation()` maps structured messages, never a raw exception string |
+| `Errors/ErrorCodeTest.php` | Every `ErrorCode` case maps to a valid HTTP status — guards the exhaustive `httpStatus()` match against an unmapped new case |
 | `Registry/ClassRegistryTest.php` | `accessVerbs()`/`ownAccessVerbs()` inherited-vs-uninherited resolution, discovery (`discovery_roots`/`discovery_write_policy`/`discovery_exclude`), mandatory denylist, manual-model precedence |
 | `Security/ContentApiGrantExtensionTest.php` | `ContentApiGrantExtension`: escalation regression (a declared class's verbs must not leak to an undeclared subclass), per-verb scoping, the never-`false` guard, `VIEW_DRAFT_CONTENT`/`Versioned::canDelete()` interactions, `BaseElement::canCreate()` non-delegation |
 | `Security/PermissionPolicyTest.php` | `buildCreateContext()` has_one hydration, incl. trusted-field-only relations |
+| `Tasks/Support/GrantExtensionReachabilityCheckerTest.php` | `check()`: unreachable `extendedCan()` detection (#103); `checkMissingGrantExtension()`: classes with declared write access but no `ContentApiGrantExtension` anywhere in their hierarchy (#197) |
+| `Tasks/CheckGrantExtensionReachabilityTaskTest.php` | Adapter-only: both diagnostics' findings render via `PolyOutput` in the expected shape, and the exit-code mapping |
 | `Write/WriteApplicatorTest.php` | Trusted channel setting a polymorphic Class column directly |
-| `Write/RecordWriterTest.php` | `write()`'s rollback pre-image capture: plain/has_one/composite/polymorphic-has_one field resolution |
+| `Write/RecordWriterTest.php` | `write()`'s rollback pre-image capture: plain/has_one/composite/polymorphic-has_one field resolution; the `ACTION_VERB_MISSING` warning for a write-granted class missing the `action` verb (#198) |
 | `Verify/OwnedTreeWalkerTest.php` | `$owns` tree walking: has_many/has_one branches, cycle guard, depth cap, diamond ownership resolved to shallowest depth, unversioned intermediates walked through (not pruned), misconfigured-relation logging |
 | `ContentApiTestCase.php` + `Stub/*.php` | Shared fixture/registry/token plumbing and test DataObjects |
 
@@ -92,6 +95,17 @@ PR — nothing else will catch a regression for you.
 - The DDEV config manifest cache lives at `/tmp/silverstripe-cache-<hash>` **inside the web
   container**, not a project-relative path — clear it after editing any `_config/*.yml` before a
   CLI `phpunit`/`sake` run picks up the change.
+
+- **A published release tag is immutable — never re-cut a tag that's already gone out.** `git
+  fetch --tags` (which `composer update` runs internally, without `--force`) refuses to move a
+  tag it already has locally, so re-pointing a published tag breaks `composer update` for every
+  existing source install of that release with a hard `! [rejected] ... (would clobber existing
+  tag)` — and it's not just a fetch error: the release number now silently refers to a different
+  commit for anyone who already has the old one cached. Confirmed live after the 2026-08-07
+  branch-1/branch-2 split re-cut the shared `1.x` tag history — see
+  [Installation](00_installation.md#recovering-a-source-install-from-before-2026-08-07) for the
+  recovery steps a project stuck on the stale tag needs (#193). If a tag genuinely needs to be
+  redone, cut a new patch version instead of moving the old one.
 
 - **A test touching a real framework class (not an `ApiTest*` stub) inherits the host project's
   own exposure config, not a clean slate.** `ContentApiTestCase::setUp()` already grants

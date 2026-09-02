@@ -348,6 +348,36 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * #198, end-to-end: `RecordWriterTest` proves the warning at the
+     * `RecordWriter::write()` return-array level; this proves it actually
+     * survives `BatchProcessor`'s per-operation response hoisting and
+     * reaches the wire — unlike the `defaultPublish` test above, this op
+     * carries no "publish" key at all, so it's the plain success path
+     * (200, `created`) that must still carry the warning.
+     */
+    public function testCreateWarnsWhenWriteAccessIsGrantedWithoutTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,create,update');
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestVersioned',
+                    'externalId' => 'b-action-verb-missing',
+                    'fields' => ['Title' => 'Batch Draft Forever'],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertSame('created', $body['data']['results'][0]['status']);
+
+        $codes = array_column($body['data']['results'][0]['warnings'] ?? [], 'code');
+        $this->assertContains('ACTION_VERB_MISSING', $codes);
+    }
+
+    /**
      * Write-pipeline coverage absorbed from the removed HTTP CRUD endpoints —
      * batch ops run the same RecordWriter/WriteApplicator path.
      */

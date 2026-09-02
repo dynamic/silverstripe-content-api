@@ -299,4 +299,135 @@ class RecordWriterTest extends ContentApiTestCase
 
         $this->assertSame('Still not versioned', $result['record']->Title);
     }
+
+    /**
+     * #198: `api_access: 'GET,POST,PUT'` (no bare `action` token) reads as
+     * full CRUD but grants no way to ever publish — confirmed on two real
+     * projects where content stayed permanently draft-only for this exact
+     * reason, with no error or warning anywhere saying so. A write to such
+     * a class must now surface an ACTION_VERB_MISSING warning. Asserts the
+     * full warning shape (code/field), not just that the code appears
+     * somewhere — matches this codebase's own convention for the same
+     * `warnings[]` structure elsewhere (CompositionTest's areaRelation
+     * warning assertion) — and that it fires exactly once, not once per
+     * some internal loop.
+     */
+    public function testWriteWarnsWhenWriteAccessIsGrantedWithoutTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,create,update');
+
+        $record = ApiTestVersionedObject::create(['Title' => 'Draft forever']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Still draft forever']],
+            $this->member()
+        );
+
+        $matches = array_values(array_filter(
+            $result['warnings'],
+            fn (array $warning): bool => $warning['code'] === 'ACTION_VERB_MISSING'
+        ));
+
+        $this->assertCount(
+            1,
+            $matches,
+            'a write to a class granting create/update but not action must warn exactly once ' .
+                'that it can never publish'
+        );
+        $this->assertSame('api_access', $matches[0]['field']);
+        $this->assertStringContainsString('"action"', $matches[0]['message']);
+    }
+
+    /**
+     * Same shape as above, but granting only `create` (no `update`) — the
+     * warning condition is `create OR update`, and this proves the
+     * `create`-alone branch independently rather than only ever exercising
+     * both together. `update()`'s own checkClassAccess() requires `update`
+     * to even be entered, so this branch can only be reached via
+     * `upsert()`'s create mode — which in turn needs an admin member,
+     * since ApiTestVersionedObject declares no `canCreate()` override (it
+     * only loosens canView/canEdit) and so falls back to the framework's
+     * default ADMIN-only `canCreate()`.
+     */
+    public function testWriteWarnsWhenOnlyCreateIsGrantedWithoutTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,create');
+
+        $result = $this->writer()->upsert(
+            ApiTestVersionedObject::class,
+            ['fields' => ['Title' => 'Created without action']],
+            $this->objFromFixture(Member::class, 'adminUser'),
+            'create'
+        );
+
+        $codes = array_column($result['warnings'], 'code');
+        $this->assertContains('ACTION_VERB_MISSING', $codes);
+    }
+
+    /**
+     * Same shape again, but granting only `update` (no `create`) — the
+     * `update`-alone branch of the same `OR`.
+     */
+    public function testWriteWarnsWhenOnlyUpdateIsGrantedWithoutTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,update');
+
+        $record = ApiTestVersionedObject::create(['Title' => 'Updatable without action']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Updated again without action']],
+            $this->member()
+        );
+
+        $codes = array_column($result['warnings'], 'code');
+        $this->assertContains('ACTION_VERB_MISSING', $codes);
+    }
+
+    /**
+     * Negative control: the same class with `action` also granted (every
+     * other test in this file's default) must never carry this warning —
+     * otherwise it would fire unconditionally and the positive test above
+     * would prove nothing.
+     */
+    public function testWriteDoesNotWarnWhenTheActionVerbIsGranted(): void
+    {
+        $record = ApiTestVersionedObject::create(['Title' => 'Can publish fine']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Still can publish fine']],
+            $this->member()
+        );
+
+        $codes = array_column($result['warnings'], 'code');
+        $this->assertNotContains('ACTION_VERB_MISSING', $codes);
+    }
+
+    /**
+     * A non-versioned class can never be published regardless of its
+     * declared verbs — PublishOrchestrator::publish() is already a no-op
+     * for it — so warning here would be noise about a class that was
+     * never going to publish through the payload's "publish" key anyway.
+     */
+    public function testWriteDoesNotWarnOnANonVersionedClassEvenWithoutTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_access', 'read,create,update');
+
+        $record = ApiTestObject::create(['Title' => 'Not versioned, no action needed']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Still not versioned']],
+            $this->member()
+        );
+
+        $codes = array_column($result['warnings'], 'code');
+        $this->assertNotContains('ACTION_VERB_MISSING', $codes);
+    }
 }
