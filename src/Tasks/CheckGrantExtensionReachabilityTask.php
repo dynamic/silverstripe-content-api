@@ -33,46 +33,80 @@ class CheckGrantExtensionReachabilityTask extends BuildTask
 
     protected static string $description = 'Flags any class carrying ContentApiGrantExtension whose own '
         . 'can*() method (for a verb the class itself declares) never calls extendedCan() — '
-        . 'the grant is silently unreachable there, per #103. Heuristic, not a proof: see '
+        . 'the grant is silently unreachable there, per #103. Also flags any class configured '
+        . 'with write access that carries no ContentApiGrantExtension anywhere in its '
+        . 'hierarchy at all, per #197. Heuristic, not a proof: see '
         . 'GrantExtensionReachabilityChecker\'s own docblock for what it can and can\'t catch.';
 
     protected function execute(InputInterface $input, PolyOutput $output): int
     {
-        $findings = GrantExtensionReachabilityChecker::create()->check();
+        $checker = GrantExtensionReachabilityChecker::create();
+        $unreachable = $checker->check();
+        $missing = $checker->checkMissingGrantExtension();
 
-        if ($findings === []) {
-            $output->writeln('No unreachable grants found.');
+        if ($unreachable === [] && $missing === []) {
+            $output->writeln('No unreachable grants and no classes missing ContentApiGrantExtension found.');
             $output->writeln("(Heuristic check — see GrantExtensionReachabilityChecker's docblock for its limits.)");
 
             return Command::SUCCESS;
         }
 
-        $output->writeln(sprintf(
-            'Found %d class/method pair(s) where ContentApiGrantExtension',
-            count($findings)
-        ));
-        $output->writeln('is applied and would grant at least one verb, but the resolved can*() method\'s');
-        $output->writeln('source has no visible extendedCan() call:');
-        $output->writeln('');
-
-        foreach ($findings as $finding) {
-            $selfDeclared = $finding['class'] === $finding['declaringClass']
-                ? ''
-                : sprintf(' (inherited from %s)', $finding['declaringClass']);
-
+        if ($unreachable !== []) {
             $output->writeln(sprintf(
-                '  %s::%s()%s — declares the "%s" verb(s)',
-                $finding['class'],
-                $finding['method'],
-                $selfDeclared,
-                implode('", "', $finding['verbs'])
+                'Found %d class/method pair(s) where ContentApiGrantExtension',
+                count($unreachable)
             ));
+            $output->writeln('is applied and would grant at least one verb, but the resolved can*() method\'s');
+            $output->writeln('source has no visible extendedCan() call:');
+            $output->writeln('');
+
+            foreach ($unreachable as $finding) {
+                $selfDeclared = $finding['class'] === $finding['declaringClass']
+                    ? ''
+                    : sprintf(' (inherited from %s)', $finding['declaringClass']);
+
+                $output->writeln(sprintf(
+                    '  %s::%s()%s — declares the "%s" verb(s)',
+                    $finding['class'],
+                    $finding['method'],
+                    $selfDeclared,
+                    implode('", "', $finding['verbs'])
+                ));
+            }
+
+            $output->writeln('');
+            $output->writeln("Each of these classes' own can*() override needs to call extendedCan() first (the");
+            $output->writeln("same pattern SiteTree's own can*() methods follow) for ContentApiGrantExtension to");
+            $output->writeln('have any effect — see docs/en/04_security-model.md#grant-extension.');
         }
 
-        $output->writeln('');
-        $output->writeln("Each of these classes' own can*() override needs to call extendedCan() first (the");
-        $output->writeln("same pattern SiteTree's own can*() methods follow) for ContentApiGrantExtension to");
-        $output->writeln('have any effect — see docs/en/04_security-model.md#grant-extension.');
+        if ($missing !== []) {
+            if ($unreachable !== []) {
+                $output->writeln('');
+            }
+
+            $output->writeln('Found ' . count($missing) . ' class(es) declaring their own write access (create/');
+            $output->writeln('update/delete/action) with no ContentApiGrantExtension anywhere in their');
+            $output->writeln('hierarchy — every write to these classes either 403s unexpectedly or succeeds');
+            $output->writeln('only via an unrelated inherited permission (#197):');
+            $output->writeln('');
+
+            foreach ($missing as $finding) {
+                $verbs = $finding['verbs'] !== [] ? implode('", "', $finding['verbs']) : '(none)';
+                $fields = $finding['writableFields'] !== [] ? implode('", "', $finding['writableFields']) : '(none)';
+
+                $output->writeln(sprintf(
+                    '  %s — verbs: "%s"; api_writable_fields: "%s"',
+                    $finding['class'],
+                    $verbs,
+                    $fields
+                ));
+            }
+
+            $output->writeln('');
+            $output->writeln('Add ContentApiGrantExtension to each of these classes (or a common ancestor) —');
+            $output->writeln('see docs/en/02_configuration.md#contentapigrantextension.');
+        }
 
         return Command::SUCCESS;
     }
