@@ -5,6 +5,8 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-09-02
+
 ### Fixed
 - **(#201)** A composition's `page.match.id` resolving to the wrong page used to silently
   reparent every element in the payload whose `externalId` already existed anywhere on the
@@ -1081,6 +1083,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[2.7.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.6.0...2.7.0
 [2.6.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.5.0...2.6.0
 [2.5.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.4.0...2.5.0
 [2.4.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.3.0...2.4.0
