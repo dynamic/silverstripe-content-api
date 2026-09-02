@@ -116,6 +116,40 @@ module default, use `Config::modify()->set(EnvironmentGate::class, 'population_e
 in `_config.php` — a hard set, not a YAML merge. Applies to any array-typed config knob this module
 exposes for security-relevant gating, not just this one.
 
+## RequestLogger
+
+`Dynamic\ContentApi\Logging\RequestLogger`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled_environments` | `[]` | Environments where an opt-in structured server-side request log is emitted (#207) |
+
+Off everywhere by default — this is a write-heavy content API on client sites, and logging every
+request isn't a tax any project asked for. One `info`-level entry per `content-api/v1` request
+(both success and error responses), covering the endpoint, HTTP method, `ClassRef`/action route
+params, HTTP status, machine-readable error code (if any), duration, response byte size, and the
+authenticated member's ID (never email — see [Security model](04_security-model.md)).
+
+Env override: `SS_CONTENT_API_REQUEST_LOG=1` forces logging on regardless of
+`enabled_environments`, the same `FILTER_VALIDATE_BOOLEAN` parsing as `EnvironmentGate` above.
+**This override is force-ON only — there is no force-OFF direction.** `Environment::getEnv()`
+returns PHP `false` both when a var was never set and when it was explicitly set to a value that
+parses falsy, so a bidirectional override can't reliably tell "unset" apart from "explicitly
+forced off" — the var would look identical either way. Turning logging off in an environment
+`enabled_environments` already lists is a config change, not an env var: per the #199 note above,
+use `Config::modify()->set(RequestLogger::class, 'enabled_environments', [...])` in `_config.php`
+to narrow it — a project's own YAML override can only widen this array, never narrow it.
+
+Only covers this module's own `content-api/v1` controller. Colymba's generic `/api` CRUD surface
+is a separate controller this module doesn't own, and a `content-api/v1` URL matching no declared
+route is rejected before the logging hook ever runs — neither is logged. See
+[Architecture](14_architecture.md#request-lifecycle).
+
+A `POST batch` request with per-operation failures still returns HTTP 200 (see
+[Batch operations](07_batch-operations.md)) — the log's `opFailures` field surfaces that count
+separately from the HTTP status, so a partially-failed batch doesn't read as a clean success in
+the log the way it does on the wire.
+
 ## WriteApplicator
 
 `Dynamic\ContentApi\Write\WriteApplicator`

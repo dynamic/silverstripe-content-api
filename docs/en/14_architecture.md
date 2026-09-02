@@ -34,7 +34,13 @@ Each route maps to one handler method (`$url_handlers` in `ContentApiController`
 
 `withEnvelope()` catches `ApiError` (converted to the structured error envelope at its declared
 HTTP status) and any other `Throwable` (logged, then surfaced as `SERVER_ERROR` — full exception
-class+message in dev/test, an opaque message in production).
+class+message in dev/test, an opaque message in production). It's also the single choke point
+`RequestLogger` (#207) hooks — see [Configuration](02_configuration.md#requestlogger) — since it's
+the only place in the module that sees both a 2xx and an error response, with the resolved
+`ApiError`/`AuthContext` still in scope. Two things this hook does **not** see: colymba's generic
+`/api` CRUD surface (a separate controller this module doesn't own — it only hardens its config
+via `WriteGuardExtension`), and a `content-api/v1` URL matching no `$url_handlers` route, which is
+rejected upstream of `withEnvelope()` entirely.
 
 ## Service map
 

@@ -359,6 +359,16 @@ require `EnvironmentGate::checkPopulationAllowed()` to pass:
   [Configuration](02_configuration.md#environmentgate) for the `Config::modify()->set()` fix
   (#199).
 
+## Request logging
+
+An opt-in, off-by-default structured server-side request log (`RequestLogger`, #207) — see
+[Configuration](02_configuration.md#requestlogger) for the config knobs. Deliberately minimal
+about what it records: the authenticated caller is logged as a **member ID, never an email or
+name** — this log may run on client production sites, and it's off by default specifically so a
+project can opt in to request visibility without also opting into PII capture it didn't ask for.
+No request or response body is ever logged, only shape (endpoint, class/action, status, byte
+count, duration).
+
 ## Composition child ACL and identity scoping
 
 A page composition's `children` (has_many, e.g. `Panels` under an element) are not exempted by

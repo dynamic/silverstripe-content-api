@@ -16,6 +16,7 @@ use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
 use Dynamic\ContentApi\Control\Handlers\SchemaHandler;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Logging\RequestLogger;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
@@ -90,6 +91,7 @@ class ContentApiController extends Controller
         'compositionHandler' => '%$' . CompositionHandler::class,
         'schemaHandler' => '%$' . SchemaHandler::class,
         'fingerprintHandler' => '%$' . FingerprintHandler::class,
+        'requestLogger' => '%$' . RequestLogger::class,
     ];
 
     public ?ColymbaTokenAuthenticator $authenticator = null;
@@ -113,6 +115,8 @@ class ContentApiController extends Controller
     public ?SchemaHandler $schemaHandler = null;
 
     public ?FingerprintHandler $fingerprintHandler = null;
+
+    public ?RequestLogger $requestLogger = null;
 
     protected ?AuthContext $authContext = null;
 
@@ -347,6 +351,9 @@ class ContentApiController extends Controller
     protected function withEnvelope(callable $endpoint): HTTPResponse
     {
         $bufferLevel = ob_get_level();
+        $startTime = microtime(true);
+        $result = null;
+        $errorCode = null;
         ob_start();
 
         try {
@@ -358,6 +365,7 @@ class ContentApiController extends Controller
                 $result['status'] ?? 200
             );
         } catch (ApiError $error) {
+            $errorCode = $error->getErrorCode();
             $response = $this->errorResponse($error);
         } catch (Throwable $exception) {
             Injector::inst()->get(LoggerInterface::class)->error(
@@ -371,6 +379,7 @@ class ContentApiController extends Controller
                 ? sprintf('%s: %s', get_class($exception), $exception->getMessage())
                 : 'Internal server error.';
 
+            $errorCode = ErrorCode::SERVER_ERROR;
             $response = $this->errorResponse(new ApiError(ErrorCode::SERVER_ERROR, $message));
         } finally {
             // If application code inside $endpoint() closed this method's
@@ -412,6 +421,26 @@ class ContentApiController extends Controller
                 ['strayOutput' => substr($strayOutput, 0, 4000)]
             );
         }
+
+        // #207: opFailures surfaces `POST batch`'s per-operation error
+        // count even though a partially-failed batch still returns HTTP
+        // 200 — see BatchProcessor::run()'s $summary. A log keyed only on
+        // HTTP status would record that case as a clean success.
+        $opFailures = $result['data']['summary']['errors'] ?? null;
+
+        $request = $this->getRequest();
+
+        $this->requestLogger->log($request, $response, $this->authContext?->member, [
+            'endpoint' => $this->getAction(),
+            'method' => $request->httpMethod(),
+            'classRef' => $request->param('ClassRef'),
+            'action' => $request->param('RecordAction') ?? $request->param('PageAction'),
+            'status' => $response->getStatusCode(),
+            'errorCode' => $errorCode?->value,
+            'durationMs' => round((microtime(true) - $startTime) * 1000, 2),
+            'responseBytes' => strlen((string) $response->getBody()),
+            'opFailures' => is_int($opFailures) ? $opFailures : null,
+        ]);
 
         return $response;
     }

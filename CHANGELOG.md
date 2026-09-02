@@ -5,6 +5,20 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#207)** Opt-in structured server-side request log (`Dynamic\ContentApi\Logging\RequestLogger`):
+  one `info` entry per `content-api/v1` request (endpoint, method, `ClassRef`/action, HTTP status,
+  error code, duration, response byte size, authenticated member ID). Off everywhere by default;
+  `enabled_environments` config (widen-only via project YAML, per #199) plus a force-ON-only
+  `SS_CONTENT_API_REQUEST_LOG` override. A partially-failed `POST batch` carries its `opFailures`
+  count even though the wire response is a plain 200 — a status-only log would otherwise record
+  that case as a clean success, the exact "200 but silently wrong" defect class this audit's other
+  fixes address at the code level. Colymba's generic `/api` surface and a route matching no
+  `$url_handlers` pattern are both outside this hook's coverage — see
+  docs/en/14_architecture.md#request-lifecycle. Also the missing piece for
+  `silverstripe-content-api-mcp#25`'s open success criterion (a server-side way to verify a real
+  restructure session ran through MCP tools).
+
 ## [1.14.0] - 2026-09-02
 
 ### Added
