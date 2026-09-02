@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Tasks\Support;
 use Dynamic\ContentApi\Tasks\Support\GrantExtensionReachabilityChecker;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantAbstractObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantExtraSourceObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantReachableObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableObject;
 use ReflectionMethod;
@@ -16,6 +17,7 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
         ApiTestGrantReachableObject::class,
         ApiTestGrantUnreachableObject::class,
         ApiTestGrantExtraSourceObject::class,
+        ApiTestGrantMissingExtensionObject::class,
     ];
 
     public function testFlagsAClassWhoseCanEditOverrideNeverCallsExtendedCan(): void
@@ -161,5 +163,65 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
             $strip->invoke($checker, $heredoc),
             'a mention inside a heredoc body must not survive stripping'
         );
+    }
+
+    /**
+     * #197: a class declaring write access but carrying no
+     * ContentApiGrantExtension at all is invisible to check() — it never
+     * satisfies check()'s own carriesGrantExtension() filter — so this is
+     * the sibling method's whole reason to exist.
+     */
+    public function testCheckMissingGrantExtensionFlagsAClassWithNoExtensionAtAll(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $matches = array_values(array_filter(
+            $findings,
+            fn (array $finding): bool => $finding['class'] === ApiTestGrantMissingExtensionObject::class
+        ));
+
+        $this->assertCount(
+            1,
+            $matches,
+            'a class with api_access/api_writable_fields but no ContentApiGrantExtension ' .
+                'anywhere in its hierarchy must be flagged'
+        );
+        $this->assertEqualsCanonicalizing(['read', 'create', 'update'], $matches[0]['verbs']);
+        $this->assertSame(['Title'], $matches[0]['writableFields']);
+    }
+
+    /**
+     * check() itself is blind to this class (no extension to check
+     * reachability of) — confirms the two diagnostics really are disjoint,
+     * not that checkMissingGrantExtension() duplicates check()'s job.
+     */
+    public function testCheckItselfDoesNotFlagAClassWithNoExtensionAtAll(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->check();
+
+        $matches = array_filter(
+            $findings,
+            fn (array $finding): bool => $finding['class'] === ApiTestGrantMissingExtensionObject::class
+        );
+
+        $this->assertEmpty(
+            $matches,
+            'check() has no extension to test reachability of on this class — it must not appear there'
+        );
+    }
+
+    /**
+     * Negative control: a class that legitimately carries the extension
+     * must never appear in checkMissingGrantExtension()'s results, however
+     * its own can*() methods behave — that question belongs to check().
+     */
+    public function testCheckMissingGrantExtensionDoesNotFlagAClassThatCarriesTheExtension(): void
+    {
+        $findings = GrantExtensionReachabilityChecker::create()->checkMissingGrantExtension();
+
+        $flaggedClasses = array_column($findings, 'class');
+
+        $this->assertNotContains(ApiTestGrantReachableObject::class, $flaggedClasses);
+        $this->assertNotContains(ApiTestGrantUnreachableObject::class, $flaggedClasses);
     }
 }

@@ -416,6 +416,36 @@ class RecordWriter
             ];
         }
 
+        // #198: `api_access: 'GET,POST,PUT'` reads as full CRUD but grants no
+        // way to ever publish — `action` has no HTTP method of its own
+        // (ClassRegistry::METHOD_VERB_MAP) and is only ever picked up via a
+        // literal bare token. A class with write access but no `action`
+        // leaves every write permanently draft-only with nothing in the
+        // response to say so. Flagged here, not at config-parse time, so an
+        // intentionally read/write-but-never-publish class (a legitimate
+        // config) doesn't get warned on every single write — only a class
+        // that also carries Versioned, where "can write but can never
+        // publish" is very unlikely to be intentional.
+        if ($record->hasExtension(Versioned::class)) {
+            $verbs = $this->policy->registry->accessVerbs(get_class($record));
+
+            if (
+                (in_array('create', $verbs, true) || in_array('update', $verbs, true))
+                && !in_array('action', $verbs, true)
+            ) {
+                $warnings[] = [
+                    'code' => ErrorCode::ACTION_VERB_MISSING->value,
+                    'message' => sprintf(
+                        '%s grants write access (create/update) but not "action" — this '
+                            . 'record can never be published through the content API. Add '
+                            . '"action" to its api_access config (#198).',
+                        get_class($record)
+                    ),
+                    'field' => 'api_access',
+                ];
+            }
+        }
+
         $out = [
             'record' => $record,
             'operation' => $operation,

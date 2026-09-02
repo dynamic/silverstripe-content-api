@@ -299,4 +299,76 @@ class RecordWriterTest extends ContentApiTestCase
 
         $this->assertSame('Still not versioned', $result['record']->Title);
     }
+
+    /**
+     * #198: `api_access: 'GET,POST,PUT'` (no bare `action` token) reads as
+     * full CRUD but grants no way to ever publish — confirmed on two real
+     * projects where content stayed permanently draft-only for this exact
+     * reason, with no error or warning anywhere saying so. A write to such
+     * a class must now surface an ACTION_VERB_MISSING warning.
+     */
+    public function testWriteWarnsWhenWriteAccessIsGrantedWithoutTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestVersionedObject::class, 'api_access', 'read,create,update');
+
+        $record = ApiTestVersionedObject::create(['Title' => 'Draft forever']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Still draft forever']],
+            $this->member()
+        );
+
+        $codes = array_column($result['warnings'], 'code');
+        $this->assertContains(
+            'ACTION_VERB_MISSING',
+            $codes,
+            'a write to a class granting create/update but not action must warn that it can never publish'
+        );
+    }
+
+    /**
+     * Negative control: the same class with `action` also granted (every
+     * other test in this file's default) must never carry this warning —
+     * otherwise it would fire unconditionally and the positive test above
+     * would prove nothing.
+     */
+    public function testWriteDoesNotWarnWhenTheActionVerbIsGranted(): void
+    {
+        $record = ApiTestVersionedObject::create(['Title' => 'Can publish fine']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Still can publish fine']],
+            $this->member()
+        );
+
+        $codes = array_column($result['warnings'], 'code');
+        $this->assertNotContains('ACTION_VERB_MISSING', $codes);
+    }
+
+    /**
+     * A non-versioned class can never be published regardless of its
+     * declared verbs — PublishOrchestrator::publish() is already a no-op
+     * for it — so warning here would be noise about a class that was
+     * never going to publish through the payload's "publish" key anyway.
+     */
+    public function testWriteDoesNotWarnOnANonVersionedClassEvenWithoutTheActionVerb(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_access', 'read,create,update');
+
+        $record = ApiTestObject::create(['Title' => 'Not versioned, no action needed']);
+        $record->write();
+
+        $result = $this->writer()->update(
+            $record,
+            ['fields' => ['Title' => 'Still not versioned']],
+            $this->member()
+        );
+
+        $codes = array_column($result['warnings'], 'code');
+        $this->assertNotContains('ACTION_VERB_MISSING', $codes);
+    }
 }

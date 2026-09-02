@@ -352,6 +352,12 @@ require `EnvironmentGate::checkPopulationAllowed()` to pass:
   the env var, and the configured `population_enabled_environments` (#126) — a caller already
   holding `CONTENT_API_POPULATE` (every call site checks that first) can tell this apart from an
   ACL failure without parsing message text.
+- **`population_enabled_environments` cannot be tightened via a project's own YAML config
+  document** — SilverStripe's array config merges additively, so a project's `[]` override never
+  subtracts from the module's `['dev', 'test']` default. A project relying on a narrower YAML
+  value as a deliberate second layer of defense is not actually getting one; see
+  [Configuration](02_configuration.md#environmentgate) for the `Config::modify()->set()` fix
+  (#199).
 
 ## Composition child ACL and identity scoping
 
