@@ -91,12 +91,14 @@ class AssetsTest extends ContentApiTestCase
     }
 
     /**
-     * #204: `AssetService::finalize()`'s `$file->write()` was the one write
-     * path in this module that didn't map `ValidationException` to a
-     * structured error — a disallowed extension (`File.allowed_extensions`)
-     * surfaced as an unmapped `500 SERVER_ERROR` carrying the raw exception
-     * message, instead of the `422 VALIDATION_FAILED` every other write
-     * path in this module gives for the same failure class.
+     * #204: `DBFile::setFromString()` throws `ValidationException` directly
+     * from `assertFilenameValid()` for an extension outside
+     * `File.allowed_extensions`, and `AssetService::ingest()` used to let it
+     * escape unmapped — surfacing as a `500 SERVER_ERROR` with the raw
+     * exception message instead of the `422 VALIDATION_FAILED` every other
+     * write path in this module gives. Exercises the new-record branch;
+     * `finalize()`'s `$file->write()` is never reached here because
+     * `setFromString()` validates first.
      */
     public function testUploadOfADisallowedExtensionReturnsValidationFailedNotServerError(): void
     {
