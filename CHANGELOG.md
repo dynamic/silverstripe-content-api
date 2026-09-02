@@ -5,7 +5,7 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
-## [1.14.0] - 2026-09-01
+## [1.14.0] - 2026-09-02
 
 ### Added
 - **(#198)** A write to a `Versioned` class whose `api_access`/`content_api_access` grants
@@ -1053,6 +1053,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[1.14.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.13.0...1.14.0
 [1.13.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.12.0...1.13.0
 [1.12.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.11.0...1.12.0
 [1.11.0]: https://github.com/dynamic/silverstripe-content-api/compare/1.10.0...1.11.0
