@@ -105,25 +105,40 @@ class ExposureScaffolderTest extends SapphireTest
     /**
      * The extensions block includes WriteGuardExtension, which protects
      * writes on colymba's generic /api surface — but colymba only ever
-     * routes to a class listed in its OWN, separate
-     * DefaultQueryHandler.models config; this module's ClassRegistry.models
-     * (already documented in the output) doesn't cover it. Confirmed live:
-     * a class configured everywhere else but missing this second
-     * registration has content_schema_class report a complete, writable
-     * schema while every actual /api/$Model request 404s or is silently
-     * invisible.
+     * routes to a class listed in DefaultQueryHandler.models.
+     * ClassRegistry::manualModels() merges that config as the BASE and
+     * overlays this module's own ClassRegistry.models on top, so
+     * registering ONLY under ClassRegistry.models (this generator's own
+     * earlier output, before a review corrected the framing here) resolves
+     * for this module's /content-api/v1 endpoints but leaves colymba's
+     * surface unable to route to the class at all. Confirmed live: a class
+     * configured everywhere else but missing the DefaultQueryHandler entry
+     * has content_schema_class report a complete, writable schema while
+     * every actual /api/$Model request 404s or is silently invisible.
+     *
+     * Both entries must still appear (DefaultQueryHandler covers both
+     * surfaces in one entry; ClassRegistry is the content-api-only
+     * overlay for the rarer case), with DefaultQueryHandler's the one
+     * presented first as the default choice.
      */
-    public function testDocumentsTheSeparateColymbaRegistryEntry(): void
+    public function testDocumentsBothRegistryEntriesWithDefaultQueryHandlerFirst(): void
     {
         $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
 
-        $this->assertStringContainsString(
-            'Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler:',
-            $yaml
-        );
         $this->assertMatchesRegularExpression(
             '/DefaultQueryHandler:\s*\n#\s*models:\s*\n#\s*\S+: ' . preg_quote(ApiTestElement::class, '/') . '/',
             $yaml
+        );
+        $this->assertMatchesRegularExpression(
+            '/Dynamic\\\\ContentApi\\\\Registry\\\\ClassRegistry:\s*\n#\s*models:\s*\n#\s*\S+: '
+                . preg_quote(ApiTestElement::class, '/') . '/',
+            $yaml
+        );
+        $this->assertLessThan(
+            strpos($yaml, 'Dynamic\ContentApi\Registry\ClassRegistry:'),
+            strpos($yaml, 'Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler:'),
+            'DefaultQueryHandler (covers both surfaces) should be presented before the '
+                . 'content-api-only ClassRegistry overlay, not after'
         );
     }
 

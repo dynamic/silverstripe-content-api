@@ -308,27 +308,33 @@ class ExposureScaffolder
         $lines[] = sprintf('    - %s', ExternalIdentifierExtension::class);
         $lines[] = sprintf('    - %s', ContentApiGrantExtension::class);
         $lines[] = '';
+        // ClassRegistry::manualModels() merges colymba's own
+        // DefaultQueryHandler.models as the BASE, then overlays this
+        // module's own ClassRegistry.models on top (own key wins on a
+        // collision) — see ClassRegistry's own class docblock. So
+        // registering the ref HERE, on DefaultQueryHandler, is what
+        // actually covers BOTH surfaces in one entry; a class registered
+        // ONLY under Dynamic\ContentApi\Registry\ClassRegistry.models
+        // (this file's own earlier convention, before this comment was
+        // corrected) resolves for this module's own /content-api/v1
+        // endpoints but is invisible to colymba's generic /api surface —
+        // the WriteGuardExtension block above protects writes on that
+        // surface but does nothing if colymba never routes to the class at
+        // all. Confirmed live: a class fully configured every other way
+        // but missing this entry has content_schema_class report a
+        // complete, writable schema while every actual /api/$Model request
+        // 404s or is silently invisible.
         $lines[] = sprintf('# Registry ref (only needed if %s isn\'t already covered by a', $ref);
-        $lines[] = "# discovery_roots entry, or you'd rather address it by this short name):";
-        $lines[] = '# Dynamic\ContentApi\Registry\ClassRegistry:';
+        $lines[] = "# discovery_roots entry) — covers BOTH this module's own /content-api/v1";
+        $lines[] = '# endpoints AND colymba\'s generic /api surface in one entry:';
+        $lines[] = '# Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler:';
         $lines[] = '#   models:';
         $lines[] = sprintf('#     %s: %s', $ref, $class);
         $lines[] = '';
-        // A SEPARATE registration from the one above, easy to miss because
-        // it's a different registry entirely — ClassRegistry.models above
-        // is what this module's OWN /content-api/v1 endpoints (schema,
-        // batch, compositions) read; colymba's generic /api surface (the
-        // WriteGuardExtension block above only protects writes on THAT
-        // surface, and does nothing if colymba never routes to the class
-        // at all) reads its own, independent DefaultQueryHandler.models.
-        // Confirmed live: a class fully configured here but missing this
-        // second entry has content_schema_class report a complete,
-        // writable schema while every actual /api/$Model request 404s or
-        // is silently invisible.
-        $lines[] = '# Colymba\'s generic /api surface needs its OWN, separate registration —';
-        $lines[] = '# only needed if you intend to use that surface for this class, not the';
-        $lines[] = "# module's own /content-api/v1 endpoints above:";
-        $lines[] = '# Colymba\RESTfulAPI\QueryHandlers\DefaultQueryHandler:';
+        $lines[] = '# Use THIS one instead only if you want the ref to exist on the';
+        $lines[] = "# content-api surface ALONE (or to override a colymba ref for just this";
+        $lines[] = '# module) — it overlays, rather than replaces, the entry above:';
+        $lines[] = '# Dynamic\ContentApi\Registry\ClassRegistry:';
         $lines[] = '#   models:';
         $lines[] = sprintf('#     %s: %s', $ref, $class);
 
