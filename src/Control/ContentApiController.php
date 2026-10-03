@@ -16,6 +16,7 @@ use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
 use Dynamic\ContentApi\Control\Handlers\SchemaHandler;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Logging\RequestLogger;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
@@ -90,6 +91,7 @@ class ContentApiController extends Controller
         'compositionHandler' => '%$' . CompositionHandler::class,
         'schemaHandler' => '%$' . SchemaHandler::class,
         'fingerprintHandler' => '%$' . FingerprintHandler::class,
+        'requestLogger' => '%$' . RequestLogger::class,
     ];
 
     public ?ColymbaTokenAuthenticator $authenticator = null;
@@ -113,6 +115,8 @@ class ContentApiController extends Controller
     public ?SchemaHandler $schemaHandler = null;
 
     public ?FingerprintHandler $fingerprintHandler = null;
+
+    public ?RequestLogger $requestLogger = null;
 
     protected ?AuthContext $authContext = null;
 
@@ -347,6 +351,9 @@ class ContentApiController extends Controller
     protected function withEnvelope(callable $endpoint): HTTPResponse
     {
         $bufferLevel = ob_get_level();
+        $startTime = microtime(true);
+        $result = null;
+        $errorCode = null;
         ob_start();
 
         try {
@@ -358,6 +365,7 @@ class ContentApiController extends Controller
                 $result['status'] ?? 200
             );
         } catch (ApiError $error) {
+            $errorCode = $error->getErrorCode();
             $response = $this->errorResponse($error);
         } catch (Throwable $exception) {
             Injector::inst()->get(LoggerInterface::class)->error(
@@ -371,6 +379,7 @@ class ContentApiController extends Controller
                 ? sprintf('%s: %s', get_class($exception), $exception->getMessage())
                 : 'Internal server error.';
 
+            $errorCode = ErrorCode::SERVER_ERROR;
             $response = $this->errorResponse(new ApiError(ErrorCode::SERVER_ERROR, $message));
         } finally {
             // If application code inside $endpoint() closed this method's
@@ -412,6 +421,25 @@ class ContentApiController extends Controller
                 ['strayOutput' => substr($strayOutput, 0, 4000)]
             );
         }
+
+        // #207: null-safe — a null requestLogger is unreachable in practice
+        // (Injector::create() always resolves $dependencies), but this
+        // point is reached after withEnvelope()'s own try/catch/finally has
+        // already closed, so nothing here may throw and discard an
+        // already-built response. RequestLogger::log() derives every
+        // logged field itself (including the `opFailures` count a
+        // partially-failed `POST batch` needs despite its HTTP 200 — see
+        // BatchProcessor::run()'s $summary) and wraps its own body in a
+        // try/catch for exactly this reason.
+        $this->requestLogger?->log(
+            $this->getRequest(),
+            $response,
+            $this->authContext?->member,
+            $this->getAction(),
+            $errorCode,
+            $startTime,
+            $result
+        );
 
         return $response;
     }

@@ -65,12 +65,14 @@ PR — nothing else will catch a regression for you.
 | `Control/RecordActionsTest.php` | Stage actions, unknown action 404, verb requirements |
 | `Control/RecordSerializerTest.php` | Unreadable-relation dedup logging, polymorphic relation edge cases |
 | `Control/RecordsReadTest.php` | List/read filters, sort/pagination, id + `ext:` reads, `_stage`, permission enforcement |
+| `Control/RequestLoggingTest.php` | `RequestLogger` wired through the real controller: off-by-default, real endpoint/status/errorCode captured, a partially-failed `POST batch`'s `opFailures` logged despite the wire response being 200 (#207) |
 | `Control/SchemaTest.php` | Site/class schema shape, enum values, allowlist reflection, polymorphic writability |
 | `Control/WriteGuardTest.php` | Colymba `/api` write path via `WriteGuardExtension` |
 | `Control/WriteGuardPolymorphicTest.php` | Polymorphic `{"class","id"}` payload + `{Name}Class` translation on the colymba surface |
 | `Control/WriteGuardEncodeFailureTest.php` | `json_encode` failure path in the guard's re-encode step |
 | `Errors/ApiErrorTest.php` | `fromValidation()` maps structured messages, never a raw exception string |
 | `Errors/ErrorCodeTest.php` | Every `ErrorCode` case maps to a valid HTTP status — guards the exhaustive `httpStatus()` match against an unmapped new case |
+| `Logging/RequestLoggerTest.php` | `RequestLogger` in isolation: off by default, `enabled_environments`, the `SS_CONTENT_API_REQUEST_LOG` force-ON-only override, entry field shape, a throwing project logger never propagating (#207) |
 | `Registry/ClassRegistryTest.php` | `accessVerbs()`/`ownAccessVerbs()` inherited-vs-uninherited resolution, discovery (`discovery_roots`/`discovery_write_policy`/`discovery_exclude`), mandatory denylist, manual-model precedence |
 | `Security/ContentApiGrantExtensionTest.php` | `ContentApiGrantExtension`: escalation regression (a declared class's verbs must not leak to an undeclared subclass), per-verb scoping, the never-`false` guard, `VIEW_DRAFT_CONTENT`/`Versioned::canDelete()` interactions, `BaseElement::canCreate()` non-delegation |
 | `Security/PermissionPolicyTest.php` | `buildCreateContext()` has_one hydration, incl. trusted-field-only relations |
