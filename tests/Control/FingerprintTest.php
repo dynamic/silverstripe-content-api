@@ -2,17 +2,23 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Security\ContentApiPermissions;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintNonVersionedRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedDeniedSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRestrictedRelatedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Verify\FingerprintService;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Security\Group;
+use SilverStripe\Security\Member;
+use SilverStripe\Security\Permission;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -40,6 +46,11 @@ class FingerprintTest extends ContentApiTestCase
             'ApiTestFingerprintNonVersionedRelated' => 'PageID',
             'ApiTestFingerprintRestrictedRelated' => 'PageID',
         ]);
+    }
+
+    public static function getExtraDataObjects()
+    {
+        return array_merge(parent::getExtraDataObjects(), [ApiTestGrantSubPage::class]);
     }
 
     private function inDraft(callable $callback): mixed
@@ -1090,5 +1101,140 @@ class FingerprintTest extends ContentApiTestCase
         $response = $this->apiGet('fingerprint?classes=,', $this->adminToken);
 
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
+    /**
+     * #244: includeIds must be a boolean.
+     */
+    public function testANonBooleanIncludeIdsIsRejected(): void
+    {
+        foreach (['ture', 'yes', 'on'] as $value) {
+            $response = $this->apiGet('fingerprint?includeIds=' . $value, $this->adminToken);
+            $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        }
+
+        $this->assertSame(200, $this->apiGet('fingerprint?includeIds=TRUE', $this->adminToken)->getStatusCode());
+    }
+
+    /**
+     * #244: a related row (and its violation) reports its own class.
+     */
+    public function testARelatedRowReportsItsOwnClass(): void
+    {
+        Config::modify()->set(ApiTestFingerprintRelatedDeniedSubclassObject::class, 'api_access', true);
+        $owner = $this->createPage('fp-own-class-owner', 0, publish: false);
+
+        $this->inDraft(function () use ($owner) {
+            $record = ApiTestFingerprintRelatedDeniedSubclassObject::create(['Title' => 'Sub', 'PageID' => $owner->ID]);
+            $record->write();
+            $record->publishSingle();
+        });
+
+        $body = $this->fingerprint();
+        $section = $body['data']['related']['ApiTestFingerprintRelated'];
+
+        $this->assertSame(ApiTestFingerprintRelatedDeniedSubclassObject::class, $section['records'][0]['className']);
+        $violations = array_filter(
+            $body['data']['violations'],
+            fn (array $violation) => $violation['path'] === '/fp-own-class-owner'
+                && $violation['className'] !== ApiTestPage::class
+        );
+        $this->assertSame(
+            [ApiTestFingerprintRelatedDeniedSubclassObject::class],
+            array_values(array_column($violations, 'className'))
+        );
+    }
+
+    /**
+     * #244: related rows that tie on owner and external id come out in one
+     * order whatever order they were created in.
+     */
+    public function testTiedRelatedRowsHaveOneOrder(): void
+    {
+        $records = [];
+
+        foreach ([[false, true], [true, false]] as $round => $publishes) {
+            $owner = $this->createPage('fp-tie-owner');
+
+            $this->inDraft(function () use ($owner, $publishes) {
+                foreach ($publishes as $publish) {
+                    $record = ApiTestFingerprintRelatedObject::create(['Title' => 'Tied', 'PageID' => $owner->ID]);
+                    $record->write();
+
+                    if ($publish) {
+                        $record->publishSingle();
+                    }
+                }
+            });
+
+            $records[$round] = $this->fingerprint()['data']['related']['ApiTestFingerprintRelated']['records'];
+
+            $this->inDraft(function () use ($owner) {
+                foreach (ApiTestFingerprintRelatedObject::get()->filter('PageID', $owner->ID) as $record) {
+                    $record->doArchive();
+                }
+
+                $owner->doArchive();
+            });
+        }
+
+        $this->assertSame($records[0], $records[1]);
+    }
+
+    /**
+     * #244: rows carry the configured external-id column, as the records
+     * endpoints do.
+     */
+    public function testRowsUseTheConfiguredExternalIdField(): void
+    {
+        Config::modify()->set(ExternalIdResolver::class, 'external_id_field', 'MetaDescription');
+        $page = $this->createPage('fp-configured-ext');
+
+        $this->inDraft(function () use ($page) {
+            $page->MetaDescription = 'home-hero';
+            $page->write();
+            $page->publishSingle();
+        });
+
+        $this->assertSame('home-hero', $this->pageEntry($this->fingerprint(), '/fp-configured-ext')['externalId']);
+    }
+
+    /**
+     * #244: visibility is decided on the draft stage. A non-admin
+     * VIEW_DRAFT_CONTENT token sees a live page under a draft-only parent,
+     * and its violation, when no grant answers for the page's class.
+     */
+    public function testALivePageUnderADraftParentIsVisibleToADraftReader(): void
+    {
+        // The child's class inherits `read` but declares nothing itself, so
+        // the grant extension doesn't answer for it.
+        $parent = $this->createPage('fp-draft-parent', 0, publish: false);
+        $this->inDraft(function () use ($parent) {
+            $child = ApiTestGrantSubPage::create([
+                'Title' => 'fp-live-child',
+                'URLSegment' => 'fp-live-child',
+                'ParentID' => $parent->ID,
+            ]);
+            $child->write();
+            $child->publishSingle();
+        });
+
+        $group = Group::create(['Title' => 'Draft readers']);
+        $group->write();
+        Permission::grant($group->ID, ContentApiPermissions::ACCESS);
+        Permission::grant($group->ID, 'VIEW_DRAFT_CONTENT');
+        $member = Member::create(['Email' => 'draft-reader@example.com']);
+        $member->ApiToken = 'test-' . bin2hex(random_bytes(16));
+        $member->ApiTokenExpire = time() + 3600;
+        $member->write();
+        $member->Groups()->add($group);
+        Permission::reset();
+
+        $response = $this->apiGet('fingerprint', $member->ApiToken);
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $body = $this->decode($response);
+
+        $this->assertNotNull($this->pageEntry($body, '/fp-draft-parent/fp-live-child'));
+        $this->assertContains('/fp-draft-parent/fp-live-child', array_column($body['data']['violations'], 'path'));
     }
 }

@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#231)** Opt-in grant roots for `ContentApiGrantExtension`: `grant_roots` names ancestors
+  (e.g. `SiteTree`, `BaseElement`) whose undeclared subclasses are granted the verbs they inherit;
+  `grant_exclude` (shipping with `ErrorPage`, `RedirectorPage`, `VirtualPage`, `UserDefinedForm`)
+  takes classes back out. A class's own declaration (an explicit deny included) still wins, the
+  inherited value never comes from an extension or discovery, and with no roots nothing
+  changes. New `ClassRegistry::grantVerbs()`; `CheckGrantExtensionReachability` reports the
+  roots and exclusions and checks inherited grants. See docs/en/04_security-model.md#grant-roots-opt-in.
+  Landed on branch `1` first (unreleased), merged up here.
 - **(#207)** Opt-in structured server-side request log (`Dynamic\ContentApi\Logging\RequestLogger`):
   one `info` entry per `content-api/v1` request (endpoint, method, `ClassRef`/action, HTTP status,
   error code, duration, response byte size, authenticated member ID). Off everywhere by default;
@@ -190,6 +198,76 @@ All notable changes to this project are documented here. Format loosely follows
   Landed on branch `1` first (unreleased), merged up here.
 
 ### Fixed
+- **(#245)** Setup and tooling:
+  - The install recipe (README, docs 00) adds the module's own VCS entry; it is not on
+    Packagist.
+  - The request log and the population-gate warning go to `Psr\Log\LoggerInterface`, which
+    ships with no handler; docs 02 gains a Logging section with a handler snippet, and the
+    module reports a handler-less logger once per process through `error_log()`.
+  - `GenerateContentApiExposure` no longer suggests the external-id column, `TopPage`,
+    `TopPageLocale`, `HasBrokenFile`, `HasBrokenLink`, `ReportClass` or
+    framework-maintained relations (`LinkTracking`, `FileTracking`, `BackLinks`,
+    `VirtualPages`, `Editor*`/`Viewer*`) as writable (new `ExposureScaffolder.excluded_fields`/
+    `excluded_relations`). Regenerated files lose those entries.
+  - `CheckGrantExtensionReachability` follows `parent::canX()` delegation when the class
+    declares a verb `canX()` grants, so a project that exposes `ElementalArea` with `update`
+    no longer sees it reported as unreachable.
+  - `CheckGrantExtensionReachability` follows `parent::canX()` delegation, so `ElementalArea`
+    is no longer reported as unreachable.
+  Landed on branch `1` first (unreleased), merged up here.
+- **(#244)** Read paths:
+  - `GET records/$ClassRef` on the draft stage primes the version-number cache, so its query
+    count no longer grows with the rows it visits.
+  - `limit` must be a positive integer and `offset` a non-negative one (`400 PAYLOAD_INVALID`
+    otherwise; `limit` is still capped at `max_limit`). An empty filter value (`Title=`) matches
+    an empty or `NULL` text field instead of being ignored; on any other field, or an unknown
+    one, it is now a 400/422 like a non-empty value. `GET fingerprint`'s `includeIds` must be
+    `1`/`0`/`true`/`false`.
+  - `GET fingerprint`: related rows and violations report the row's own class; tied related rows
+    sort on every emitted field; `externalId` comes from the configured external-id column;
+    visibility is decided on the draft stage.
+
+  **Behavior change:** `limit=0` and non-numeric or negative paging values are now a 400, and an
+  empty filter value now filters. Fingerprint output changes once for sites with related
+  subclasses, tied related rows or a custom external-id column.
+  Landed on branch `1` first (unreleased), merged up here.
+- **(#243)** Spec and docs match the code:
+  - Branch `2` only: the exposure task's hint and docs 00/15 use `sake db:build --flush`
+    instead of the SS5 `dev/build flush=1`, and `scripts/check-doc-drift.sh` now flags the old
+    form.
+  - `schema/endpoints.json` (now `v1.18`): has_one guidance moves from `relations` (which rejects
+    has_one names) to `fields`; `relations` describes its real `{mode, items}` contract; the
+    `genericCrud` note says an `/api` write lands on the request's stage, usually LIVE; the
+    composition `page` gains `elementsRelation`.
+  - Docs 04/10: a page under a draft-changed parent is unreadable on draft without
+    `VIEW_DRAFT_CONTENT` unless the grant extension answers for its own class, i.e. the class declares its own `read`
+    access (now pinned by a test).
+  - Docs 12: one warning-code table (seven codes, where each appears); `METHOD_NOT_ALLOWED` is
+    marked reserved, since a wrong verb gets a non-JSON 404 outside the envelope. Composition
+    children now report their write warnings (`elements[].children[].warnings`), which were
+    dropped.
+  - Docs 02 gains `AssetService`, `FingerprintService`, `OwnedTreeWalker` and `ParityHandler`
+    sections; `summary.skipped` is documented as always `0`; the page actions' population gate,
+    `schema/site` and the stage-action `mode` body are in 05; no doc names a single-record write
+    endpoint that doesn't exist.
+  Landed on branch `1` first (unreleased), merged up here.
+- **(#242)** Link payloads are part of their owner's write:
+  - The link is written to draft only and published with its owner, by any publish of the
+    owner. A `"publish": "none"` edit to a link on a published record no longer goes live at
+    once.
+  - Links carry Owner fields (`OwnerClass`, `OwnerRelation`, `OwnerID`), so linkfield's
+    permission checks defer to the owner and non-admin CMS editors can edit them.
+  - The link write runs inside the operation's transaction, so a failed non-atomic batch op no
+    longer leaves a live orphan link. When the owner publishes, a link replaced by a type change
+    is archived.
+  - In a publish cascade an owned link is gated on its owner's class `action` verb instead of
+    the `Link` class's (checked even for an owner the cascade finds unchanged), plus its own
+    `canPublish()`. A replaced link another record still points at (a duplicated owner's copy)
+    is never archived. A page convert re-stamps its links' `OwnerClass`.
+
+  **Behavior change:** a link edit made with `"publish": "none"` waits for the owner to be
+  published.
+  Landed on branch `1` first (unreleased), merged up here.
 - **(#240, #246)** Asset uploads match, identify and report files the way SilverStripe stores them:
   - The existing-file lookup uses the stored path (folder and file name filters, or an existing
     folder's stored name), so re-uploading a name the filters rewrite finds the file instead of

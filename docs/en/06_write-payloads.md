@@ -23,8 +23,8 @@ PascalCase field names round-trip between GET responses and write payloads on bo
 ## `fields`
 
 Sparse — only keys present in the payload are touched (`WriteApplicator::applyFields()`; the
-anti-clobber guarantee). Unknown keys are rejected (`422 UNKNOWN_FIELD`) or warned-and-ignored
-depending on `api_unknown_fields`. An Enum/MultiEnum-backed field's value is validated against
+anti-clobber guarantee). Unknown keys are rejected (`422 UNKNOWN_FIELD`) or ignored with an `UNKNOWN_FIELD`
+warning, depending on `api_unknown_fields`. An Enum/MultiEnum-backed field's value is validated against
 its own declared list — see `schema/$ClassRef`'s `values` — and rejected with
 `422 INVALID_VALUE` if it isn't in it; a MultiEnum's comma-separated values are each checked
 independently.
@@ -89,9 +89,9 @@ itself (FK + Class) writes and reads correctly, but the record won't show up via
 has_many side until `{Name}Relation` is set some other way (e.g. the CMS, or a direct ORM write)
 — assigning it via a client-specified relation name isn't yet a feature this API exposes.
 
-This only applies to writes going through this module's own pipeline (single-record writes,
-batch, compositions). Colymba's generic `/api` write path applies payload keys directly to DB
-columns with no relation-shape handling at all — `WriteGuardExtension` only guards *which*
+This only applies to writes going through this module's own pipeline (batch and compositions).
+Colymba's generic `/api`, the only single-record write surface, applies payload keys directly
+to DB columns with no relation-shape handling at all — `WriteGuardExtension` only guards *which*
 fields colymba's own deserializer already decided to write; it doesn't add relation resolution
 to that surface.
 
@@ -113,8 +113,19 @@ Requires `silverstripe/linkfield`. On a has_one field targeting a `Link` subclas
 
 All types accept `title` (→ `LinkText`) and `openInNew`. Sparse and idempotent: if the field
 already points at a link of the *same* type, that record is updated in place; a type change
-writes a new link record. Owner fields are never set by this transformer — linkfield derives
-ownership from the pointing has_one.
+writes a new link record.
+
+A link is part of its owner's write. It is written to draft only, inside the operation's
+transaction (a failed operation leaves no link behind), with its Owner fields (`OwnerClass`,
+`OwnerRelation`, `OwnerID`) naming the owner, so linkfield's own permission checks defer to the
+owner and CMS editors who can edit the owner can edit the link. It goes live when the owner is
+published, by any publish mode or path: an operation's `publish`, a stage action, a cascade or a
+composition's `recursive` publish. Publishing it needs the owner's class `action` verb and the
+link's `canPublish()` (which linkfield defers to the owner), checked even when a cascade finds
+the owner itself unchanged; a `"publish": "none"` edit stays on draft. When the owner publishes,
+a link a type change replaced is archived, unless another record of the owner's class still
+points at it (a duplicated owner's copied link keeps the original's Owner fields). A page
+convert re-points the page's links at the new class.
 
 A key that's neither in the table above nor `title`/`openInNew` is rejected with
 `422 UNKNOWN_FIELD` — including a key that's valid for a *different* `type` (e.g. `fileId` sent

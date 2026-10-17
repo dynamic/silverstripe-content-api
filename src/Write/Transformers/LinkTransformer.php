@@ -4,7 +4,7 @@ namespace Dynamic\ContentApi\Write\Transformers;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
-use Dynamic\ContentApi\Write\ValueTransformer;
+use Dynamic\ContentApi\Write\OwnerAwareTransformer;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
@@ -26,12 +26,19 @@ use SilverStripe\ORM\DataObject;
  *
  * Sparse: when the record already points at a link of the same type, that
  * link is updated in place (idempotent re-runs). A type change writes a new
- * link record. Owner fields are never set here — linkfield derives ownership
- * from the pointing has_one (setting Owner* before the owner exists crashes).
+ * link record.
+ *
+ * The link is part of its owner's write (#242): it is written to draft only,
+ * inside the owner's transaction, with its Owner fields (OwnerClass,
+ * OwnerRelation, and OwnerID once the owner has one, set in
+ * afterOwnerWrite()) naming the owner, which is what linkfield's own
+ * can*() checks defer to. It goes live when the owner is published:
+ * PublishOrchestrator publishes an owner's pending links with it and
+ * archives the link a type change replaced (see OwnedLinks).
  *
  * Registered only when silverstripe/linkfield is installed (linkfield.yml).
  */
-class LinkTransformer implements ValueTransformer
+class LinkTransformer implements OwnerAwareTransformer
 {
     use Configurable;
     use Injectable;
@@ -62,6 +69,14 @@ class LinkTransformer implements ValueTransformer
         'anchor' => 'Anchor',
         'fileId' => 'FileID',
     ];
+
+    /**
+     * Links written for an owner that had no ID yet, finished in
+     * afterOwnerWrite().
+     *
+     * @var array<int, array{0: DataObject, 1: DataObject}>
+     */
+    private array $awaitingOwner = [];
 
     public function supports(DataObject $record, string $fieldName, mixed $value): bool
     {
@@ -170,16 +185,37 @@ class LinkTransformer implements ValueTransformer
             }
         }
 
+        $link->setField('OwnerClass', $record->ClassName);
+        $link->setField('OwnerRelation', $fieldName);
+        $link->setField('OwnerID', (int) $record->ID);
+
         try {
             $link->write();
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception, sprintf('Link for "%s"', $fieldName));
         }
 
-        if ($link->hasMethod('publishSingle')) {
-            $link->publishSingle();
+        if (!$record->isInDB()) {
+            $this->awaitingOwner[] = [$record, $link];
         }
 
         return (int) $link->ID;
+    }
+
+    /**
+     * Point the links written for a new owner at its ID.
+     */
+    public function afterOwnerWrite(DataObject $owner): void
+    {
+        foreach ($this->awaitingOwner as $index => [$record, $link]) {
+            if ($record !== $owner) {
+                continue;
+            }
+
+            unset($this->awaitingOwner[$index]);
+            $link->setField('OwnerID', (int) $owner->ID);
+            $link->setField('OwnerClass', $owner->ClassName);
+            $link->write();
+        }
     }
 }

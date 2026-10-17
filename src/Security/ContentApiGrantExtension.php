@@ -37,9 +37,10 @@ use SilverStripe\Security\Security;
  * alone lets the account edit/publish/archive pages but never create an
  * element, even one nested under an opted-in page.
  *
- * SECURITY — the grant is scoped to classes that declare their OWN
- * `content_api_access` (or `api_access` — same precedence as
- * `ClassRegistry::accessVerbs()`), and to the verbs that declaration lists.
+ * SECURITY — by default the grant is scoped to classes that declare their
+ * OWN `content_api_access` (or `api_access` — same precedence as
+ * `ClassRegistry::accessVerbs()`), and to the verbs that declaration lists;
+ * `grant_roots` (below) is the one opt-in that widens it.
  * Both halves are load-bearing:
  *
  * - Class scoping: `ClassRegistry::accessVerbs()` resolves
@@ -67,13 +68,27 @@ use SilverStripe\Security\Security;
  *   inherited — not broader), and is deliberate: the module's design
  *   principle throughout is that a class's own `can*()` methods are the real
  *   safety boundary, not map membership (see `ClassRegistry`'s own docblock).
+ * - Opt-in hierarchy roots (#231): `grant_roots` lists ancestors whose
+ *   undeclared subclasses get the grant for the verbs they inherit, so a
+ *   project can declare `api_access` once on `SiteTree`/`BaseElement`
+ *   instead of once per concrete class. `grant_exclude` takes a class and
+ *   its subclasses back out; it ships with the classes the blanket-grant
+ *   incident above leaked (ErrorPage, RedirectorPage, VirtualPage,
+ *   UserDefinedForm), and since YAML merges arrays additively those can only
+ *   be removed with `Config::modify()->set()` in PHP. A class's own
+ *   declaration (an explicit deny included) still wins over both, and the
+ *   inherited value is read level by level without extra sources, so an
+ *   extension-contributed `api_access` never grants. Empty roots (the
+ *   default) leave the behaviour above unchanged. See
+ *   `ClassRegistry::grantVerbs()`.
  * - Verb scoping: `archive` is gated on the `delete` verb / canDelete(), not
  *   `action`/canEdit() (see #45) — this extension only grants canDelete()
  *   when the class's own declaration lists the delete verb, so a class that
  *   lists publish verbs but not DELETE never gets archive.
  *
- * Also note: this extension's grant is per concrete class, not inherited by
- * further subclasses via the record-level check. `File`/`Image` is a real
+ * Also note: without a grant root, this extension's grant is per concrete
+ * class, not inherited by further subclasses via the record-level check
+ * (`grant_roots: [File]` is the opt-in fix for the case below). `File`/`Image` is a real
  * example — a project following the documented "`Image` inherits `File`'s
  * `api_access`" convention gets `canCreate()` granted (checked against
  * `File` itself), but a later `canEdit()`/`canDelete()` on the created
@@ -104,7 +119,9 @@ use SilverStripe\Security\Security;
  * `canView()` alone does NOT make a draft-only record readable:
  * `Versioned::canViewVersioned()` answers `false` once draft and live
  * diverge, and that `false` participates in the same `extendedCan()`
- * minimum, overriding this extension's `true`. `VIEW_DRAFT_CONTENT` is what
+ * minimum, overriding this extension's `true`. For a page of a class this
+ * extension doesn't answer for, an ancestor diverging is enough: SiteTree's
+ * inherited canView() asks the parent (#243). `VIEW_DRAFT_CONTENT` is what
  * satisfies Versioned's check — `SetupContentApiServiceAccount` already
  * grants it alongside `CONTENT_API_ACCESS`. Don't "fix" a draft-read 403 by
  * widening this extension; check the account holds `VIEW_DRAFT_CONTENT`
@@ -124,6 +141,28 @@ class ContentApiGrantExtension extends Extension
     ];
 
     public ?ClassRegistry $registry = null;
+
+    /**
+     * Ancestors whose undeclared subclasses are granted the verbs they
+     * inherit (#231). Empty: only classes declaring their own access.
+     *
+     * @var string[]
+     */
+    private static array $grant_roots = [];
+
+    /**
+     * Classes (and their subclasses) under a grant root that never get the
+     * inherited grant. Additive in YAML, so a default can only be removed in
+     * PHP.
+     *
+     * @var string[]
+     */
+    private static array $grant_exclude = [
+        'SilverStripe\\ErrorPage\\ErrorPage',
+        'SilverStripe\\CMS\\Model\\RedirectorPage',
+        'SilverStripe\\CMS\\Model\\VirtualPage',
+        'SilverStripe\\UserForms\\Model\\UserDefinedForm',
+    ];
 
     protected function canView($member = null): true|null
     {
@@ -168,7 +207,7 @@ class ContentApiGrantExtension extends Extension
             return null;
         }
 
-        $declared = $this->registry->ownAccessVerbs(get_class($owner));
+        $declared = $this->registry->grantVerbs(get_class($owner));
 
         foreach ((array) $verbs as $verb) {
             if (in_array($verb, $declared, true)) {

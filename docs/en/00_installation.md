@@ -21,11 +21,13 @@ The colymba dependency is consumed from a **dev branch** with no Packagist relea
 **project root** `composer.json` must both add the VCS entry (Composer does not inherit a
 dependency's own `repositories` block) **and** require the branch at root — a `dev-` constraint's
 stability flag only applies when declared by the root package, so a default
-`minimum-stability: stable` host cannot resolve it transitively:
+`minimum-stability: stable` host cannot resolve it transitively. The module itself is not on Packagist either, so it needs
+its own VCS entry:
 
 ```json
 "repositories": [
-    { "type": "vcs", "url": "https://github.com/silverstripeltd/silverstripe-restfulapi" }
+    { "type": "vcs", "url": "https://github.com/silverstripeltd/silverstripe-restfulapi" },
+    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-content-api" }
 ]
 ```
 
@@ -40,7 +42,7 @@ composer require dynamic/silverstripe-content-api
 > support. If it is renamed or deleted after an upstream release, update the constraint to the
 > tagged version. Consumers' `composer.lock` pins the exact commit either way.
 
-Then run `dev/build flush=1` and continue to [Quick start](01_quickstart.md).
+Then run `sake db:build --flush` and continue to [Quick start](01_quickstart.md).
 
 ## Upgrading from 1.0.x
 

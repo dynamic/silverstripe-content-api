@@ -145,14 +145,17 @@ database for real.
 {
   "results": [
     { "index": 0, "status": "created", "id": 12, "externalId": "about-intro", "stage": {...} },
-    { "index": 1, "status": "updated", "id": 8, "externalId": "hero-block" },
+    { "index": 1, "status": "updated", "id": 8, "externalId": "hero-block",
+      "warnings": [ { "code": "UNKNOWN_FIELD", "message": "Ignored unknown field \"Subtitle\".", "field": "Subtitle" } ] },
     { "index": 2, "status": "deleted", "id": 42 }
   ],
   "summary": { "created": 1, "updated": 1, "deleted": 1, "skipped": 0, "errors": 0 }
 }
 ```
 
-`status` per result is `created`/`updated`/`deleted`/`error`. A failed operation reports
+`status` per result is `created`/`updated`/`deleted`/`error`. A result carries `warnings` only
+when there are any; see [Warning codes](12_error-codes.md#warning-codes-200-responses).
+`summary.skipped` is reserved and always `0`: no operation reports `skipped`. A failed operation reports
 `{"index": n, "status": "error", "error": {...}}` (same structured shape as the top-level
 envelope error) instead of aborting the whole batch (unless `atomic: true`).
 

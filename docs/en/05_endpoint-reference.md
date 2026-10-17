@@ -29,14 +29,14 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 | `GET` | `records/$ClassRef/$ID` | Read one record — numeric id or `ext:<external-id>` |
 | `GET` | `records/$ClassRef/$ID/parity` | Draft/live field diff for a record and its owned tree |
 | `GET` | `fingerprint` | Deterministic, path-keyed content snapshot + reachability check |
-| `POST` | `records/$ClassRef/$ID/publish\|unpublish\|archive` | Stage actions (`{"recursive": true}` on publish) |
+| `POST` | `records/$ClassRef/$ID/publish\|unpublish\|archive` | Stage actions (`{"mode": "..."}` on publish and unpublish) |
 | `POST` | `batch` | Ordered `create\|upsert\|update\|delete` operations |
 | `POST` | `compositions/page` | Atomic full-page composition |
 | `POST` | `assets` | Asset ingestion (multipart/base64) |
 | `GET` | `assets/$ID` | Read one asset |
 | `POST` | `pages/$ID/convert` | Change a page's class |
 | `POST` | `pages/$ID/apply-template` | Apply an elemental-templates Template |
-| `GET` | `schema` | Site-level schema |
+| `GET` | `schema`, `schema/site` | Site-level schema |
 | `GET` | `schema/$ClassRef` | Per-class payload contract |
 | `GET` | `` (index) | `{"name": "silverstripe-content-api", "version": "v1"}` |
 
@@ -50,11 +50,11 @@ List with query-string filtering, sorting, and pagination.
 
 | Param | Notes |
 |---|---|
-| `Field=value` | Exact match filter |
+| `Field=value` | Exact match filter. An empty value (`Title=`) matches records whose field is empty or `NULL` (also under `ExactMatch`, `not`, `case`, `nocase`); it applies to text fields only, anything else is `400 PAYLOAD_INVALID` |
 | `Field__Modifier=value` | e.g. `Title__PartialMatch=Home`. Modifiers: `ExactMatch, PartialMatch, StartsWith, EndsWith, GreaterThan, GreaterThanOrEqual, LessThan, LessThanOrEqual, not, nocase, case` |
 | `sort` | `Field` (ASC) or `-Field` (DESC); comma-separated for multiple |
-| `limit` | Default `50`, capped at `500` regardless of what's requested |
-| `offset` | Default `0` |
+| `limit` | A positive integer. Default `50`, capped at `500` regardless of what's requested. Anything else (`0`, negative, non-numeric, `1.9`) is `400 PAYLOAD_INVALID` |
+| `offset` | A non-negative integer. Default `0`; anything else is `400 PAYLOAD_INVALID` |
 | `_stage` | `draft` (default) or `live`. Underscored because bare `stage` is SilverStripe's own reserved staging param, consumed by the Versioned middleware before any controller runs |
 
 A comma-containing filter value is split into an `IN (...)`-style array match. Filtering and
@@ -102,7 +102,8 @@ project-configured `related` ref — restricting the response; an unrecognized r
 `400 PAYLOAD_INVALID`; omit for everything), `includeIds=true` (adds ids back in, off by default).
 Applies the same class- and record-level access control as every other read endpoint, per row — a
 class not exposed to the content API at all appears in `meta.skipped`; a specific row this token
-can't view (e.g. a draft-only page without `VIEW_DRAFT_CONTENT`) is simply absent from the
+can't view (e.g. a draft-only page, or one under a draft-changed parent, without
+`VIEW_DRAFT_CONTENT`) is simply absent from the
 response. Full reference: [Verification](16_verification.md#fingerprint).
 
 ## `POST records/$ClassRef/$ID/{action}`
@@ -122,6 +123,9 @@ See [Assets](09_assets.md).
 
 ## `POST pages/$ID/convert`
 
+Population-domain, like batch and compositions: requires `CONTENT_API_POPULATE` and passes
+[environment gating](04_security-model.md#environment-gating).
+
 Changes a page's class via `newClassInstance()`. Body: `{"className": "...", "publish":
 "none|single|recursive|subtree|owns", "force": false}`. Refuses to convert the site home page
 unless `force: true` (`403 HOMEPAGE_CONVERSION_FORBIDDEN`). A no-op (same class already) returns
@@ -135,6 +139,9 @@ back (`(convert rolled back)` in the message). A publishing convert reports what
 `meta.published`.
 
 ## `POST pages/$ID/apply-template`
+
+Population-domain: requires `CONTENT_API_POPULATE` and passes
+[environment gating](04_security-model.md#environment-gating).
 
 Applies an `elemental-templates` `Template`'s element composition to a page. Requires
 `dynamic/silverstripe-elemental-templates` (`501 FEATURE_UNAVAILABLE` otherwise). Body:
@@ -157,8 +164,8 @@ refused. See [Publishing and stages](10_publishing-and-stages.md).
 ## `POST batch`, `POST compositions/page`
 
 Full reference: [Batch operations](07_batch-operations.md),
-[Page compositions](08_page-compositions.md). Both are population-domain endpoints — they
-additionally require `CONTENT_API_POPULATE` and pass
+[Page compositions](08_page-compositions.md). Both are population-domain endpoints, as are
+`POST assets` and the page actions above — they additionally require `CONTENT_API_POPULATE` and pass
 [environment gating](04_security-model.md#environment-gating).
 
 ## `GET schema`, `GET schema/$ClassRef`
