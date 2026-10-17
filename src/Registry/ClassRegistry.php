@@ -29,7 +29,9 @@ use SilverStripe\ORM\DataObject;
  * falsy value" via `Config::exists()`, not a plain falsy check, so an explicit
  * deny can't be silently overridden.
  *
- * Verbs: read, create, update, delete, action (publish/unpublish/archive).
+ * Verbs: read, create, update, delete, action (publish/unpublish/archive),
+ * convert (change a page's class; #228). Like `action`, `convert` has no HTTP
+ * method of its own and is declared as a bare token.
  *
  * ## Auto-discovery
  *
@@ -88,7 +90,7 @@ class ClassRegistry
     use Configurable;
     use Injectable;
 
-    public const VERBS = ['read', 'create', 'update', 'delete', 'action'];
+    public const VERBS = ['read', 'create', 'update', 'delete', 'action', 'convert'];
 
     /**
      * Content-api-only refs (or overrides of colymba refs):

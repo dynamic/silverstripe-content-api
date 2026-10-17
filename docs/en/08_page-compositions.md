@@ -37,7 +37,7 @@ the existing file record (and so needs `update` on the asset class, see
 |---|---|
 | `match` | **Required.** `{"id"}`, `{"urlSegment"}`, or `{"externalId"}`. `urlSegment` matching more than one page is `409 MULTIPLE_MATCHES` |
 | `createIfMissing` | `{title, parentId, className?}`. Required if `match` finds nothing (`404 NOT_FOUND` otherwise) |
-| `convertTo` | Short class ref; changes the page's class via `newClassInstance()` if it differs. No-op if already that class |
+| `convertTo` | Short class ref; changes the page's class via `newClassInstance()` if it differs. No-op if already that class. Needs the bare `convert` verb on both the current and the target class (see [`POST pages/$ID/convert`](05_endpoint-reference.md#post-pagesidconvert)) |
 | `force` | Required `true` to convert the site home page (`403 HOMEPAGE_CONVERSION_FORBIDDEN` otherwise) |
 | `areaRelation` | Default `"ElementalArea"`. Use `"ElementalHomePage"` for HomePage-style page types. This is the one documented location — a top-level `areaRelation` (sibling to `page`) is also accepted, as a defensive fallback for a caller reaching this endpoint directly over HTTP rather than through the MCP tool schema, but `page.areaRelation` always wins if both are given, and a mismatch between the two is reported as a response warning |
 | `elementsRelation` | Default `"Elements"`. The area's has_many relation to its child elements — only needed for a custom area class that names it differently |

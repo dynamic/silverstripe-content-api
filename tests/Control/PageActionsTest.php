@@ -9,6 +9,7 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateApplicator;
@@ -27,7 +28,7 @@ class PageActionsTest extends ContentApiTestCase
 
         $this->adminToken = $this->mintTokenFor('adminUser');
 
-        Config::modify()->set(SiteTree::class, 'api_access', 'read,update,action');
+        Config::modify()->set(SiteTree::class, 'api_access', 'read,update,action,convert');
         Config::modify()->merge(
             \Dynamic\ContentApi\Registry\ClassRegistry::class,
             'models',
@@ -162,7 +163,7 @@ class PageActionsTest extends ContentApiTestCase
      */
     public function testConvertWithPublishModeRequiresTargetClassActionVerb(): void
     {
-        Config::modify()->set(ApiTestPage::class, 'api_access', 'read,update');
+        Config::modify()->set(ApiTestPage::class, 'api_access', 'read,update,convert');
 
         $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
 
@@ -176,7 +177,7 @@ class PageActionsTest extends ContentApiTestCase
 
     public function testConvertWithoutAPublishModeDoesNotRequireTargetClassActionVerb(): void
     {
-        Config::modify()->set(ApiTestPage::class, 'api_access', 'read,update');
+        Config::modify()->set(ApiTestPage::class, 'api_access', 'read,update,convert');
 
         $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
 
@@ -248,7 +249,10 @@ class PageActionsTest extends ContentApiTestCase
 
         // Prefixed with which operation failed, but no raw exception
         // text (#21).
-        $this->assertSame('Page conversion: 1 field(s) failed validation.', $body['error']['message']);
+        $this->assertSame(
+            'Page conversion: 1 field(s) failed validation. (convert rolled back)',
+            $body['error']['message']
+        );
         $this->assertSame('Title', $body['error']['details'][0]['field']);
     }
 
@@ -432,7 +436,9 @@ class PageActionsTest extends ContentApiTestCase
     {
         $this->useTemplateStubs();
 
-        Config::modify()->set(ApiTestElementItem::class, 'api_access', 'read,update');
+        // `create` granted so the refusal comes from the publish (`action`),
+        // not from the pre-apply create check.
+        Config::modify()->set(ApiTestElementItem::class, 'api_access', 'read,create,update');
 
         $page = $this->blockPage();
         $template = $this->templateWithChildBearingElement();
@@ -442,7 +448,8 @@ class PageActionsTest extends ContentApiTestCase
             'publish' => 'recursive',
         ], $this->adminToken);
 
-        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString('"action"', $body['error']['message']);
 
         $this->assertCount(
             0,
@@ -574,5 +581,109 @@ class PageActionsTest extends ContentApiTestCase
             ApiTestElementItem::get()->byID($existingChild->ID)->isPublished(),
             'a pre-existing element\'s child is published too — deliberate, see the handler comment'
         );
+    }
+
+    /**
+     * #228: a class change needs the bare `convert` verb on the target...
+     */
+    public function testConvertRequiresTheConvertVerbOnTheTargetClass(): void
+    {
+        Config::modify()->set(ApiTestPage::class, 'api_access', 'read,update,action');
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost("pages/{$about->ID}/convert", ['className' => 'ApiTestPage'], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString('"convert"', $body['error']['message']);
+        $this->assertSame(SiteTree::class, SiteTree::get()->byID($about->ID)->ClassName);
+    }
+
+    /**
+     * ...and on the page's current class.
+     */
+    public function testConvertRequiresTheConvertVerbOnTheSourceClass(): void
+    {
+        Config::modify()->set(SiteTree::class, 'api_access', 'read,update,action');
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost("pages/{$about->ID}/convert", ['className' => 'ApiTestPage'], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString(SiteTree::class, $body['error']['message']);
+        $this->assertSame(SiteTree::class, SiteTree::get()->byID($about->ID)->ClassName);
+    }
+
+    /**
+     * #238: a publish refused on a descendant rolls the class change back,
+     * so a retry still converts and publishes instead of answering
+     * "unchanged".
+     */
+    public function testRefusedSubtreePublishRollsTheConversionBack(): void
+    {
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+        $child = ApiTestGrantSubPage::create(['Title' => 'Gated child', 'ParentID' => $about->ID]);
+        $child->write();
+        Config::modify()->set(ApiTestGrantSubPage::class, 'api_access', 'read,update');
+
+        $response = $this->apiPost("pages/{$about->ID}/convert", [
+            'className' => 'ApiTestPage',
+            'publish' => 'subtree',
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString('(convert rolled back)', $body['error']['message']);
+        $this->assertSame(SiteTree::class, SiteTree::get()->byID($about->ID)->ClassName);
+    }
+
+    public function testPublishingConvertReportsWhatItPublished(): void
+    {
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $body = $this->decode($this->apiPost("pages/{$about->ID}/convert", [
+            'className' => 'ApiTestPage',
+            'publish' => 'subtree',
+        ], $this->adminToken));
+
+        $this->assertNull($body['error']);
+        $this->assertContains((int) $about->ID, array_column($body['meta']['published'], 'id'));
+    }
+
+    /**
+     * #235: apply-template creates a copy of each template element and of
+     * each child duplicate() cascades to, so each class needs `create`.
+     */
+    public function testApplyTemplateRequiresCreateOnEveryClassItWillCreate(): void
+    {
+        $this->useTemplateStubs();
+        Config::modify()->set(ApiTestElementItem::class, 'api_access', 'read,update,action');
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'none',
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString('"create"', $body['error']['message']);
+        $this->assertCount(0, ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements());
+    }
+
+    public function testApplyTemplateRequiresThePageUpdateVerb(): void
+    {
+        $this->useTemplateStubs();
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,action');
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'none',
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertCount(0, ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements());
     }
 }
