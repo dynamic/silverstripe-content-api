@@ -160,8 +160,11 @@ checked before any is archived, so one refusal leaves the area untouched.
 
 Prune also covers each element's `children`. For every relation an element entry names under
 `children`, attached children the request did not write are removed by the same scope rule:
-archived when the child class is versioned, deleted otherwise. A relation the entry does not
-name is left alone, so omit `children` (or the relation) to keep what is there. Each removed
+archived when the child class is versioned, deleted otherwise. An empty list removes every
+child under that relation. A relation the entry does not name is left alone, so omit `children`
+(or the relation) to keep what is there. Every key under `children` must be a has_many of the
+element, even with an empty list (`422 UNKNOWN_RELATION` otherwise). Two entries upserting the
+same element keep each other's children. Each removed
 child needs `delete` on its class plus `canDelete()`, and is reported in `pruned` with its
 `relation` and owning `element` id. A refusal rolls back the whole composition.
 

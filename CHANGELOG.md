@@ -161,8 +161,11 @@ All notable changes to this project are documented here. Format loosely follows
 - **(#241)** Composition `prune` reaches element children. For each relation an element entry
   names under `children`, attached children the request did not write are archived (deleted if
   unversioned), need `delete` plus `canDelete()`, and are reported in `pruned` with `relation`
-  and `element`. **BC:** a prune-enabled composition that sends a partial `children` list now
-  removes the omitted children; a relation left out of `children` is untouched. Children have
+  and `element`. An empty list removes every child under the relation. **BC:** a prune-enabled
+  composition that sends a partial `children` list now removes the omitted children; a relation
+  left out of `children` is untouched. Every `children` key must be a has_many of the element,
+  even with an empty list (`422 UNKNOWN_RELATION`); an empty list under any other name used to
+  be ignored. Children have
   no ordering default; the docs now say so.
 - **(#241)** A stuck `$ref` queue reports `UNRESOLVED_REF` whenever a wanted alias is declared
   by no stuck element, and `CIRCULAR_REF` only when every wanted alias is (a cycle, including a

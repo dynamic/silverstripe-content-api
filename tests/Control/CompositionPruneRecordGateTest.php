@@ -6,6 +6,8 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestDeleteDenyingExtension;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
+use Dynamic\ContentApi\Tests\Stub\ApiTestElementItem;
+use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use SilverStripe\Assets\Dev\TestAssetStore;
 
 /**
@@ -16,6 +18,7 @@ class CompositionPruneRecordGateTest extends ContentApiTestCase
 {
     protected static $required_extensions = [
         ApiTestElement::class => [ApiTestDeleteDenyingExtension::class],
+        ApiTestPlainChildObject::class => [ApiTestDeleteDenyingExtension::class],
     ];
 
     protected function setUp(): void
@@ -55,5 +58,41 @@ class CompositionPruneRecordGateTest extends ContentApiTestCase
             \DNADesign\Elemental\Models\ElementContent::get()->filter('FixtureIdentifier', 'keep-me')->first(),
             'all candidates are checked before any is archived'
         );
+    }
+
+    /**
+     * #241: child prune checks canDelete() on each child too.
+     */
+    public function testChildPruneRefusesAChildWhoseCanDeleteIsFalse(): void
+    {
+        $page = $this->objFromFixture(ApiTestBlockPage::class, 'blockPage');
+        $token = $this->mintTokenFor('adminUser');
+        $element = fn (array $items, array $plain) => [
+            'class' => 'ApiTestElement',
+            'externalId' => 'kids',
+            'fields' => ['Title' => 'Cards'],
+            'children' => ['Items' => $items, 'PlainItems' => $plain],
+        ];
+
+        $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [$element(
+                [
+                    ['externalId' => 'a', 'fields' => ['Title' => 'a']],
+                    ['externalId' => 'b', 'fields' => ['Title' => 'b']],
+                ],
+                [['externalId' => 'p', 'fields' => ['Title' => 'p']]]
+            )],
+        ], $token);
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'prune' => ['enabled' => true],
+            'elements' => [$element([['externalId' => 'a', 'fields' => ['Title' => 'a']]], [])],
+        ], $token);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_RECORD', 403);
+        $this->assertNotNull(ApiTestPlainChildObject::get()->filter('FixtureIdentifier', 'p')->first());
+        $this->assertNotNull(ApiTestElementItem::get()->filter('FixtureIdentifier', 'b')->first());
     }
 }

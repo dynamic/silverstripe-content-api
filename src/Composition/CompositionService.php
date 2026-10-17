@@ -727,6 +727,10 @@ class CompositionService
         $children = [];
 
         foreach ((array) ($entry['children'] ?? []) as $relationName => $items) {
+            // Checked even for an empty list: under prune, an empty list
+            // means "remove every child", so the name must be a has_many.
+            $this->assertChildRelation($element, (string) $relationName);
+
             foreach (array_values((array) $items) as $childIndex => $childEntry) {
                 $children[] = $this->processChild(
                     $element,
@@ -767,16 +771,7 @@ class CompositionService
         int $index,
         Member $member
     ): array {
-        $childClass = DataObject::getSchema()->hasManyComponent(get_class($element), $relationName);
-
-        if (!$childClass) {
-            throw new ApiError(
-                ErrorCode::UNKNOWN_RELATION,
-                sprintf('Element %s has no has_many "%s".', get_class($element), $relationName)
-            );
-        }
-
-        $childClass = strtok($childClass, '.');
+        $childClass = $this->assertChildRelation($element, $relationName);
 
         if (!empty($entry['class'])) {
             $override = $this->registry->resolve((string) $entry['class']);
@@ -837,6 +832,25 @@ class CompositionService
             'status' => $operation,
             'record' => $child,
         ];
+    }
+
+    /**
+     * The child class of an element's has_many relation.
+     *
+     * @throws ApiError UNKNOWN_RELATION when the name is not a has_many
+     */
+    protected function assertChildRelation(DataObject $element, string $relationName): string
+    {
+        $childClass = DataObject::getSchema()->hasManyComponent(get_class($element), $relationName);
+
+        if (!$childClass) {
+            throw new ApiError(
+                ErrorCode::UNKNOWN_RELATION,
+                sprintf('Element %s has no has_many "%s".', get_class($element), $relationName)
+            );
+        }
+
+        return (string) strtok($childClass, '.');
     }
 
     /**
@@ -950,32 +964,42 @@ class CompositionService
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'prune.scope must be "managed" or "all".');
         }
 
-        $field = $this->externalIds->fieldName();
-        $candidates = [];
+        // Keep exactly the children this request wrote under each named
+        // relation, by id (processChild() matches by external id within a
+        // class tree, so a same-id sibling of another subclass is not one of
+        // them). Keyed by element id, so two entries upserting the same
+        // element keep each other's children.
+        $elements = [];
+        $keep = [];
 
         foreach ($elementResults as $result) {
             $entry = (array) ($elementEntries[$result['index']] ?? []);
-            $element = $result['record'];
+            $elementId = (int) $result['record']->ID;
+            $elements[$elementId] = $result['record'];
 
             foreach (array_keys((array) ($entry['children'] ?? [])) as $relationName) {
-                // Keep exactly the children this request wrote under the
-                // relation, by id: processChild() matches by external id
-                // within a class tree, so a same-id sibling of another
-                // subclass is not one of them.
-                $keep = array_map(
-                    fn (array $child) => $child['id'],
-                    array_filter($result['children'], fn (array $child) => $child['relation'] === $relationName)
-                );
+                $keep[$elementId][(string) $relationName] ??= [];
+            }
 
-                foreach ($element->{$relationName}() as $child) {
+            foreach ($result['children'] as $child) {
+                $keep[$elementId][$child['relation']][] = $child['id'];
+            }
+        }
+
+        $field = $this->externalIds->fieldName();
+        $candidates = [];
+
+        foreach ($keep as $elementId => $relations) {
+            foreach ($relations as $relationName => $keepIds) {
+                foreach ($elements[$elementId]->getComponents($relationName) as $child) {
                     $externalId = $child->hasField($field) ? (string) $child->getField($field) : '';
 
-                    if (($scope === 'managed' && $externalId === '') || in_array((int) $child->ID, $keep, true)) {
+                    if (($scope === 'managed' && $externalId === '') || in_array((int) $child->ID, $keepIds, true)) {
                         continue;
                     }
 
                     $this->policy->authorize($child, 'delete', $member);
-                    $candidates[] = [$child, $externalId, (string) $relationName, (int) $element->ID];
+                    $candidates[] = [$child, $externalId, (string) $relationName, (int) $elementId];
                 }
             }
         }

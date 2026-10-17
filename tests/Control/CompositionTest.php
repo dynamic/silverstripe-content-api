@@ -1547,6 +1547,148 @@ class CompositionTest extends ContentApiTestCase
     }
 
     /**
+     * #241: an empty list removes every child under the relation; an
+     * unversioned child is deleted; element prune and child prune report in
+     * one `pruned` list.
+     */
+    public function testPruneWithAnEmptyChildListRemovesEveryChild(): void
+    {
+        $page = $this->blockPage();
+        $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                ['class' => 'ElementContent', 'externalId' => 'gone', 'fields' => ['Title' => 'Gone']],
+                [
+                    'class' => 'ApiTestElement',
+                    'externalId' => 'kids',
+                    'fields' => ['Title' => 'Cards'],
+                    'children' => [
+                        'Items' => [['externalId' => 'a', 'fields' => ['Title' => 'a']]],
+                        'PlainItems' => [['externalId' => 'p', 'fields' => ['Title' => 'p']]],
+                    ],
+                ],
+            ],
+        ], $this->adminToken);
+        $plain = ApiTestPlainChildObject::get()->filter('FixtureIdentifier', 'p')->first();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'prune' => ['enabled' => true],
+            'elements' => [[
+                'class' => 'ApiTestElement',
+                'externalId' => 'kids',
+                'fields' => ['Title' => 'Cards'],
+                'children' => ['Items' => [], 'PlainItems' => []],
+            ]],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $pruned = $this->decode($response)['data']['pruned'];
+        $this->assertEqualsCanonicalizing(['gone', 'a', 'p'], array_column($pruned, 'externalId'));
+        $this->assertNull(ApiTestPlainChildObject::get()->byID($plain->ID), 'unversioned child is deleted');
+        $this->assertSame(0, ApiTestElement::get()->filter('FixtureIdentifier', 'kids')->first()->Items()->count());
+    }
+
+    /**
+     * #241: scope "all" also removes a child with no external id; "managed"
+     * leaves it.
+     */
+    public function testChildPruneScopeAllIncludesChildrenWithoutAnExternalId(): void
+    {
+        $page = $this->blockPage();
+        $element = [
+            'class' => 'ApiTestElement',
+            'externalId' => 'kids',
+            'fields' => ['Title' => 'Cards'],
+            'children' => ['Items' => [['externalId' => 'a', 'fields' => ['Title' => 'a']]]],
+        ];
+        $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [$element],
+        ], $this->adminToken);
+
+        $manual = ApiTestElementItem::create(['Title' => 'Hand made']);
+        $manual->ElementID = ApiTestElement::get()->filter('FixtureIdentifier', 'kids')->first()->ID;
+        $manual->write();
+
+        foreach (['managed' => true, 'all' => false] as $scope => $survives) {
+            $response = $this->apiPost('compositions/page', [
+                'page' => ['match' => ['id' => (int) $page->ID]],
+                'prune' => ['enabled' => true, 'scope' => $scope],
+                'elements' => [$element],
+            ], $this->adminToken);
+
+            $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+            $this->assertSame($survives, ApiTestElementItem::get()->byID($manual->ID) !== null, $scope);
+        }
+    }
+
+    /**
+     * #241: two entries upserting the same element keep each other's
+     * children.
+     */
+    public function testEntriesSharingAnElementKeepEachOthersChildren(): void
+    {
+        $entry = fn (string $id) => [
+            'class' => 'ApiTestElement',
+            'externalId' => 'shared',
+            'fields' => ['Title' => 'Shared'],
+            'children' => ['Items' => [['externalId' => $id, 'fields' => ['Title' => $id]]]],
+        ];
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $this->blockPage()->ID]],
+            'prune' => ['enabled' => true],
+            'elements' => [$entry('a'), $entry('b')],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame([], $this->decode($response)['data']['pruned']);
+        $this->assertEqualsCanonicalizing(
+            ['a', 'b'],
+            ApiTestElement::get()->filter('FixtureIdentifier', 'shared')->first()->Items()->column('FixtureIdentifier')
+        );
+    }
+
+    /**
+     * #241: every `children` key must be a has_many, even with an empty list,
+     * so prune can never call or archive anything else.
+     *
+     * @dataProvider nonHasManyChildKeyProvider
+     */
+    public function testAChildrenKeyThatIsNotAHasManyIsRejected(string $key): void
+    {
+        $page = $this->blockPage();
+        $this->apiPost('compositions/page', $this->payload($page), $this->adminToken);
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'prune' => ['enabled' => true, 'scope' => 'all'],
+            'elements' => [[
+                'class' => 'ApiTestElement',
+                'externalId' => 'comp-e2',
+                'fields' => [],
+                'children' => [$key => []],
+            ]],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'UNKNOWN_RELATION', 422);
+        $element = ApiTestElement::get()->filter('FixtureIdentifier', 'comp-e2')->first();
+        $this->assertNotNull($element);
+        $this->assertTrue($element->Photo()->exists(), 'the has_one target is not archived');
+        $this->assertNotNull(ElementalArea::get()->byID($element->ParentID));
+    }
+
+    public static function nonHasManyChildKeyProvider(): array
+    {
+        return [
+            'a has_one' => ['Photo'],
+            'the parent has_one' => ['Parent'],
+            'a public method' => ['delete'],
+        ];
+    }
+
+    /**
      * #241: child prune needs the `delete` verb on the child's class, checked
      * before anything is removed.
      */
