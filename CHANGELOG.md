@@ -45,6 +45,23 @@ All notable changes to this project are documented here. Format loosely follows
 - **(#239)** An asset `publish` value is parsed strictly, in JSON and multipart alike: the string
   `"false"` no longer reads as true, and anything other than a boolean, `1`/`0` or
   `"true"`/`"false"`/`"1"`/`"0"` is `400 PAYLOAD_INVALID`.
+- **(#226)** Publish mode `recursive` (`POST records/$Class/$ID/publish` and a payload `publish`
+  key) now checks every `$owns`-reachable record `publishRecursive()` will publish: each needs
+  the class `action` verb and the record check, the same walk and gate `owns` mode applies. It
+  previously published owned drafts of classes the caller had no verb on. All are checked
+  before anything is published.
+- **(#235)** Publish and unpublish now honour a model's `canPublish()`/`canUnpublish()` (new
+  `PermissionPolicy::checkStageAccess()`), falling back to `canEdit()` without them. This applies
+  to the root of every publish mode, every record a `subtree`/`owns`/`recursive`/relation
+  cascade reaches, and every unpublish. **Behavior change:** a class or extension that allows
+  edit but denies publish or unpublish now gets `403 FORBIDDEN_RECORD` for those operations.
+  `ContentApiGrantExtension` defines no `canPublish()`, so service accounts it covers are
+  unaffected.
+
+### Changed
+- **(#241)** A `publish: "recursive"` composition response carries `published`: every record the
+  publish made live, the page last. The publish covers the page's whole `$owns` tree, which can
+  include drafts the request did not write. The docs now say so.
 
 ### Fixed
 - **(#246)** Asset `conflict: skip` is a true no-op, as documented. It no longer rewrites `title`

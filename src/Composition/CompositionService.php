@@ -203,9 +203,9 @@ class CompositionService
             : [];
 
         // 6. Publish
-        if ($publishMode === 'recursive') {
-            $this->publishAll($page, $area, $elementResults, $member);
-        }
+        $published = $publishMode === 'recursive'
+            ? $this->publishAll($page, $area, $elementResults, $member)
+            : null;
 
         $response = [
             'page' => $this->serializer->serialize($page) + ['operation' => $pageOperation],
@@ -233,6 +233,13 @@ class CompositionService
 
         if (!empty($pruneSpec['enabled'])) {
             $response['pruned'] = $pruned;
+        }
+
+        // Everything the recursive publish made live, which can be more than
+        // what this request wrote: the page's whole $owns tree goes with it,
+        // including drafts an editor left in the area (#241).
+        if ($published !== null) {
+            $response['published'] = $published;
         }
 
         return $response;
@@ -835,16 +842,21 @@ class CompositionService
     }
 
     /**
-     * Publish the page plus every written area/element/child — page
-     * publishRecursive does not cascade into elements, so this routes
+     * Publish the page, its whole `$owns` tree, and every written
+     * area/element/child — page publishRecursive does not cascade into
+     * elements, so this routes
      * through {@see PublishOrchestrator::publishOwnedTree()} (#119/#168)
      * instead: the area and every element/child are passed as `$additional`
      * targets (this method already knows exactly which ones it just wrote,
      * so it doesn't rely on `$owns` reaching them — `BaseElement` itself
      * declares no `$owns`, so element children aren't walk-reachable
      * without a project opting in), and every one of them is now
-     * authorization-checked (class `action` verb + `canEdit()`) before
-     * anything is written. This closes the gap #168 tracked: previously
+     * authorization-checked (class `action` verb + `canPublish()`) before
+     * anything is written. The `$owns` walk reaches beyond what this
+     * request wrote (any draft element already in an owned area goes live
+     * too), so the returned list, which compose() reports as `published`,
+     * names every record published (#241). This closes the gap #168
+     * tracked: previously
      * `publish($record, 'single', $member)` performed no authorization at
      * all for the area/element/child classes, only the page itself was
      * checked (see `compose()`, above).
@@ -853,8 +865,11 @@ class CompositionService
      * StatCounter is a plain DataObject) — `publishOwnedTree()` silently
      * drops anything unversioned from `$additional` rather than erroring,
      * so no duck-typed `hasMethod('publishSingle')` check is needed here.
+     *
+     * @return array<int, array{id: int, className: string}> every record
+     *   published, the page last
      */
-    protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): void
+    protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): array
     {
         $additional = [$area];
 
@@ -866,7 +881,7 @@ class CompositionService
             }
         }
 
-        $this->publisher->publishOwnedTree($page, $member, $additional);
+        return $this->publisher->publishOwnedTree($page, $member, $additional);
     }
 
     /**

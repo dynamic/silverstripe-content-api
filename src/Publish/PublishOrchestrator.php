@@ -164,6 +164,11 @@ class PublishOrchestrator
             return null;
         }
 
+        // The caller has checked the root's class `action` verb; the
+        // record-level publish check (canPublish(), #235) runs here for
+        // every mode so no call site can skip it.
+        $this->policy->checkStageAccess($record, 'publish', $member);
+
         if ($mode === 'subtree') {
             return $this->publishSubtree($record, $member, $liveOnly, $dryRun);
         }
@@ -173,6 +178,17 @@ class PublishOrchestrator
         }
 
         if ($mode === 'recursive') {
+            // publishRecursive() publishes every $owns-reachable draft, so
+            // each of those records needs the same class `action` verb and
+            // record check an `owns` publish applies (#226). All are checked
+            // before anything is published; the walk is the same one `owns`
+            // uses, a superset of what publishRecursive() reaches.
+            foreach ($this->ownedTreeWalker->walk($record) as $entry) {
+                if (!$this->isSameRecord($entry['record'], $record)) {
+                    $this->assertDescendantPublishable($entry['record'], $member);
+                }
+            }
+
             $record->publishRecursive();
 
             return null;
@@ -301,14 +317,25 @@ class PublishOrchestrator
     }
 
     /**
+     * Class `action` verb plus the record-level stage check for a record a
+     * cascade reaches: canPublish() for `publish`, canUnpublish() for
+     * `unpublish` (both fall back to canEdit(), see
+     * PermissionPolicy::checkStageAccess()).
+     *
      * @throws ApiError FORBIDDEN_CLASS | FORBIDDEN_RECORD
      */
-    protected function assertDescendantPublishable(DataObject $record, Member $member): void
-    {
-        $className = get_class($record);
+    protected function assertDescendantPublishable(
+        DataObject $record,
+        Member $member,
+        string $operation = 'publish'
+    ): void {
+        $this->policy->checkClassAccess(get_class($record), 'action', $member);
+        $this->policy->checkStageAccess($record, $operation, $member);
+    }
 
-        $this->policy->checkClassAccess($className, 'action', $member);
-        $this->policy->checkRecordAccess($record, 'action', $member);
+    protected function isSameRecord(DataObject $a, DataObject $b): bool
+    {
+        return get_class($a) === get_class($b) && (int) $a->ID === (int) $b->ID;
     }
 
     /**
@@ -439,6 +466,10 @@ class PublishOrchestrator
         }
 
         unset($targets[get_class($root) . ':' . $root->ID]);
+
+        // The root's class verb is the caller's check; its record-level
+        // publish check runs here like every target's (#235).
+        $this->policy->checkStageAccess($root, 'publish', $member);
 
         foreach ($targets as $target) {
             $this->assertDescendantPublishable($target, $member);
@@ -624,8 +655,10 @@ class PublishOrchestrator
             $targets[get_class($record) . ':' . $record->ID] = $record;
         }
 
+        $this->policy->checkStageAccess($root, 'unpublish', $member);
+
         foreach ($targets as $target) {
-            $this->assertDescendantPublishable($target, $member);
+            $this->assertDescendantPublishable($target, $member, 'unpublish');
         }
 
         if (!$force) {

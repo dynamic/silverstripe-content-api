@@ -121,6 +121,13 @@ class RecordActionsHandler
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
             $this->policy->checkRecordAccess($record, $verb, $context->member);
 
+            // A stricter canPublish()/canUnpublish() than canEdit() is
+            // honoured as the CMS honours it (#235). Publish's check runs in
+            // PublishOrchestrator::publish() for every mode; unpublish's here.
+            if ($action === 'unpublish') {
+                $this->policy->checkStageAccess($record, 'unpublish', $context->member);
+            }
+
             if ($forceUnpublish) {
                 $this->policy->checkRecordAccess($record, 'delete', $context->member);
             }

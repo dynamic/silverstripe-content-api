@@ -94,7 +94,7 @@ Five modes, used by batch ops and (with a restriction — see below) composition
 |---|---|
 | `none` | Leave on draft. This is the default for every write in this module — an invisible-content state is explicit and visible in the response's `stage` block, never accidental |
 | `single` | `publishSingle()` |
-| `recursive` | `publishRecursive()` |
+| `recursive` | `publishRecursive()`, after every `$owns`-reachable record it will publish has passed the class `action` verb and record check (the same walk `owns` uses) |
 | `subtree` | `publishSingle()`, then every draft `Hierarchy` tree child, depth-first (see below) |
 | `owns` | `publishSingle()` on every `$owns`-reachable descendant, then the record itself (see below) |
 
@@ -206,7 +206,10 @@ identical on branches `1` and `2` (#91), not an SS6-specific gap.** This is
 the specific gap `CompositionService::publishAll()` exists to close: a `recursive` composition
 publish routes the elemental area, every written element (and its children), and the page itself
 through `PublishOrchestrator::publishOwnedTree()` (`owns` mode's underlying primitive) — every one
-of them authorization-checked before anything is written, then published together. Relying on the
+of them authorization-checked before anything is written, then published together. That walk
+covers the page's whole `$owns` tree, so any draft element already in an owned area goes live
+with it, not only the elements the request wrote; the composition response's `published` list
+names every record it published. Relying on the
 page-level cascade alone would leave elements stranded on draft behind a live page.
 `PageHandler::applyTemplate()`'s own `recursive` publish does the same for its area/elements.
 

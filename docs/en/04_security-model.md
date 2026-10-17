@@ -262,8 +262,17 @@ composition's: draft-only under `publish: "none"`.
 `read`→`canView()`, `update`/`action`→`canEdit()`, `delete`→`canDelete()`. This is your model's
 existing ACL — the content API adds nothing here beyond calling it.
 
+A stage transition also asks the model's own stage method (`PermissionPolicy::checkStageAccess()`):
+every publish (any mode, the root and every record a cascade reaches) calls `canPublish()`, and
+every unpublish calls `canUnpublish()`, falling back to `canEdit()` on a model without them.
+`Versioned` and `SiteTree` consult extensions before their own `canEdit()` fallback, so a project
+extension that allows edit but denies publish is honoured the way the CMS honours it. The
+grant extension defines no `canPublish()`, so a service account it covers publishes on its
+`canEdit()` grant.
+
 The `publish`/`unpublish`/`archive` stage actions (`POST records/$Class/$ID/{action}`) are not
-all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit()`), but
+all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit()`, plus
+`canPublish()`/`canUnpublish()` as above), but
 `archive` — a soft-delete from both Draft and Live — uses the `delete` verb (`canDelete()`), at
 **both** gates. Granting `action` in `api_access` to let a consumer publish/unpublish does
 **not** also grant archive; that requires `delete` to also be listed in the class's `api_access`

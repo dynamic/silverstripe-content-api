@@ -1453,4 +1453,32 @@ class CompositionTest extends ContentApiTestCase
         $id = (int) $this->decode($response)['data']['assets'][0]['id'];
         $this->assertNull(Versioned::get_by_stage(File::class, Versioned::LIVE)->byID($id));
     }
+
+    /**
+     * #241: a recursive composition publishes the page's whole $owns tree,
+     * including drafts it did not write, and says so in `published`.
+     */
+    public function testRecursiveCompositionReportsEverythingItPublished(): void
+    {
+        $page = $this->blockPage();
+        $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [['class' => 'ElementContent', 'externalId' => 'pub-e1', 'fields' => ['Title' => 'x']]],
+        ], $this->adminToken);
+
+        $area = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea();
+        $editorDraft = ElementContent::create(['Title' => 'Editor draft', 'ParentID' => $area->ID]);
+        $editorDraft->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+            'elements' => [['class' => 'ElementContent', 'externalId' => 'pub-e1', 'fields' => ['Title' => 'y']]],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $published = $this->decode($response)['data']['published'];
+        $this->assertContains((int) $editorDraft->ID, array_column($published, 'id'));
+        $this->assertSame((int) $page->ID, (int) end($published)['id']);
+    }
 }

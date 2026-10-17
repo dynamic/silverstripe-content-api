@@ -400,7 +400,7 @@ class RecordWriter
                     foreach ($dirtiedPublished as $related) {
                         $relatedClass = get_class($related);
                         $this->policy->checkClassAccess($relatedClass, 'action', $member);
-                        $this->policy->checkRecordAccess($related, 'action', $member);
+                        $this->policy->checkStageAccess($related, 'publish', $member);
                         $related->publishSingle();
                     }
                 }

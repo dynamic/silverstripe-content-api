@@ -158,8 +158,11 @@ internally and published via the composition's own explicit pass instead).
 through `PublishOrchestrator::publishOwnedTree()` (the same primitive the `owns` publish mode
 uses, see [Publishing & stages](10_publishing-and-stages.md#publish-modes)) — **a page's own
 `publishRecursive()` does not cascade into owned elemental blocks**, so the composition does this
-explicitly rather than relying on that cascade. Every one of area/elements/children is
-authorization-checked (class `action` verb) before anything is written — #119/#168: a class
+explicitly rather than relying on that cascade. The walk covers the page's whole `$owns` tree,
+so a draft element already in an owned area (one an editor left unpublished, say) goes live
+too, not only what this request wrote; the response's `published` list names every record
+published. Every one of area/elements/children is
+authorization-checked (class `action` verb + `canPublish()`) before anything is written — #119/#168: a class
 granting `create`/`update` but withholding `action` now refuses the whole composition publish
 with `403 FORBIDDEN_CLASS`, where it previously published silently. Not every has_many child
 model is Versioned (e.g. Essentials' `StatCounter` is a plain DataObject) — `publishOwnedTree()`
@@ -174,8 +177,10 @@ silently drops anything unversioned from its target set rather than erroring.
   "elements": [ { "index": 0, "ref": "heroImg", "externalId": "about-card-1", "id": 56,
                   "status": "created", "warnings": [], "children": [...] } ],
   "assets": [ { "index": 0, "ref": "heroImg", "id": 78, "filename": "...", "status": "created" } ],
-  "pruned": [ { "id": 90, "externalId": "old-card", "className": "ElementCard" } ]
+  "pruned": [ { "id": 90, "externalId": "old-card", "className": "ElementCard" } ],
+  "published": [ { "id": 56, "className": "ElementCard" }, { "id": 12, "className": "Page" } ]
 }
 ```
 
-`assets` and `pruned` are only present when the request included them.
+`assets` and `pruned` are only present when the request included them; `published` only under
+`publish: "recursive"`, listing every record the publish touched with the page last.
