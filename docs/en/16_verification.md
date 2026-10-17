@@ -31,7 +31,8 @@ deterministic, path-keyed snapshot of the site's content via
   the whole design is "enumerate the full draft superset, then mark each row live-or-not"
   separately, so a query that silently narrowed to Live-only rows would make every draft-only page
   vanish from the snapshot entirely, not just report it as not-live.
-- **`related`** sections are project-configured (`FingerprintService.related_classes`, e.g.
+- **`related`** sections are project-configured (`FingerprintService.related_classes`, see
+  [Configuration](02_configuration.md#fingerprintservice), e.g.
   `'HeroSlide' => 'PageID'` for a hero-image relation keyed by its owning page's direct FK column)
   — a single direct-FK hop, not a multi-level relation walk. A related record whose owner id
   doesn't resolve to a known page is counted in `unresolved`, never individually identified by a
@@ -54,8 +55,8 @@ deterministic, path-keyed snapshot of the site's content via
   subclass, same as `pages`), not just the class configured in `related_classes`/exposed at the
   ref level — an explicit per-subclass deny is never overridden by a broader ancestor's exposure.
   A class not exposed to the content API at all (site config) is reported in `meta.skipped`; a
-  class that IS exposed but a *specific row* this caller can't view (a draft-only page without
-  `VIEW_DRAFT_CONTENT`, for instance) is simply absent from `pages`/`related`/`violations`, the
+  class that IS exposed but a *specific row* this caller can't view (a draft-only page, or one
+  under a draft-changed parent, without `VIEW_DRAFT_CONTENT`, for instance) is simply absent from `pages`/`related`/`violations`, the
   same way `RecordsHandler::readList()` filters a list. `skipped` itself is not per-caller — it
   names classes unreadable by anyone, not by "this token specifically" — the row-level omissions
   are where per-caller variation actually shows up. A related record's `ownerPath` is not itself

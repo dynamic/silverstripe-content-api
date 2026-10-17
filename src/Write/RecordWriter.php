@@ -19,8 +19,9 @@ use SilverStripe\Versioned\Versioned;
 use Throwable;
 
 /**
- * Request-independent write pipeline shared by the single-record endpoints,
- * the batch processor and the composition service: ACL → sparse field apply →
+ * Request-independent write pipeline shared by the batch processor and the
+ * composition service (colymba's /api is the only single-record write
+ * surface, and does not use it): ACL → sparse field apply →
  * write (validation mapped) → relation writes → publish.
  *
  * Every method assumes it is already running inside a DRAFT versioned mode.

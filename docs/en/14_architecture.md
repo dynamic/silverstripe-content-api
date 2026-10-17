@@ -73,8 +73,8 @@ rejected upstream of `withEnvelope()` entirely.
 
 ## The two write surfaces
 
-**This module's own pipeline** (`RecordWriter` → `WriteApplicator`): used by single-record
-writes, `BatchProcessor`, and `CompositionService`. Shared shape: ACL check → sparse
+**This module's own pipeline** (`RecordWriter` → `WriteApplicator`): used by
+`BatchProcessor` and `CompositionService`. Shared shape: ACL check → sparse
 `applyFields()` (validates everything before touching the record; a bad payload changes
 nothing) → `$record->write()` (SS `ValidationException` mapped to structured `ApiError` details)
 → `applyRelations()` → `PublishOrchestrator::publish()`. A disallowed field **rejects the whole

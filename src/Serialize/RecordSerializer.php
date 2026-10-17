@@ -36,7 +36,7 @@ use Throwable;
  * `$db` fields instead of a `many_many_extraFields` map.
  *
  * Field names stay PascalCase (native SilverStripe names) so GET responses
- * round-trip directly into PATCH/composition payloads. A per-class
+ * round-trip directly into batch/composition payloads. A per-class
  * `api_fields` config whitelists output; entries may be db fields, relation
  * names or getter-backed properties (`getFoo()` — natively supported here,
  * unlike colymba's serializer). Without `api_fields`, all db fields plus
@@ -235,7 +235,7 @@ class RecordSerializer
                 if ($hasOne[$name] === DataObject::class) {
                     // Polymorphic has_one: the bare FK id isn't dereferenceable
                     // without the companion {Name}Class column — emit
-                    // {"id", "class"} instead of a bare int so a GET->PATCH
+                    // {"id", "class"} instead of a bare int so a GET->write
                     // round-trip preserves the target class. "class" is a
                     // short registry ref, the same shape
                     // WriteApplicator::resolveRelation() requires on write.

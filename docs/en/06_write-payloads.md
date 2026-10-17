@@ -23,8 +23,8 @@ PascalCase field names round-trip between GET responses and write payloads on bo
 ## `fields`
 
 Sparse — only keys present in the payload are touched (`WriteApplicator::applyFields()`; the
-anti-clobber guarantee). Unknown keys are rejected (`422 UNKNOWN_FIELD`) or warned-and-ignored
-depending on `api_unknown_fields`. An Enum/MultiEnum-backed field's value is validated against
+anti-clobber guarantee). Unknown keys are rejected (`422 UNKNOWN_FIELD`) or ignored with an `UNKNOWN_FIELD`
+warning, depending on `api_unknown_fields`. An Enum/MultiEnum-backed field's value is validated against
 its own declared list — see `schema/$ClassRef`'s `values` — and rejected with
 `422 INVALID_VALUE` if it isn't in it; a MultiEnum's comma-separated values are each checked
 independently.
@@ -89,9 +89,9 @@ itself (FK + Class) writes and reads correctly, but the record won't show up via
 has_many side until `{Name}Relation` is set some other way (e.g. the CMS, or a direct ORM write)
 — assigning it via a client-specified relation name isn't yet a feature this API exposes.
 
-This only applies to writes going through this module's own pipeline (single-record writes,
-batch, compositions). Colymba's generic `/api` write path applies payload keys directly to DB
-columns with no relation-shape handling at all — `WriteGuardExtension` only guards *which*
+This only applies to writes going through this module's own pipeline (batch and compositions).
+Colymba's generic `/api`, the only single-record write surface, applies payload keys directly
+to DB columns with no relation-shape handling at all — `WriteGuardExtension` only guards *which*
 fields colymba's own deserializer already decided to write; it doesn't add relation resolution
 to that surface.
 

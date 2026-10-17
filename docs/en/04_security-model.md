@@ -11,7 +11,7 @@ then (for writes) **field-level**. A request that passes all three still has to 
 | `CONTENT_API_ACCESS` | Every content API endpoint | Record-level `canView`/`canEdit`/`canDelete`/`canCreate` still applies on top |
 | `CONTENT_API_POPULATE` | Batch, compositions, asset uploads, page actions | Population-domain endpoints only |
 | `CONTENT_API_SCHEMA` | Schema introspection | Implicitly granted to anyone with `CONTENT_API_ACCESS` |
-| `VIEW_DRAFT_CONTENT` | Reading a record once its draft and live stages diverge | A core `silverstripe/versioned` permission, not module-specific — see [Service account permissions](#service-account-permissions) |
+| `VIEW_DRAFT_CONTENT` | Reading a record on draft once its draft and live stages diverge, or (for a page) once an ancestor's do | A core `silverstripe/versioned` permission, not module-specific — see [Service account permissions](#service-account-permissions) |
 
 ## Service account permissions
 
@@ -32,6 +32,13 @@ account that just wrote it** — `GET records/$Class/$ID` (draft is the default 
 `FORBIDDEN_RECORD` immediately after. A `_stage=live` read is unaffected — it bypasses this
 check entirely rather than passing it, since a live-stage read never invokes the non-live
 fallback in the first place.
+
+The veto also reaches a page through its ancestors. A `SiteTree` record with the default
+`CanViewType` of Inherit answers `canView()` with its parent's `canView()`, so once a parent has
+unpublished changes, a child whose own stages match is unreadable on draft too, and so is every
+page below it. The exception is a page whose own class the grant extension answers for (one that
+declares its own `api_access`/`content_api_access` including `read`): the extension's answer
+comes before the inherited check. An account that reads the draft stage of a page tree needs `VIEW_DRAFT_CONTENT`.
 
 **Grant `VIEW_DRAFT_CONTENT` alongside `CONTENT_API_ACCESS`** to any service account that reads
 back a `publish: "none"` write before publishing — the natural "write draft, read back to
@@ -108,7 +115,8 @@ other member and extension too, sitewide — including real CMS editors.
 **A draft-read 403 after applying this extension is not a missing grant** — see
 [Service account permissions](#service-account-permissions) above. `canView()` alone does not
 make a draft-only record readable: `Versioned::canViewVersioned()` independently vetoes once
-draft and live diverge, and that veto participates in the same `extendedCan()` minimum. `VIEW_DRAFT_CONTENT`
+draft and live diverge (on the record, or for a page of a class this extension doesn't answer
+for, on an ancestor), and that veto participates in the same `extendedCan()` minimum. `VIEW_DRAFT_CONTENT`
 is what satisfies it, and `SetupContentApiServiceAccount` already grants it alongside
 `CONTENT_API_ACCESS`. Don't widen this extension to work around that 403; check the account
 holds `VIEW_DRAFT_CONTENT` instead.
@@ -320,8 +328,7 @@ exist yet as a real record. Hydration:
 ## Field-level gate: write policies
 
 `WriteApplicator::isFieldWritable()` is the single source of truth for field writability on
-**every** write surface — the module's native pipeline (batch, compositions, single-record
-update) and, via `WriteGuardExtension`, colymba's own `/api` write path.
+**every** write surface — the module's native pipeline (batch and compositions) and, via `WriteGuardExtension`, colymba's own `/api` write path.
 
 - **`guarded`** (global default `policy`): all db fields and has_one relations are writable
   except the `protected_fields` denylist (global + per-class `api_protected_fields`). has_many /
@@ -379,7 +386,7 @@ compositions when correctness matters more than colymba API compatibility:
   unlisted relations are stripped — the request still returns `200`. This matches the reference
   `ApiFieldGuardExtension` pattern and is a hook-layer constraint (colymba's deserializer has
   already applied the field by the time the guard can act).
-- **This module's own write pipeline** (batch/compositions/single-record writes): a disallowed
+- **This module's own write pipeline** (batch and compositions): a disallowed
   field **rejects the entire payload** with a structured `READONLY_FIELD`/`UNKNOWN_FIELD` error
   — nothing is applied. See [Write payloads](06_write-payloads.md).
 

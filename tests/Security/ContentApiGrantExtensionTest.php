@@ -13,6 +13,7 @@ use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Security\Group;
 use SilverStripe\Security\Member;
 use SilverStripe\Security\Permission;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * Covers Security\ContentApiGrantExtension: a CONTENT_API_ACCESS-only Member
@@ -293,6 +294,48 @@ class ContentApiGrantExtensionTest extends SapphireTest
 
         $withDraft = $this->memberWithCodes([ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT']);
         $this->assertTrue((bool) $page->canView($withDraft));
+    }
+
+    /**
+     * #243: Versioned's draft-read veto reaches a page through its parent
+     * when the page's own class gets no answer from the grant (CanViewType
+     * Inherit defers to the parent's canView()). A published child whose
+     * stages match is unreadable on draft once its parent has unpublished
+     * changes, until the account holds VIEW_DRAFT_CONTENT. A class the
+     * grant answers for is unaffected.
+     */
+    public function testADivergedParentBlocksADraftReadOfAnInheritingChild(): void
+    {
+        $parent = ApiTestPage::create(['Title' => 'Parent']);
+        $parent->write();
+        $parent->publishRecursive();
+
+        $child = ApiTestGrantSubPage::create(['Title' => 'Child', 'ParentID' => $parent->ID]);
+        $child->write();
+        $child->publishRecursive();
+
+        $parent->Title = 'Parent, edited on draft';
+        $parent->write();
+
+        $this->assertTrue($parent->stagesDiffer());
+        $this->assertFalse($child->stagesDiffer());
+
+        $read = function (Member $member, string $stage) use ($child): bool {
+            return Versioned::withVersionedMode(function () use ($member, $stage, $child) {
+                Versioned::set_stage($stage);
+
+                return (bool) ApiTestGrantSubPage::get()->byID($child->ID)->canView($member);
+            });
+        };
+
+        $plain = $this->memberWithCodes([ContentApiPermissions::ACCESS]);
+        $this->assertFalse($read($plain, Versioned::DRAFT), 'the parent veto reaches the child');
+        $this->assertTrue($read($plain, Versioned::LIVE));
+        $withDraft = $this->memberWithCodes([ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT']);
+        $this->assertTrue($read($withDraft, Versioned::DRAFT));
+
+        Config::modify()->set(ApiTestGrantSubPage::class, 'content_api_access', 'GET');
+        $this->assertTrue($read($plain, Versioned::DRAFT), 'a granted class answers for itself');
     }
 
     public function testServiceAccountCannotReachCmsAdmin(): void

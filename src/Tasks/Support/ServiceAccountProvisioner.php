@@ -19,8 +19,9 @@ use SilverStripe\Security\Permission;
  * a service account needs so a draft-only write (batch/composition default
  * `publish: "none"`) can be read back by the same account that wrote it.
  * Without VIEW_DRAFT_CONTENT, silverstripe/versioned's own canView() hook
- * denies the read the moment draft and live diverge, regardless of any
- * app-level canView() grant — see
+ * denies the read the moment draft and live diverge (on the record, or on
+ * an ancestor of a page that inherits its view permission), regardless of
+ * any app-level canView() grant — see
  * docs/en/04_security-model.md#service-account-permissions (#42).
  * CONTENT_API_POPULATE is added only when $populate is true — a separate,
  * narrower grant most service accounts don't need.
