@@ -65,8 +65,9 @@ and expires their token with no auth check (the `auth/$Action` route isn't
 gated by `authentication_policy`). Any anonymous caller can DoS a known service
 account's token.
 
-*Until upstream:* README warns to restrict `/api/auth/*` at the edge and
-provision service tokens via the `MintContentApiToken` task rather than login.
+*Until upstream:* this module disables `logout` (and `lostPassword`, which has
+the same shape) through `ColymbaAuthHardening.auth_actions`; see
+[Authentication](03_authentication.md#colymba-api-surface-caveats).
 
 ## 6. Config to disable the query-var token fallback
 
@@ -76,8 +77,9 @@ browser history. Proposal: a config flag to disable the query-var path.
 
 *Until upstream:* this module's `/content-api/v1` surface is **header-only** (it
 resolves the token itself rather than delegating the query-var-accepting
-`authenticate()`), so the fallback is closed on our endpoints; colymba's `/api`
-surface still accepts it.
+`authenticate()`). On colymba's `/api`, the module renames
+`TokenAuthenticator.tokenQueryVar` to one nothing sends, which closes the
+fallback there too; a real disable flag would still be cleaner.
 
 ## Design note — our auth adapter does not call colymba's `authenticate()`
 

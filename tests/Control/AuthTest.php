@@ -2,7 +2,9 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Auth\ColymbaAuthHardening;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Security\Member;
 use SilverStripe\Security\Permission;
 
@@ -149,5 +151,28 @@ class AuthTest extends ContentApiTestCase
             $this->mainSession->session()->get('loggedInAs'),
             'authenticated API request must not establish a CMS session'
         );
+    }
+
+    /**
+     * #237: colymba's unauthenticated api/auth/logout and lostPassword are
+     * off by default; login stays on.
+     */
+    public function testColymbaLogoutAndLostPasswordAreOffByDefault(): void
+    {
+        foreach (['logout', 'lostPassword'] as $action) {
+            $response = $this->get("api/auth/{$action}?email=" . urlencode('agent@example.com'));
+
+            $this->assertSame(403, $response->getStatusCode(), $action . ': ' . $response->getBody());
+        }
+    }
+
+    public function testProjectConfigCanReEnableAColymbaAuthAction(): void
+    {
+        Config::modify()->merge(ColymbaAuthHardening::class, 'auth_actions', ['logout' => true]);
+        ColymbaAuthHardening::apply();
+
+        $response = $this->get('api/auth/logout?email=' . urlencode('agent@example.com'));
+
+        $this->assertNotSame(403, $response->getStatusCode(), (string) $response->getBody());
     }
 }

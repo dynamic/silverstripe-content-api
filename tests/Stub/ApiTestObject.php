@@ -40,6 +40,9 @@ class ApiTestObject extends DataObject implements TestOnly
         // enumValues() directly, instead of each comma-separated piece,
         // would reject every legitimate multi-value write).
         'Colors' => "MultiEnum('red,green,blue', 'red')",
+        // An HTML field — exists so write-path HTML sanitising (#225) has a
+        // real DBHTMLText column to test against.
+        'Body' => 'HTMLText',
     ];
 
     private static array $has_one = [
@@ -94,5 +97,16 @@ class ApiTestObject extends DataObject implements TestOnly
     public function canCreate($member = null, $context = []): bool
     {
         return true;
+    }
+
+    /**
+     * Set by setSetterProbe() — proves a non-schema payload key on colymba's
+     * /api never reaches a magic set{Key}() setter (#230).
+     */
+    public static bool $setterProbeCalled = false;
+
+    public function setSetterProbe(mixed $value): void
+    {
+        ApiTestObject::$setterProbeCalled = true;
     }
 }

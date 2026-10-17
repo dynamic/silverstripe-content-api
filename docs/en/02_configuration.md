@@ -12,11 +12,13 @@ deliberately.
 
 | Config key | Class | Default (this module) | Purpose |
 |---|---|---|---|
-| `authentication_policy` | `Colymba\RESTfulAPI\RESTfulAPI` | `true` | Requires a token on every `/api` call, including GET |
+| `authentication_policy` | `Colymba\RESTfulAPI\RESTfulAPI` | `true` | Requires a token on every `/api` CRUD call, including GET. `api/auth/*` is outside it; see `auth_actions` below |
 | `access_control_policy` | `Colymba\RESTfulAPI\RESTfulAPI` | `'ACL_CHECK_CONFIG_AND_MODEL'` | Checks both config verbs and the model's `can*()` methods |
 | `cors.Enabled` | `Colymba\RESTfulAPI\RESTfulAPI` | `false` | CORS off — the API is designed for server-to-server/agent callers |
 | `tokenLife` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `604800` (7 days, seconds) | Token lifetime. Raise for long-lived service accounts (e.g. `31536000` for a year) rather than relying on refresh |
 | `autoRefreshLifetime` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `false` | No activity auto-refresh — a fixed, predictable, revocable lifetime |
+| `tokenQueryVar` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `content_api_query_token_disabled` | Renamed from colymba's `token` so `?token=` no longer authenticates on `/api`; the header is the only way in. Set `token` to restore the fallback |
+| `auth_actions` | `Dynamic\ContentApi\Auth\ColymbaAuthHardening` | `login: true`, `logout: false`, `lostPassword: false` | Which colymba `api/auth/*` actions run, applied to `TokenAuthenticator.allowed_actions` by the module's `_config.php`. String-keyed so project YAML can flip any entry (colymba's own list can only be appended to). It is a hard set, so `allowed_actions` entries a project adds in YAML are replaced; use `auth_actions` instead |
 
 `/content-api/v1` itself has no CORS surface — it emits no `Access-Control-*` headers and handles
 no `OPTIONS` preflight. That's a deliberate position, not an oversight: the endpoint is designed
@@ -161,6 +163,8 @@ the log the way it does on the wire.
 | `protected_fields` | `ID, ClassName, Created, LastEdited, Version, Password, Salt, PasswordEncryption, AutoLoginHash, TempIDHash, ApiToken, ApiTokenExpire` | Global denylist — never writable regardless of policy, merged with per-class `api_protected_fields`. This global floor also applies to the trusted internal-fields channel |
 | `unknown_fields` | `'strict'` | Global default for unrecognized payload keys, overridable per class via `api_unknown_fields` |
 | `transformers` | `[]` | Ordered list of `ValueTransformer` service refs, first-match-wins. The essentials/linkfield config docs (below) append to this list when their integration is installed |
+| `sanitise_html` | `true` | Run every `DBHTMLText`/`DBHTMLVarchar` write (module pipeline and colymba `/api`) through `HTMLEditorSanitiser`, so the API stores what a CMS save would: elements and attributes outside the editor config's rules (`<script>`, `on*` handlers, …) are stripped, and a module write that lost markup carries a `VALUE_SANITISED` warning. Also off when `HTMLEditorField.sanitise_server_side` is false. Runs after `transformers` |
+| `html_editor_config` | `'cms'` | The `HTMLEditorConfig` identifier whose element rules sanitising applies. `cms` is the config a CMS edit form saves through; the config active outside the CMS isn't. An identifier with no usable rules (unknown, or emptied) refuses the write with `500 SERVER_ERROR` rather than storing raw or stripped HTML |
 
 This is the single source of truth for field writability on **every** write surface — the
 module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` write path.

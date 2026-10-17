@@ -40,6 +40,7 @@ otherwise.
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
 | `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
 | `ACTION_VERB_MISSING` | 422 | Warning code, never thrown — see below |
+| `VALUE_SANITISED` | 422 | Warning code, never thrown — see below |
 | `PAYLOAD_INVALID` | 400 | Malformed payload shape: bad relation value, missing polymorphic `class` hint, `..` in a folder path, bad `conflict`/`mode` value, missing `filename`, invalid `_stage`, unsupported filter modifier, missing `page.match`, etc. |
 | `HOMEPAGE_CONVERSION_FORBIDDEN` | 403 | Converting the site home page's class without `force: true` |
 | `ASSET_READ_FAILED` | 502 | Uploaded binary is empty/unreadable |
@@ -67,6 +68,14 @@ access but no `action` was, before this warning existed, permanently draft-only 
 the response saying so (#198). Fires once per write to a `Versioned` class whose `api_access`/
 `content_api_access` grants `create` or `update` but not `action` — check `warnings` on any write
 to a class you expect to publish through the payload's `publish` key or the stage-action endpoints.
+
+## `VALUE_SANITISED`: a warning code, not a thrown error
+
+Appended to a successful write's `warnings[]` (with the field name) when HTML sanitising removed
+markup from an HTML-typed field: elements or attributes the `html_editor_config` editor config
+does not allow (see [Configuration](02_configuration.md#writeapplicator)). The write still lands,
+minus that markup. A pure serialisation change (attribute quoting, `<br/>` vs `<br>`) is not
+reported. colymba's `/api` sanitises the same way but has no warnings channel.
 
 ## Guarantees worth knowing
 
