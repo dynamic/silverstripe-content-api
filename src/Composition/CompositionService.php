@@ -397,8 +397,11 @@ class CompositionService
             ? $this->normalisedSegment((string) $match['urlSegment'])
             : null;
 
+        // Assigned raw: SiteTree filters a changed segment itself, and
+        // filtering an already-filtered multibyte segment again would
+        // double-encode it (caf%C3%A9 → caf%25c3%25a9).
         if ($requestedSegment !== null) {
-            $page->URLSegment = $requestedSegment;
+            $page->URLSegment = (string) $match['urlSegment'];
         }
 
         if (isset($match['externalId'])) {

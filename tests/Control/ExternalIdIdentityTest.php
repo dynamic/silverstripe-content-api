@@ -7,6 +7,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Core\Config\Config;
+use SilverStripe\View\Parsers\URLSegmentFilter;
 
 /**
  * #240: an external id identifies exactly one record, every way it can be
@@ -146,5 +148,46 @@ class ExternalIdIdentityTest extends ContentApiTestCase
             0,
             \DNADesign\Elemental\Models\ElementContent::get()->filter('FixtureIdentifier', 'swap-me')->count()
         );
+    }
+
+    /**
+     * Re-sending the key a record already has is fine even when another
+     * record shares it (composition children may, across elements).
+     */
+    public function testResendingAnAlreadySharedKeyIsAllowed(): void
+    {
+        $first = ApiTestObject::create(['Title' => 'Shared one', 'FixtureIdentifier' => 'shared']);
+        $first->write();
+        $second = ApiTestObject::create(['Title' => 'Shared two', 'FixtureIdentifier' => 'shared']);
+        $second->write();
+
+        $result = $this->batch([
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => (int) $second->ID,
+            'externalId' => 'shared',
+            'fields' => ['FixtureIdentifier' => 'shared', 'Title' => 'Still shared'],
+        ]);
+
+        $this->assertSame('updated', $result['status'], json_encode($result));
+    }
+
+    public function testCreateIfMissingWithAMultibyteSegmentIsIdempotent(): void
+    {
+        Config::modify()->set(URLSegmentFilter::class, 'default_allow_multibyte', true);
+
+        $payload = [
+            'page' => [
+                'match' => ['urlSegment' => 'café'],
+                'createIfMissing' => ['title' => 'Café', 'className' => 'BlockPageStub'],
+            ],
+            'elements' => [],
+        ];
+
+        $first = $this->decode($this->apiPost('compositions/page', $payload, $this->adminToken));
+        $second = $this->decode($this->apiPost('compositions/page', $payload, $this->adminToken));
+
+        $this->assertSame('created', $first['data']['page']['operation'] ?? null, json_encode($first));
+        $this->assertSame('matched', $second['data']['page']['operation'] ?? null, json_encode($second));
     }
 }

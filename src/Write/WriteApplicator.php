@@ -320,8 +320,8 @@ class WriteApplicator
         // backfill path), so it gets the same uniqueness rule as a payload's
         // `externalId` (#240). Checked before anything is applied.
         foreach ($plan as [, $columnName, $relationName, $value]) {
-            if ($relationName === null && $columnName === $this->externalIds->fieldName() && is_string($value)) {
-                $this->externalIds->assertAssignable($record, $value);
+            if ($relationName === null && $columnName === $this->externalIds->fieldName() && is_scalar($value)) {
+                $this->externalIds->assertAssignable($record, (string) $value);
             }
         }
 

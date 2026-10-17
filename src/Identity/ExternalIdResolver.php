@@ -115,17 +115,23 @@ class ExternalIdResolver
      *   beside the one already holding its id. Every later `ext:` lookup
      *   would otherwise answer 409 MULTIPLE_MATCHES for both.
      *
-     * Re-sending a record's own key is fine.
+     * Re-sending the key a record already has is always fine (including a
+     * key composition children legitimately share across elements), and an
+     * empty key clears it.
      *
      * @throws ApiError PAYLOAD_INVALID | ALREADY_EXISTS
      */
     public function assertAssignable(DataObject $record, string $externalId): void
     {
-        if ($externalId === '' || preg_match('#[/?\#\x00-\x1F\x7F]#', $externalId)) {
+        if ($externalId === '' || (string) $record->getField($this->fieldName()) === $externalId) {
+            return;
+        }
+
+        if (preg_match('#[/?\#\x00-\x1F\x7F]#', $externalId)) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
                 sprintf(
-                    'External id "%s" must be non-empty and contain no "/", "?", "#" or control characters, '
+                    'External id "%s" must contain no "/", "?", "#" or control characters, '
                         . 'or it could not be addressed as ext:<id>.',
                     $externalId
                 )

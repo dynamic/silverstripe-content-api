@@ -165,8 +165,10 @@ All notable changes to this project are documented here. Format loosely follows
     refuses a key already held anywhere in the class tree that carries the column, with `409
     ALREADY_EXISTS` naming the holder. Previously an update or a `fields` write could give a
     second record the same key, after which every `ext:` lookup for it answered `409
-    MULTIPLE_MATCHES`. This also covers re-composing an element's id under a different class,
-    which used to create a second element that prune never removed.
+    MULTIPLE_MATCHES`. This also covers re-composing an element's id under a different class
+    (when the column is on a common ancestor such as `BaseElement`), which used to create a
+    second element that prune never removed. Re-sending a record's existing key is always fine,
+    and an empty key clears it.
   - A key containing `/`, `?`, `#` or a control character is `400 PAYLOAD_INVALID`.
   - `ext:` ids in the path are percent-decoded (`ext:home%20page`).
   - A composition `match.urlSegment` is normalised the way SiteTree stores it, so a re-run
