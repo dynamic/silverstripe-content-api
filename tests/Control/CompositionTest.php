@@ -1498,4 +1498,118 @@ class CompositionTest extends ContentApiTestCase
         $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
         $this->assertSame(SiteTree::class, SiteTree::get()->byID($about->ID)->ClassName);
     }
+
+    /**
+     * #241: a prune-enabled recompose that drops a child from an element's
+     * `children` list archives that child and reports it; a relation the
+     * payload doesn't name keeps its children.
+     */
+    public function testPruneArchivesChildrenTheRecomposeOmits(): void
+    {
+        $page = $this->blockPage();
+        $element = fn (array $children) => [
+            'class' => 'ApiTestElement',
+            'externalId' => 'kids',
+            'fields' => ['Title' => 'Cards'],
+            'children' => $children,
+        ];
+        $item = fn (string $id, int $sort) => ['externalId' => $id, 'fields' => ['Title' => $id, 'SortOrder' => $sort]];
+
+        $first = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+            'elements' => [$element(['Items' => [$item('a', 1), $item('b', 2), $item('c', 3)]])],
+        ], $this->adminToken);
+        $this->assertSame(200, $first->getStatusCode(), (string) $first->getBody());
+        $b = ApiTestElementItem::get()->filter('FixtureIdentifier', 'b')->first();
+
+        $plain = ApiTestPlainChildObject::create(['Title' => 'Untouched relation']);
+        $plain->FixtureIdentifier = 'plain';
+        $plain->ElementID = ApiTestElement::get()->filter('FixtureIdentifier', 'kids')->first()->ID;
+        $plain->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+            'prune' => ['enabled' => true],
+            'elements' => [$element(['Items' => [$item('c', 1), $item('a', 2)]])],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $pruned = $this->decode($response)['data']['pruned'];
+        $this->assertSame(['b'], array_column($pruned, 'externalId'));
+        $this->assertSame('Items', $pruned[0]['relation']);
+
+        $kids = ApiTestElement::get()->filter('FixtureIdentifier', 'kids')->first();
+        $this->assertEqualsCanonicalizing(['a', 'c'], $kids->Items()->column('FixtureIdentifier'));
+        $this->assertNull(Versioned::get_by_stage(ApiTestElementItem::class, Versioned::LIVE)->byID($b->ID));
+        $this->assertSame(1, $kids->PlainItems()->count(), 'a relation the payload does not name is left alone');
+    }
+
+    /**
+     * #241: child prune needs the `delete` verb on the child's class, checked
+     * before anything is removed.
+     */
+    public function testChildPruneRequiresTheDeleteVerb(): void
+    {
+        $page = $this->blockPage();
+        $this->apiPost('compositions/page', $this->payload($page), $this->adminToken);
+        Config::modify()->set(ApiTestElementItem::class, 'api_access', 'read,create,update,action');
+
+        $payload = $this->payload($page);
+        unset($payload['publish'], $payload['assets'], $payload['elements'][1]['fields']['Photo']);
+        $payload['prune'] = ['enabled' => true];
+        $payload['elements'][1]['children']['Items'] = [$payload['elements'][1]['children']['Items'][0]];
+
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertNotNull(ApiTestElementItem::get()->filter('FixtureIdentifier', 'comp-e2-i2')->first());
+    }
+
+    /**
+     * #241: an alias no stuck entry declares is UNRESOLVED_REF however many
+     * entries want it; CIRCULAR_REF means every wanted alias is declared by
+     * a stuck entry.
+     *
+     * @dataProvider refQueueProvider
+     */
+    public function testRefQueueNamesTheRightFailure(array $elements, string $code): void
+    {
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $this->blockPage()->ID]],
+            'elements' => $elements,
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, $code, 422);
+    }
+
+    public static function refQueueProvider(): array
+    {
+        $element = fn (string $externalId, string $wants, ?string $ref = null) => array_filter([
+            'class' => 'ApiTestElement',
+            'externalId' => $externalId,
+            'ref' => $ref,
+            'fields' => ['Photo' => ['$ref' => $wants]],
+        ]);
+
+        return [
+            'two entries, one undeclared alias' => [
+                [$element('r1', 'heroImg'), $element('r2', 'heroImg')],
+                'UNRESOLVED_REF',
+            ],
+            'a cycle plus an undeclared alias' => [
+                [$element('r1', 'b', 'a'), $element('r2', 'a', 'b'), $element('r3', 'ghost')],
+                'UNRESOLVED_REF',
+            ],
+            'an A/B cycle' => [
+                [$element('r1', 'b', 'a'), $element('r2', 'a', 'b')],
+                'CIRCULAR_REF',
+            ],
+            'a self-reference' => [
+                [$element('r1', 'me', 'me')],
+                'CIRCULAR_REF',
+            ],
+        ];
+    }
 }

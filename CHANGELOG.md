@@ -158,6 +158,15 @@ All notable changes to this project are documented here. Format loosely follows
 - **(#241)** A `publish: "recursive"` composition response carries `published`: every record the
   publish touched (`publishSingle()` targets, unchanged ones included), the page last. The publish covers the page's whole `$owns` tree, which can
   include drafts the request did not write. The docs now say so.
+- **(#241)** Composition `prune` reaches element children. For each relation an element entry
+  names under `children`, attached children the request did not write are archived (deleted if
+  unversioned), need `delete` plus `canDelete()`, and are reported in `pruned` with `relation`
+  and `element`. **BC:** a prune-enabled composition that sends a partial `children` list now
+  removes the omitted children; a relation left out of `children` is untouched. Children have
+  no ordering default; the docs now say so.
+- **(#241)** A stuck `$ref` queue reports `UNRESOLVED_REF` whenever a wanted alias is declared
+  by no stuck element, and `CIRCULAR_REF` only when every wanted alias is (a cycle, including a
+  self-reference). It used to pick the code by counting stuck entries. Both stay 422.
 
 ### Fixed
 - **(#240, #246)** Asset uploads match, identify and report files the way SilverStripe stores them:
