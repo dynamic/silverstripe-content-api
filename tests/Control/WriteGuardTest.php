@@ -403,4 +403,52 @@ class WriteGuardTest extends ContentApiTestCase
         $this->assertStringNotContainsString('<script', $stored);
         $this->assertStringContainsString('<p>ok</p>', $stored);
     }
+
+    /**
+     * #237: /api accepts the token header only; ?token= no longer logs in.
+     */
+    public function testTokenQueryVarIsNotAccepted(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_access', 'GET');
+
+        $response = $this->mainSession->sendRequest('GET', 'api/ApiTest?token=' . urlencode($this->token), []);
+
+        $this->assertSame(403, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(200, $this->colymba('GET', 'ApiTest')->getStatusCode(), 'the header still works');
+    }
+
+    /**
+     * #230: a payload key that isn't a schema name never reaches a magic
+     * set{Key}() setter.
+     */
+    public function testNonSchemaKeysNeverReachASetter(): void
+    {
+        ApiTestObject::$setterProbeCalled = false;
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Title' => 'Renamed',
+            'SetterProbe' => 1,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertFalse(ApiTestObject::$setterProbeCalled);
+        $this->assertSame('Renamed', ApiTestObject::get()->byID($record->ID)->Title);
+    }
+
+    /**
+     * #235 residual: colymba's own relation write authorizes the far side.
+     */
+    public function testColymbaHasManyWriteNeedsUpdateOnTheChildClass(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+        Config::modify()->set(ApiTestChildObject::class, 'api_access', 'read');
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $child = $this->objFromFixture(ApiTestChildObject::class, 'childOne');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", ['Children' => [(int) $child->ID]]);
+
+        $this->assertSame(403, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(0, (int) ApiTestChildObject::get()->byID($child->ID)->ParentID);
+    }
 }

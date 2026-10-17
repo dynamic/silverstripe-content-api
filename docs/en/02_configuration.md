@@ -12,11 +12,13 @@ deliberately.
 
 | Config key | Class | Default (this module) | Purpose |
 |---|---|---|---|
-| `authentication_policy` | `Colymba\RESTfulAPI\RESTfulAPI` | `true` | Requires a token on every `/api` call, including GET |
+| `authentication_policy` | `Colymba\RESTfulAPI\RESTfulAPI` | `true` | Requires a token on every `/api` CRUD call, including GET. `api/auth/*` is outside it; see `auth_actions` below |
 | `access_control_policy` | `Colymba\RESTfulAPI\RESTfulAPI` | `'ACL_CHECK_CONFIG_AND_MODEL'` | Checks both config verbs and the model's `can*()` methods |
 | `cors.Enabled` | `Colymba\RESTfulAPI\RESTfulAPI` | `false` | CORS off — the API is designed for server-to-server/agent callers |
 | `tokenLife` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `604800` (7 days, seconds) | Token lifetime. Raise for long-lived service accounts (e.g. `31536000` for a year) rather than relying on refresh |
 | `autoRefreshLifetime` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `false` | No activity auto-refresh — a fixed, predictable, revocable lifetime |
+| `tokenQueryVar` | `Colymba\RESTfulAPI\Authenticators\TokenAuthenticator` | `content_api_query_token_disabled` | Renamed from colymba's `token` so `?token=` no longer authenticates on `/api`; the header is the only way in. Set `token` to restore the fallback |
+| `auth_actions` | `Dynamic\ContentApi\Auth\ColymbaAuthHardening` | `login: true`, `logout: false`, `lostPassword: false` | Which colymba `api/auth/*` actions run, applied to `TokenAuthenticator.allowed_actions` by the module's `_config.php`. String-keyed so project YAML can flip any entry (colymba's own list can only be appended to) |
 
 `/content-api/v1` itself has no CORS surface — it emits no `Access-Control-*` headers and handles
 no `OPTIONS` preflight. That's a deliberate position, not an oversight: the endpoint is designed

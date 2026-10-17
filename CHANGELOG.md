@@ -101,6 +101,20 @@ All notable changes to this project are documented here. Format loosely follows
   sanitising off, as does the CMS's own `HTMLEditorField.sanitise_server_side: false`;
   `html_editor_config` (default `cms`) picks the editor config whose rules apply, and one with no
   usable rules refuses the write (`500 SERVER_ERROR`) rather than storing raw or stripped HTML.
+- **(#230)** colymba's `/api` writes drop any payload key that isn't a schema name for the class
+  (a DB column, a has_one or its `ID`/`Class`/`Relation` column, a many relation,
+  `ManyManyExtraFields`). colymba assigns every key with `$model->{$key} = $value`, which runs a
+  matching `set{Key}()` setter even for a non-field key (`File::setFilename()` re-parenting a
+  file, `Versioned::setMigratingVersion()`). Dropped keys are logged at notice level.
+- **(#235)** colymba's own relation write (`removeAll()` then `add()` per id) now authorizes
+  the far side like the module pipeline: `update` + `canEdit()` on every has_many item and every
+  existing child it clears, `read` + `canView()` on every many_many item. A refusal is `403`.
+- **(#237)** colymba's unauthenticated `api/auth/logout` and `api/auth/lostPassword` are off by
+  default; `login` stays on. `ColymbaAuthHardening.auth_actions` (a string-keyed map project
+  YAML can flip) is applied to colymba's `allowed_actions` by a new module `_config.php`. The
+  `?token=` query-var fallback on `/api` is closed by renaming `TokenAuthenticator.tokenQueryVar`.
+  **Behavior change:** `logout`/`lostPassword` callers get `403`, and `/api` clients passing
+  `?token=` must send the `X-Silverstripe-Apitoken` header (or set `tokenQueryVar: token`).
 
 ### Changed
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.

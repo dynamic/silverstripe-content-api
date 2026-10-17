@@ -28,3 +28,9 @@ Colymba\RESTfulAPI\RESTfulAPI:
 Colymba\RESTfulAPI\Authenticators\TokenAuthenticator:
   tokenLife: 604800
   autoRefreshLifetime: false
+  # colymba reads a token from this request var when the header is missing,
+  # which puts tokens in URLs, access logs and browser history (#237). There
+  # is no off switch upstream, so the var is renamed to one nothing sends;
+  # /api then accepts the X-Silverstripe-Apitoken header only. Set it back to
+  # 'token' in project config to restore the query-var fallback.
+  tokenQueryVar: content_api_query_token_disabled
