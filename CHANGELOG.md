@@ -148,7 +148,9 @@ All notable changes to this project are documented here. Format loosely follows
     failing on target N no longer leaves targets 1..N-1 live.
   - Composition assets are ingested draft-only and published after the composition's
     transaction commits. A later failure no longer deletes an overwritten file's previously
-    published bytes from the asset store.
+    published bytes from the asset store. A post-commit publish that fails is a warning on that
+    asset (and it is left out of `published`), not a 500 over a committed composition.
+    Overwriting a never-published file is still destructive on failure; see docs 08.
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.
   A refused publish now rolls the conversion back (`(convert rolled back)` in the message)
   instead of leaving the draft converted behind a 403. A publishing convert reports what it

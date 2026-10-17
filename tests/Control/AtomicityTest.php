@@ -25,6 +25,7 @@ class AtomicityTest extends ContentApiTestCase
         ApiTestObject::class => [ApiTestExplodingHooksExtension::class],
         ApiTestVersionedObject::class => [ApiTestExplodingHooksExtension::class],
         ApiTestPage::class => [ApiTestExplodingHooksExtension::class],
+        File::class => [ApiTestExplodingHooksExtension::class],
     ];
 
     private string $adminToken;
@@ -174,6 +175,72 @@ class AtomicityTest extends ContentApiTestCase
             $this->assertSame(sha1($original), $live->getHash());
             $this->assertTrue($live->exists(), 'the published bytes are still in the store');
             $this->assertSame($original, $live->getString());
+        } finally {
+            TestAssetStore::reset();
+        }
+    }
+
+    private function composeWithAsset(string $title): \SilverStripe\Control\HTTPResponse
+    {
+        Config::modify()->set(File::class, 'api_access', 'read,create,update,action');
+        $page = $this->objFromFixture(\Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage::class, 'blockPage');
+
+        return $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+            'assets' => [[
+                'filename' => 'deferred.pdf',
+                'folder' => 'comp',
+                'title' => $title,
+                'base64' => base64_encode('deferred bytes'),
+            ]],
+            'elements' => [],
+        ], $this->adminToken);
+    }
+
+    /**
+     * The deferral still publishes: after a successful composition the asset
+     * is live, and listed in `published` before the page.
+     */
+    public function testACompositionsAssetsArePublishedAfterCommit(): void
+    {
+        TestAssetStore::activate('ContentApiAtomicityTest');
+
+        try {
+            $response = $this->composeWithAsset('Deferred');
+            $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+            $data = $this->decode($response)['data'];
+            $assetId = (int) $data['assets'][0]['id'];
+            $this->assertTrue($this->isLive(File::class, $assetId));
+
+            $published = array_column($data['published'], 'id');
+            $this->assertContains($assetId, $published);
+            $this->assertLessThan(count($published) - 1, array_search($assetId, $published, true));
+        } finally {
+            TestAssetStore::reset();
+        }
+    }
+
+    /**
+     * A post-commit asset publish that fails is reported on the asset; the
+     * committed composition still answers 200.
+     */
+    public function testAFailedPostCommitAssetPublishIsReportedNotThrown(): void
+    {
+        TestAssetStore::activate('ContentApiAtomicityTest');
+
+        try {
+            ApiTestExplodingHooksExtension::$explodeOn['publish'] = 'Unpublishable';
+
+            $response = $this->composeWithAsset('Unpublishable');
+            $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+            $data = $this->decode($response)['data'];
+            $assetId = (int) $data['assets'][0]['id'];
+            $this->assertSame('SERVER_ERROR', $data['assets'][0]['warnings'][0]['code']);
+            $this->assertNotContains($assetId, array_column($data['published'], 'id'));
+            $this->assertFalse($this->isLive(File::class, $assetId));
         } finally {
             TestAssetStore::reset();
         }

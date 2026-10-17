@@ -12,9 +12,11 @@ use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
 use Dynamic\ContentApi\Write\RecordWriter;
 use Dynamic\ContentApi\Write\WriteApplicator;
+use Psr\Log\LoggerInterface;
 use SilverStripe\Assets\File;
 use SilverStripe\CMS\Controllers\RootURLController;
 use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Control\Director;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
@@ -22,6 +24,7 @@ use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\ValidationException;
 use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
+use Throwable;
 
 /**
  * Executes a full page composition in one atomic request: page match/create/
@@ -544,7 +547,8 @@ class CompositionService
         $result = $this->assets->ingest($binary, $entry);
 
         if ($publish) {
-            $this->deferredAssetPublishes[] = $result['record'];
+            // Keyed by id: the same file named twice is published once.
+            $this->deferredAssetPublishes[(int) $result['record']->ID] = $result['record'];
         }
 
         if ($ref !== null) {
@@ -927,15 +931,37 @@ class CompositionService
 
     /**
      * Publish the assets this run's compose() ingested for publishing. The
-     * caller runs this after the composition's transaction has committed.
+     * caller runs this after the composition's transaction has committed,
+     * so a failure can only be reported: each one is logged and returned
+     * instead of thrown, and the remaining assets are still published.
+     *
+     * @return array<int, string> failed asset id => reason
      */
-    public function publishDeferredAssets(): void
+    public function publishDeferredAssets(): array
     {
+        $failed = [];
+
         foreach ($this->deferredAssetPublishes as $asset) {
-            $asset->publishSingle();
+            try {
+                $asset->publishSingle();
+            } catch (Throwable $exception) {
+                Injector::inst()->get(LoggerInterface::class)->error(
+                    sprintf(
+                        'Composition asset #%d was saved but not published: %s',
+                        $asset->ID,
+                        $exception->getMessage()
+                    ),
+                    ['exception' => $exception]
+                );
+                $failed[(int) $asset->ID] = Director::isDev() || Director::isTest()
+                    ? $exception->getMessage()
+                    : 'publishing failed.';
+            }
         }
 
         $this->deferredAssetPublishes = [];
+
+        return $failed;
     }
 
     /**

@@ -391,7 +391,11 @@ class WriteApplicator
                     throw new ApiError(
                         ErrorCode::INVALID_VALUE,
                         sprintf('Field "%s": %s', $name, $exception->getMessage()),
-                        [['field' => $name, 'code' => ErrorCode::INVALID_VALUE->value]]
+                        [[
+                            'code' => ErrorCode::INVALID_VALUE->value,
+                            'message' => $exception->getMessage(),
+                            'field' => $name,
+                        ]]
                     );
                 }
             }
