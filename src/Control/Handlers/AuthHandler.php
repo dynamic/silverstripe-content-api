@@ -11,9 +11,10 @@ use SilverStripe\Security\Permission;
  * `GET auth/session` — token introspection: member, held content-API
  * permission codes, expiry.
  *
- * Token lifecycle (login/logout/minting) is colymba/silverstripe-restfulapi's
- * job: `POST api/auth/login` (email/pwd request vars), `api/auth/logout`,
- * or the MintContentApiToken task for service accounts.
+ * Token lifecycle (login/minting) is colymba/silverstripe-restfulapi's job:
+ * `POST api/auth/login` (email/pwd request vars), or the MintContentApiToken
+ * task for service accounts. colymba's `api/auth/logout` is off by default
+ * (ColymbaAuthHardening, #237).
  */
 class AuthHandler
 {

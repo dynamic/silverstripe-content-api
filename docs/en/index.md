@@ -8,7 +8,7 @@ Two cooperating surfaces share one token and one models map:
 
 | Surface | Route | Provides |
 |---|---|---|
-| colymba RESTfulAPI | `/api` | `GET/POST/PUT/DELETE api/$Model(/$ID)`, `api/auth/login\|logout`, token auth |
+| colymba RESTfulAPI | `/api` | `GET/POST/PUT/DELETE api/$Model(/$ID)`, `api/auth/login`, token auth |
 | This module | `/content-api/v1` | Stage-aware GET (`_stage`, `ext:`), publish/unpublish/archive actions, batch, compositions, assets, pages, schema, `GET auth/session` |
 
 ## Start here

@@ -40,6 +40,7 @@ enum ErrorCode: string
     case ELEMENT_NOT_ALLOWED_ON_PAGE = 'ELEMENT_NOT_ALLOWED_ON_PAGE';
     case CROSS_PAGE_REPARENT = 'CROSS_PAGE_REPARENT';
     case ACTION_VERB_MISSING = 'ACTION_VERB_MISSING';
+    case VALUE_SANITISED = 'VALUE_SANITISED';
 
     public function httpStatus(): int
     {
@@ -55,7 +56,8 @@ enum ErrorCode: string
             ErrorCode::VALIDATION_FAILED, ErrorCode::UNKNOWN_FIELD, ErrorCode::READONLY_FIELD,
             ErrorCode::INVALID_VALUE, ErrorCode::UNKNOWN_RELATION, ErrorCode::UNRESOLVED_REF, ErrorCode::CIRCULAR_REF,
             ErrorCode::EXTERNAL_ID_UNSUPPORTED, ErrorCode::TOKEN_RESOLUTION_FAILED,
-            ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE, ErrorCode::ACTION_VERB_MISSING => 422,
+            ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE, ErrorCode::ACTION_VERB_MISSING,
+            ErrorCode::VALUE_SANITISED => 422,
             ErrorCode::PAYLOAD_INVALID => 400,
             ErrorCode::ASSET_READ_FAILED => 502,
             ErrorCode::FEATURE_UNAVAILABLE => 501,

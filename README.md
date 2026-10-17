@@ -12,7 +12,7 @@ One token, one models map, two cooperating surfaces:
 
 | Surface | Route | Provides |
 |---|---|---|
-| colymba RESTfulAPI | `/api` | `GET/POST/PUT/DELETE api/$Model(/$ID)`, `api/auth/login\|logout`, token auth |
+| colymba RESTfulAPI | `/api` | `GET/POST/PUT/DELETE api/$Model(/$ID)`, `api/auth/login`, token auth |
 | this module | `/content-api/v1` | stage-aware GET (`_stage`, `ext:`), publish/unpublish/archive actions, batch, compositions, assets, pages, schema, `GET auth/session` |
 
 Every endpoint maps 1:1 onto an MCP tool (`schema/endpoints.json` holds the tool
