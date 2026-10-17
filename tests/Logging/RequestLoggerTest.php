@@ -3,6 +3,7 @@
 namespace Dynamic\ContentApi\Tests\Logging;
 
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Logging\LogSink;
 use Dynamic\ContentApi\Logging\RequestLogger;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Monolog\Handler\TestHandler;
@@ -167,5 +168,53 @@ class RequestLoggerTest extends ContentApiTestCase
         $response = new HTTPResponse('{}', 200);
 
         $logger->log($request, $response, null, 'handleReadList', null, microtime(true), null);
+    }
+
+    /**
+     * #245: a handler-less Monolog logger drops records, so the module
+     * says so once through error_log().
+     */
+    public function testAHandlerlessLoggerIsReportedOnce(): void
+    {
+        Config::modify()->set(RequestLogger::class, 'enabled_environments', ['dev']);
+        Injector::inst()->registerService(new Logger('no-handler'), LoggerInterface::class);
+        LogSink::reset();
+
+        $file = tempnam(sys_get_temp_dir(), 'content-api-log');
+        $previous = ini_set('error_log', $file);
+
+        try {
+            $this->log(new RequestLogger());
+            $this->log(new RequestLogger());
+        } finally {
+            ini_set('error_log', (string) $previous);
+            LogSink::reset();
+        }
+
+        $written = (string) file_get_contents($file);
+        unlink($file);
+
+        $this->assertSame(1, substr_count($written, 'LoggerInterface has no handler'));
+    }
+
+    public function testALoggerWithAHandlerIsNotReported(): void
+    {
+        Config::modify()->set(RequestLogger::class, 'enabled_environments', ['dev']);
+        LogSink::reset();
+
+        $file = tempnam(sys_get_temp_dir(), 'content-api-log');
+        $previous = ini_set('error_log', $file);
+
+        try {
+            $this->log(new RequestLogger());
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+
+        $written = (string) file_get_contents($file);
+        unlink($file);
+
+        $this->assertStringNotContainsString('has no handler', $written);
+        $this->assertCount(1, $this->logHandler->getRecords());
     }
 }

@@ -3,14 +3,12 @@
 namespace Dynamic\ContentApi\Logging;
 
 use Dynamic\ContentApi\Errors\ErrorCode;
-use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injectable;
-use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Security\Member;
 
 /**
@@ -88,7 +86,7 @@ class RequestLogger
         try {
             $opFailures = $result['data']['summary']['errors'] ?? null;
 
-            Injector::inst()->get(LoggerInterface::class)->info('Content API request', [
+            LogSink::logger()->info('Content API request', [
                 'endpoint' => $endpoint,
                 'method' => $request->httpMethod(),
                 'classRef' => $request->param('ClassRef'),

@@ -172,6 +172,18 @@ All notable changes to this project are documented here. Format loosely follows
   self-reference). It used to pick the code by counting stuck entries. Both stay 422.
 
 ### Fixed
+- **(#245)** Setup and tooling:
+  - The install recipe (README, docs 00) adds the module's own VCS entry; it is not on
+    Packagist.
+  - The request log and the population-gate warning go to `Psr\Log\LoggerInterface`, which
+    ships with no handler; docs 02 gains a Logging section with a handler snippet, and the
+    module reports a handler-less logger once per process through `error_log()`.
+  - `GenerateContentApiExposure` no longer suggests the external-id column, `TopPage` or
+    framework-maintained relations (`LinkTracking`, `FileTracking`, `BackLinks`,
+    `VirtualPages`, `Editor*`/`Viewer*`) as writable (new `ExposureScaffolder.excluded_fields`/
+    `excluded_relations`). Regenerated files lose those entries.
+  - `CheckGrantExtensionReachability` follows `parent::canX()` delegation, so `ElementalArea`
+    is no longer reported as unreachable.
 - **(#244)** Read paths:
   - `GET records/$ClassRef` on the draft stage primes the version-number cache, so its query
     count no longer grows with the rows it visits.

@@ -157,7 +157,8 @@ never be in the loop either way.
 visible `extendedCan()` call in its source. It's a reflection-based heuristic (reads the
 resolved method's source text for the literal string, doesn't execute anything) — see
 `Tasks\Support\GrantExtensionReachabilityChecker`'s own docblock for exactly what that can and
-can't catch (a call routed through an intermediate helper method won't be found, for instance).
+can't catch (a call routed through an intermediate helper method won't be found, for instance;
+a `parent::canX()` delegation, like `ElementalArea`'s, is followed up the chain).
 Run it after applying `ContentApiGrantExtension` to a new class, and again after upgrading a
 third-party module that might have changed a `can*()` override.
 

@@ -181,6 +181,29 @@ class ExposureScaffolderTest extends SapphireTest
     }
 
     /**
+     * #245: the external-id column and framework-maintained relations are
+     * never suggested as writable, and a regenerate after applying the
+     * output is identical.
+     */
+    public function testNeverIncludesManagedFieldsOrRelations(): void
+    {
+        $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
+
+        foreach (['FixtureIdentifier', 'TopPage'] as $field) {
+            $this->assertStringNotContainsString('    - ' . $field . "\n", $yaml);
+        }
+
+        foreach (['LinkTracking', 'FileTracking'] as $relation) {
+            $this->assertDoesNotMatchRegularExpression(
+                '/api_writable_relations: \[[^\]]*\b' . $relation . '\b/',
+                $yaml
+            );
+        }
+
+        $this->assertSame($yaml, ExposureScaffolder::create()->generate([ApiTestElement::class]));
+    }
+
+    /**
      * `--root=BaseElement` walks in BaseElement itself (concrete) alongside
      * every concrete subclass, e.g. ApiTestElement. BaseElement is a
      * shared ancestor of another class in this SAME result set, so it must
