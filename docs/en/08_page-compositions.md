@@ -26,10 +26,12 @@ FEATURE_UNAVAILABLE` otherwise), `CONTENT_API_POPULATE`, and passes
 }
 ```
 
-Atomic: any failure rolls the database writes back. Exception: asset binaries written to the
-asset store persist if the request aborts. A retry with the default `conflict: overwrite` reuses
-the existing file record (and so needs `update` on the asset class, see
-[Assets](09_assets.md#authorization)); `rename` always writes a new record.
+Atomic: any failure rolls the database writes back. Assets are written draft-only inside the
+transaction and published after it commits (the recursive publish leaves them alone), so a
+composition that overwrites a published file and then fails keeps that file's published bytes.
+New bytes written to the asset store for a failed run stay there unreferenced. A retry with the
+default `conflict: overwrite` reuses the existing file record (and so needs `update` on the asset
+class, see [Assets](09_assets.md#authorization)); `rename` always writes a new record.
 
 ## `page`
 

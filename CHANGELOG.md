@@ -136,6 +136,19 @@ All notable changes to this project are documented here. Format loosely follows
   explicit `false` on an asset class is now a deny.
 
 ### Changed
+- **(#238)** Partial-failure atomicity:
+  - A batch op's failure is always that op's own result. An unsettable value (unparseable
+    Date/Datetime, an array on a scalar column) is `422 INVALID_VALUE`, and any other exception is
+    a per-op `SERVER_ERROR`. Either used to escape as a `500` that dropped every result and left
+    earlier non-atomic ops committed.
+  - Archive, unpublish and non-versioned delete (batch `delete` op and the `archive` action) run
+    in a transaction, so a hook that throws mid-archive no longer leaves a record unpublished but
+    still on draft.
+  - `subtree` and `owns` publish cascades run in one transaction for every caller, so a hook
+    failing on target N no longer leaves targets 1..N-1 live.
+  - Composition assets are ingested draft-only and published after the composition's
+    transaction commits. A later failure no longer deletes an overwritten file's previously
+    published bytes from the asset store.
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.
   A refused publish now rolls the conversion back (`(convert rolled back)` in the message)
   instead of leaving the draft converted behind a 403. A publishing convert reports what it

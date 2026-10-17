@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Verify\OwnedTreeWalker;
+use Dynamic\ContentApi\Write\DbTransaction;
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Assets\File;
@@ -229,10 +230,15 @@ class PublishOrchestrator
     {
         $targets = $this->collectSubtreeTargets($record, $member, $liveOnly, true);
 
+        // One transaction for the whole cascade (#238): authorization is
+        // checked before the loop, but a publish hook or DB error on target
+        // N would otherwise leave targets 1..N-1 live behind a bare error.
         if (!$dryRun) {
-            foreach ($targets as $target) {
-                $target->publishSingle();
-            }
+            DbTransaction::run(function () use ($targets) {
+                foreach ($targets as $target) {
+                    $target->publishSingle();
+                }
+            });
         }
 
         return array_map(fn (DataObject $target) => $this->subtreeEntry($target), $targets);
@@ -421,6 +427,8 @@ class PublishOrchestrator
      * caller.
      *
      * @param DataObject[] $additional
+     * @param DataObject[] $deferred records left out of this cascade because
+     *   the caller publishes them itself afterwards
      * @return array<int, array{id: int, className: string}> every record
      *   published (or, under `dryRun`, that would be published) — `$root`
      *   included, last
@@ -430,7 +438,8 @@ class PublishOrchestrator
         DataObject $root,
         Member $member,
         array $additional = [],
-        bool $dryRun = false
+        bool $dryRun = false,
+        array $deferred = []
     ): array {
         $this->assertVersioned($root, 'publish the owned tree of');
 
@@ -475,6 +484,13 @@ class PublishOrchestrator
 
         unset($targets[get_class($root) . ':' . $root->ID]);
 
+        // `$deferred` records the caller publishes itself later (a
+        // composition's ingested assets, published after its transaction
+        // commits): neither checked nor published here.
+        foreach ($deferred as $record) {
+            unset($targets[get_class($record) . ':' . $record->ID]);
+        }
+
         // The root's class verb is the caller's check; its record-level
         // publish check runs here like every target's (#235).
         $this->policy->checkStageAccess($root, 'publish', $member);
@@ -483,12 +499,15 @@ class PublishOrchestrator
             $this->assertDescendantPublishable($target, $member);
         }
 
+        // One transaction for the whole cascade, as publishSubtree() (#238).
         if (!$dryRun) {
-            foreach ($targets as $target) {
-                $target->publishSingle();
-            }
+            DbTransaction::run(function () use ($targets, $root) {
+                foreach ($targets as $target) {
+                    $target->publishSingle();
+                }
 
-            $root->publishSingle();
+                $root->publishSingle();
+            });
         }
 
         $entries = array_map(fn (DataObject $target) => $this->subtreeEntry($target), array_values($targets));
@@ -583,7 +602,9 @@ class PublishOrchestrator
             $this->logForcedBypass($record, [Versioned::LIVE], 'Unpublishing');
         }
 
-        $record->doUnpublish();
+        // doUnpublish() deletes the Live row and then runs hooks; a hook
+        // that throws must not leave the record half taken down (#238).
+        DbTransaction::run(fn () => $record->doUnpublish());
 
         return null;
     }
@@ -891,7 +912,9 @@ class PublishOrchestrator
             $this->logForcedBypass($record, $stages, 'Archiving');
         }
 
-        $record->doArchive();
+        // doArchive() unpublishes, records a deleted version and deletes the
+        // draft row, with hooks between; all or nothing (#238).
+        DbTransaction::run(fn () => $record->doArchive());
     }
 
     /**
@@ -922,7 +945,7 @@ class PublishOrchestrator
         }
 
         if (!$isVersioned) {
-            $record->delete();
+            DbTransaction::run(fn () => $record->delete());
 
             return;
         }

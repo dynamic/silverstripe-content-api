@@ -380,7 +380,20 @@ class WriteApplicator
                     }
                 }
             } else {
-                $record->setCastedField($columnName, $value);
+                // A value that passed validation can still be one the field
+                // type can't take: an unparseable Date/Datetime, or an array
+                // on a scalar column. Those throw InvalidArgumentException
+                // here; reported as the field's own INVALID_VALUE rather than
+                // escaping as a 500 that drops a batch's results (#238).
+                try {
+                    $record->setCastedField($columnName, $value);
+                } catch (\InvalidArgumentException $exception) {
+                    throw new ApiError(
+                        ErrorCode::INVALID_VALUE,
+                        sprintf('Field "%s": %s', $name, $exception->getMessage()),
+                        [['field' => $name, 'code' => ErrorCode::INVALID_VALUE->value]]
+                    );
+                }
             }
         }
     }

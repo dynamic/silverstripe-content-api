@@ -83,6 +83,12 @@ class CompositionHandler
             );
         }
 
+        // Only once everything above has committed (#238).
+        Versioned::withVersionedMode(function () {
+            Versioned::set_stage(Versioned::DRAFT);
+            $this->composition->publishDeferredAssets();
+        });
+
         return [
             'data' => $data,
             'meta' => ['operation' => 'composed'],
