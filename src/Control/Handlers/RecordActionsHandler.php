@@ -18,9 +18,10 @@ use SilverStripe\Versioned\Versioned;
  * `POST records/$ClassRef/$ID/publish|unpublish|archive` — the versioned
  * stage actions colymba's generic CRUD has no concept of.
  *
- * (Generic create/update/delete live on colymba's `/api` surface; population
- * writes go through batch/compositions, which share the same internal
- * RecordWriter pipeline.)
+ * (A single-record field update is `PATCH records/$ClassRef/$ID`
+ * (RecordUpdateHandler); generic create/delete live on colymba's `/api`
+ * surface; population writes go through batch/compositions. All of the
+ * module's own writes share the RecordWriter pipeline.)
  */
 class RecordActionsHandler
 {

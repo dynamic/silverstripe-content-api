@@ -24,7 +24,7 @@ Each route maps to one handler method (`$url_handlers` in `ContentApiController`
 | Route | Handler |
 |---|---|
 | `GET auth/session` | `AuthHandler::session()` |
-| `GET/POST records/*` | `RecordsHandler` (reads), `RecordActionsHandler` (stage actions), `ParityHandler` (draft/live parity, #120) |
+| `GET/POST/PATCH records/*` | `RecordsHandler` (reads), `RecordActionsHandler` (stage actions), `RecordUpdateHandler` (single-record update, #232), `ParityHandler` (draft/live parity, #120) |
 | `GET fingerprint` | `FingerprintHandler` → `FingerprintService` (path-keyed content snapshot + reachability check, #131) |
 | `POST pages/$ID/*` | `PageHandler::handle()` |
 | `POST/GET assets*` | `AssetHandler` |

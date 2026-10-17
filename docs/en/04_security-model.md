@@ -428,6 +428,36 @@ compositions when correctness matters more than colymba API compatibility:
 Never grant write verbs (`POST,PUT`) in `api_access` without `WriteGuardExtension` applied to
 the same class.
 
+## Live writes: `PATCH records/$ClassRef/$ID`
+
+`PATCH records/$ClassRef/$ID` (#232) is the one write on this surface that is **open on live by
+default**: it needs `CONTENT_API_ACCESS` only, not `CONTENT_API_POPULATE`, and is not behind the
+population gate below. What it adds is a first-class route, not a new capability: an
+ACCESS-only token could already edit through colymba's `PUT api/$Class/$ID` and publish through
+the stage actions, and neither was ever environment-gated. It is still worth sizing:
+
+- It edits and, with `publish: "single"`, publishes in one call. `publish: "single"` publishes
+  the record's whole draft, so an editor's unrelated pending changes on that record go live with
+  it; check `stage.modifiedOnDraft` before publishing.
+- How narrow it is depends on the class's write policy. Under the default `guarded` policy any
+  writable column is reachable, e.g. a page's `CanViewType`, `ParentID` or `URLSegment`, or the
+  external-id column. Use `api_protected_fields` or the `allowlist` policy with
+  `api_writable_fields` (see [Field-level gate](#field-level-gate-write-policies)) to bound it.
+- The record-level gate is the model's `canEdit()`/`canPublish()`, so the grant extension's
+  scope (see [Grant extension](#grant-extension)) is what a service account can actually write.
+
+To close it on live, add the environment:
+
+```yml
+Dynamic\ContentApi\Control\Handlers\RecordUpdateHandler:
+  disabled_environments:
+    - live
+```
+
+A closed environment returns `403 ENV_FORBIDDEN` with `details[0].config` naming that key
+(`SS_CONTENT_API_ALLOW_POPULATE` does not open it), and `GET schema/site` reports
+`recordUpdateEnabled`.
+
 ## Environment gating
 
 Population-domain endpoints (batch, compositions, page actions, asset writes) additionally
