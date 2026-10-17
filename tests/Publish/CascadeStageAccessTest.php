@@ -42,18 +42,17 @@ class CascadeStageAccessTest extends ContentApiTestCase
         return Versioned::get_by_stage($class, Versioned::LIVE)->byID($id) !== null;
     }
 
-    /**
-     * @return array<int, array{0: string}>
-     */
-    public static function cascadeModes(): array
+    public function testRecursiveRefusesAnOwnedRecordThatDeniesCanPublish(): void
     {
-        return [['recursive'], ['owns']];
+        $this->assertCascadeRefuses('recursive');
     }
 
-    /**
-     * @dataProvider cascadeModes
-     */
-    public function testCascadeRefusesAnOwnedRecordThatDeniesCanPublish(string $mode): void
+    public function testOwnsRefusesAnOwnedRecordThatDeniesCanPublish(): void
+    {
+        $this->assertCascadeRefuses('owns');
+    }
+
+    private function assertCascadeRefuses(string $mode): void
     {
         [$parent, $child] = $this->tree();
         $member = $this->objFromFixture(Member::class, 'apiUser');

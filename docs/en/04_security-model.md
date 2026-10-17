@@ -198,6 +198,8 @@ be published has nothing here for `action` to gate). `PageHandler::convert()` an
 `CompositionService::convertPage()` have the analogous gap closed the same way: both now check
 the *target* class's `update` verb unconditionally, plus `action` whenever the request's publish
 mode isn't `none` — previously only the *pre-conversion* record's `update` verb was ever checked.
+Both also need the bare `convert` verb on the page's current class and on the target class
+(#228); see [`POST pages/$ID/convert`](05_endpoint-reference.md#post-pagesidconvert).
 
 `CompositionService::compose()` has a third, non-conversion path to the same gap:
 `publishAll()` calls `$page->publishRecursive()` directly (not via `RecordWriter` or
@@ -321,7 +323,9 @@ update) and, via `WriteGuardExtension`, colymba's own `/api` write path.
 
 - **`guarded`** (global default `policy`): all db fields and has_one relations are writable
   except the `protected_fields` denylist (global + per-class `api_protected_fields`). has_many /
-  many_many writes require the relation to be listed in `api_writable_relations` regardless of
+  many_many writes require the relation to be listed in `api_writable_relations`, and the far
+  side's own verb (`update` + `canEdit()` for has_many, `read` + `canView()` for many_many; see
+  [Write payloads](06_write-payloads.md#relations-has_many--many_many)), regardless of
   policy.
 - **`allowlist`**: only fields in `api_writable_fields` (or relations in
   `api_writable_relations`) are writable. A class enters allowlist mode either by explicit

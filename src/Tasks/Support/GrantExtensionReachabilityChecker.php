@@ -140,7 +140,7 @@ class GrantExtensionReachabilityChecker
      * flagging it would suggest the wrong fix — the gap on a read-only
      * class is a missing `api_access` grant, not a missing extension.
      */
-    private const WRITE_VERBS = ['create', 'update', 'delete', 'action'];
+    private const WRITE_VERBS = ['create', 'update', 'delete', 'action', 'convert'];
 
     /**
      * #197's sibling diagnostic: {@see check()} only ever examines a class

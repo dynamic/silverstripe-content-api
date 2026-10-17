@@ -417,7 +417,7 @@ class ClassRegistryTest extends SapphireTest
      */
     public function testAccessVerbsIsInheritedByASubclass(): void
     {
-        Config::modify()->set(ApiTestDiscoveryRoot::class, 'content_api_access', 'GET,POST,PUT,DELETE,action');
+        Config::modify()->set(ApiTestDiscoveryRoot::class, 'content_api_access', 'GET,POST,PUT,DELETE,action,convert');
 
         $registry = ClassRegistry::singleton();
 
@@ -433,7 +433,7 @@ class ClassRegistryTest extends SapphireTest
      */
     public function testOwnAccessVerbsIgnoresInheritedContentApiAccess(): void
     {
-        Config::modify()->set(ApiTestDiscoveryRoot::class, 'content_api_access', 'GET,POST,PUT,DELETE,action');
+        Config::modify()->set(ApiTestDiscoveryRoot::class, 'content_api_access', 'GET,POST,PUT,DELETE,action,convert');
 
         $registry = ClassRegistry::singleton();
 

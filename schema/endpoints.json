@@ -548,7 +548,7 @@
     },
     {
       "name": "content_page_convert",
-      "description": "Change a page's class via newClassInstance (e.g. Page → BlockPage). Refuses the site home page without force=true.",
+      "description": "Change a page's class via newClassInstance (e.g. Page → BlockPage). Needs the bare \"convert\" verb in api_access on both the page's current class and the target class (plus update, and action when publishing). Atomic: a refused publish rolls the class change back. Refuses the site home page without force=true.",
       "method": "POST",
       "path": "pages/{id}/convert",
       "inputSchema": {

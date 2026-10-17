@@ -120,11 +120,22 @@ Changes a page's class via `newClassInstance()`. Body: `{"className": "...", "pu
 unless `force: true` (`403 HOMEPAGE_CONVERSION_FORBIDDEN`). A no-op (same class already) returns
 without error.
 
+A class change is a structural change, so both the page's current class and the target class
+must declare the bare `convert` verb in `api_access` (`403 FORBIDDEN_CLASS` otherwise), in
+addition to `update` (and `action` when `publish` isn't `none`). `api_access: true` includes it.
+The class change and the publish run in one transaction: a refused publish rolls the conversion
+back (`(convert rolled back)` in the message). A publishing convert reports what it published in
+`meta.published`.
+
 ## `POST pages/$ID/apply-template`
 
 Applies an `elemental-templates` `Template`'s element composition to a page. Requires
 `dynamic/silverstripe-elemental-templates` (`501 FEATURE_UNAVAILABLE` otherwise). Body:
 `{"templateId": 3, "publish": "none|recursive"}`.
+
+The page class needs `update` plus `canEdit()`, and the template needs `canView()`. Every class
+the apply will create (each template element's class and every child class `duplicate()`
+cascades to) needs the `create` verb plus `canCreate()`, checked before anything is written.
 
 `"recursive"` publishes the page, its elemental area, every element on it, and each element's own
 duplicated descendants — the records `DataObject::duplicate()` created when the template was
