@@ -39,10 +39,10 @@ use SilverStripe\Versioned\Versioned;
  * param) lets in-process population machinery (e.g. `CompositionService`)
  * write server-derived structural fields — like an element's `ParentID` —
  * without adding them to `api_writable_fields`, which would also expose them
- * on the untrusted colymba PUT surface. The `protected_fields` /
- * `api_protected_fields` denylist still applies to trusted writes; only the
- * allowlist check is bypassed. Nothing derived from request input may be
- * passed as `$internalFields`.
+ * on the untrusted colymba PUT surface. The global `protected_fields` floor
+ * still applies to trusted writes; the allowlist and the class's
+ * `api_protected_fields` are bypassed. Nothing derived from request input
+ * may be passed as `$internalFields`.
  */
 class WriteApplicator
 {
@@ -105,7 +105,8 @@ class WriteApplicator
      * `$internalFields` is a separate, trusted channel for server-derived
      * values the population machinery writes on the caller's behalf (e.g. a
      * composition element's `ParentID`) — it bypasses the `api_writable_fields`
-     * allowlist (the protected-field denylist still applies) and always wins
+     * allowlist and the class's `api_protected_fields` (the global
+     * `protected_fields` floor still applies) and always wins
      * over a same-named key in `$fields`, so a client can't smuggle in its own
      * value for a structural field under that name. Only in-process module
      * code should ever populate it; request-derived payloads must never flow
@@ -660,8 +661,9 @@ class WriteApplicator
      * `$trusted` is for server-derived fields the population machinery writes
      * on a caller's behalf (e.g. a composition's `ParentID`) — it is set by
      * in-process module code only, never from request input, so it is safe
-     * to bypass the allowlist for it. The protected-field denylist is an
-     * absolute floor and still applies even when `$trusted` is true.
+     * to bypass the allowlist and the class's `api_protected_fields` for it.
+     * The global `protected_fields` denylist is an absolute floor and still
+     * applies even when `$trusted` is true.
      */
     public function isFieldWritable(
         string $className,
@@ -669,10 +671,17 @@ class WriteApplicator
         ?string $relationName = null,
         bool $trusted = false
     ): bool {
-        $protected = array_merge(
-            (array) static::config()->get('protected_fields'),
-            (array) Config::inst()->get($className, 'api_protected_fields')
-        );
+        // A class's own api_protected_fields restricts what CLIENTS may write.
+        // The trusted channel carries server-derived values (an element's
+        // ParentID, and Sort when the client sent none) that a project has no
+        // reason to block; a guarded-policy project typically lists
+        // ParentID/Parent there to keep the link off the client surfaces
+        // (#233). The module's protected_fields floor still applies to
+        // trusted writes.
+        $protected = (array) static::config()->get('protected_fields');
+        if (!$trusted) {
+            $protected = array_merge($protected, (array) Config::inst()->get($className, 'api_protected_fields'));
+        }
 
         if (in_array($columnName, $protected, true) || ($relationName && in_array($relationName, $protected, true))) {
             return false;
