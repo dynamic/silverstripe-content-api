@@ -195,7 +195,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         // doesn't) — a real class, unlike the ApiTest* stubs above, so a host
         // project's grant leaks in and silently decides asset-permission
         // assertions instead of the test. Pin both real asset classes here so
-        // AssetHandler::governingAssetClass()'s ancestry walk starts from a
+        // AssetService::governingAssetClass()'s ancestry walk starts from a
         // known state against a host's own `api_access` specifically —
         // Config::modify() always overrides a host's YAML at runtime,
         // regardless of load order. This does NOT neutralize a host that

@@ -26,9 +26,10 @@ FEATURE_UNAVAILABLE` otherwise), `CONTENT_API_POPULATE`, and passes
 }
 ```
 
-Atomic: any failure rolls the whole request back. Exception: asset binaries are content-addressed
-and converge on retry, so a partially-ingested asset from an aborted run is never a problem —
-re-POSTing the same payload is safe and idempotent (updates existing records, never duplicates).
+Atomic: any failure rolls the database writes back. Exception: asset binaries written to the
+asset store persist if the request aborts. A retry with the default `conflict: overwrite` reuses
+the existing file record (and so needs `update` on the asset class, see
+[Assets](09_assets.md#authorization)); `rename` always writes a new record.
 
 ## `page`
 
@@ -42,8 +43,10 @@ re-POSTing the same payload is safe and idempotent (updates existing records, ne
 | `elementsRelation` | Default `"Elements"`. The area's has_many relation to its child elements — only needed for a custom area class that names it differently |
 | `fields` | Sparse page field updates — no populate-style whole-field-map copy |
 
-The page is created with `CONTENT_API_POPULATE` and the same `canCreate()` context-hydration as
-any other write. If the elemental area relation doesn't exist on the resolved page type, the
+Composing onto a matched page needs the page class `update` verb plus `canEdit()`, with or
+without `fields`. `createIfMissing` needs the page class `create` verb plus `canCreate()`; a
+`parentId` must name an existing page (`404 NOT_FOUND` otherwise) and reaches `canCreate()`'s
+context as `Parent`. See [Security model](04_security-model.md#composition-and-asset-paths). If the elemental area relation doesn't exist on the resolved page type, the
 request fails with `400 PAYLOAD_INVALID` naming the missing relation.
 
 ## `elements`
@@ -123,7 +126,10 @@ on a child entry must be a subclass of the relation's declared type
 
 Each entry: `ref` (optional alias), plus the same shape as [Assets](09_assets.md) —
 `filename`/`base64` required, `folder`/`title`/`externalId`/`conflict`/`publish` optional. A
-`base64`-less entry is `400 PAYLOAD_INVALID`.
+`base64`-less entry is `400 PAYLOAD_INVALID`. Entries are authorized exactly like `POST assets`
+(see [Assets](09_assets.md#authorization)). An entry without its own `publish` follows the
+composition: draft-only under `publish: "none"`, published otherwise. A draft-only fallback for
+a class without `action` is reported in that entry's `warnings`.
 
 ## `prune`
 
@@ -136,6 +142,8 @@ recoverable. `scope: "managed"` (default) only considers elements carrying an ex
 hand-authored CMS content (no external id) is invisible to prune and never touched. `scope:
 "all"` also considers external-id-less elements. Kept elements are anything in the payload's
 `elements[]` list by `externalId`; everything else in the area matching the scope is pruned.
+Each pruned element needs the `delete` verb on its class plus `canDelete()`; every candidate is
+checked before any is archived, so one refusal leaves the area untouched.
 
 ## `publish`
 

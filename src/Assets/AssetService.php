@@ -5,12 +5,18 @@ namespace Dynamic\ContentApi\Assets;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
+use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Security\PermissionPolicy;
 use SilverStripe\Assets\File;
 use SilverStripe\Assets\Folder;
+use SilverStripe\Assets\FolderNameFilter;
 use SilverStripe\Assets\Storage\AssetStore;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\ValidationException;
+use SilverStripe\Security\Member;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * First-class asset ingestion — the API replacement for populate's
@@ -24,6 +30,10 @@ use SilverStripe\ORM\ValidationException;
  * - `overwrite` (default): replace content (skipped when hashes match)
  * - `skip`: return the existing record untouched
  * - `rename`: store under a deduplicated name, new record
+ *
+ * Every caller authorizes through authorizeIngest() first, so `POST assets`
+ * and composition `assets[]` apply the same verbs to the record actually
+ * written.
  */
 class AssetService
 {
@@ -31,9 +41,251 @@ class AssetService
 
     private static array $dependencies = [
         'externalIds' => '%$' . ExternalIdResolver::class,
+        'policy' => '%$' . PermissionPolicy::class,
+        'registry' => '%$' . ClassRegistry::class,
     ];
 
     public ?ExternalIdResolver $externalIds = null;
+
+    public ?PermissionPolicy $policy = null;
+
+    public ?ClassRegistry $registry = null;
+
+    /**
+     * Authorize an ingest before anything is written, against the record the
+     * ingest will actually touch (#229, #235):
+     *
+     * - `skip` onto an existing file: `read` (skip writes nothing).
+     * - `overwrite` onto an existing file: `update` on its class plus
+     *   `canEdit()`.
+     * - a new file (no existing one, or `rename`): `create` on the class the
+     *   extension maps to plus `canCreate()` with the target folder as
+     *   `Parent`; a missing folder also needs Folder::canCreate().
+     * - publishing (the default unless `publish` is false): `action` on the
+     *   class written. When `publish` was not sent and the class lacks
+     *   `action`, the file is written draft-only and an ACTION_VERB_MISSING
+     *   warning is returned instead of a refusal. An explicit
+     *   `"publish": true` without `action` is refused.
+     *
+     * Returns `$meta` with `publish` resolved to a bool for ingest(), plus
+     * any warnings.
+     *
+     * @param array<string, mixed> $meta
+     * @return array{meta: array<string, mixed>, warnings: array<int, array<string, string>>}
+     * @throws ApiError
+     */
+    public function authorizeIngest(array $meta, Member $member): array
+    {
+        // A JSON null means "not sent".
+        $explicitPublish = isset($meta['publish']) ? $this->publishFlag($meta['publish']) : null;
+        $publish = $explicitPublish ?? true;
+        $conflict = (string) ($meta['conflict'] ?? 'overwrite');
+        $existing = $this->resolveExisting($meta);
+        $warnings = [];
+
+        if ($existing && $conflict === 'skip') {
+            $this->authorizeOn($existing, 'read', $member);
+            $meta['publish'] = false;
+
+            return ['meta' => $meta, 'warnings' => $warnings];
+        }
+
+        if ($existing && $conflict === 'overwrite') {
+            $this->authorizeOn($existing, 'update', $member);
+            $writtenClass = get_class($existing);
+        } else {
+            $writtenClass = $this->resolveTargetClass($meta);
+            $governing = $this->governingAssetClass($writtenClass);
+            $this->policy->checkClassAccess($governing, 'create', $member);
+            $this->authorizeFolder($meta, $member, $writtenClass);
+        }
+
+        if ($publish) {
+            $governing = $this->governingAssetClass($writtenClass);
+
+            if ($explicitPublish === null && !in_array('action', $this->registry->accessVerbs($governing), true)) {
+                $publish = false;
+                $warnings[] = [
+                    'code' => ErrorCode::ACTION_VERB_MISSING->value,
+                    'message' => sprintf(
+                        '%s does not grant "action", so the file was written draft-only. Add "action" to '
+                            . 'its api_access config, or send "publish": false to skip publishing.',
+                        $governing
+                    ),
+                    'field' => 'publish',
+                ];
+            } else {
+                $this->policy->checkClassAccess($governing, 'action', $member);
+
+                if ($existing && $conflict === 'overwrite') {
+                    $this->policy->checkRecordAccess($existing, 'action', $member);
+                }
+            }
+        }
+
+        $meta['publish'] = $publish;
+
+        return ['meta' => $meta, 'warnings' => $warnings];
+    }
+
+    /**
+     * The class that governs API access for an asset record. Asset endpoints
+     * take no classRef, so walk the concrete class's ancestry (e.g. Image →
+     * File) and return the nearest class that is actually granted access;
+     * fall back to File so a fully-ungranted asset still fails the
+     * deny-by-default check.
+     */
+    public function governingAssetClass(string $concreteClass): string
+    {
+        $candidate = $concreteClass;
+
+        while ($candidate) {
+            if ($this->registry->accessVerbs($candidate) !== []) {
+                return $candidate;
+            }
+
+            if ($candidate === File::class) {
+                break;
+            }
+
+            $candidate = get_parent_class($candidate) ?: null;
+        }
+
+        return File::class;
+    }
+
+    /**
+     * Strict boolean parse for an asset `publish` flag: a JSON payload's
+     * string `"false"` must not read as true (#239).
+     *
+     * @throws ApiError PAYLOAD_INVALID
+     */
+    public function publishFlag(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        $parsed = match (true) {
+            $value === 1, $value === '1', $value === 'true' => true,
+            $value === 0, $value === '0', $value === 'false' => false,
+            default => null,
+        };
+
+        if ($parsed === null) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                '"publish" must be true or false.',
+                [['field' => 'publish']]
+            );
+        }
+
+        return $parsed;
+    }
+
+    /**
+     * The existing file a skip/overwrite ingest would reuse, read on the
+     * draft stage (where ingest writes) so a draft-only file counts. Null for
+     * `rename`, an unusable filename, or no file at the path.
+     */
+    public function resolveExisting(array $meta): ?File
+    {
+        $targetPath = $this->targetPath($meta);
+
+        if ($targetPath === null || (string) ($meta['conflict'] ?? 'overwrite') === 'rename') {
+            return null;
+        }
+
+        return Versioned::withVersionedMode(function () use ($targetPath) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            return File::get()->filter('FileFilename', $targetPath)->first();
+        });
+    }
+
+    /**
+     * Class verb plus record can*() for an existing asset, with the class
+     * verb read from its governing class.
+     */
+    protected function authorizeOn(File $record, string $verb, Member $member): void
+    {
+        $this->policy->checkClassAccess($this->governingAssetClass(get_class($record)), $verb, $member);
+        $this->policy->checkRecordAccess($record, $verb, $member);
+    }
+
+    /**
+     * canCreate() for a new file with its target folder as `Parent`, and
+     * Folder::canCreate() when the folder (or part of it) does not exist
+     * yet, since Folder::find_or_make() would write it.
+     */
+    protected function authorizeFolder(array $meta, Member $member, string $writtenClass): void
+    {
+        $folderPath = trim((string) ($meta['folder'] ?? ''), '/');
+        $folder = null;
+
+        if ($folderPath !== '') {
+            $folder = $this->findFolder($folderPath);
+
+            // Folder creation is a side effect of the upload, so it is held to
+            // the record-level rule only (Folder::canCreate()), not to a
+            // class verb on Folder that a project granting just Image would
+            // never declare.
+            if (!$folder) {
+                if (!Folder::singleton()->canCreate($member)) {
+                    throw new ApiError(ErrorCode::FORBIDDEN_RECORD, 'Not allowed to create folders.');
+                }
+            }
+        }
+
+        $context = $folder ? ['Parent' => $folder] : [];
+
+        if (!DataObject::singleton($writtenClass)->canCreate($member, $context)) {
+            throw new ApiError(ErrorCode::FORBIDDEN_RECORD, 'Not allowed to create files.');
+        }
+    }
+
+    /**
+     * Folder::find_or_make()'s lookup without the create: walk the path one
+     * segment at a time on the draft stage, matching a segment by its
+     * filtered or raw name the same way. Null when any segment is missing.
+     */
+    protected function findFolder(string $folderPath): ?Folder
+    {
+        return Versioned::withVersionedMode(function () use ($folderPath) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            $filter = FolderNameFilter::create();
+            $parentID = 0;
+            $folder = null;
+
+            foreach (array_filter(preg_split('#[/\\\\]+#', $folderPath) ?: []) as $part) {
+                $folder = Folder::get()->filter([
+                    'ParentID' => $parentID,
+                    'Name' => [$filter->filter($part), $part],
+                ])->first();
+
+                if (!$folder) {
+                    return null;
+                }
+
+                $parentID = (int) $folder->ID;
+            }
+
+            return $folder;
+        });
+    }
+
+    protected function targetPath(array $meta): ?string
+    {
+        $filename = basename(trim((string) ($meta['filename'] ?? '')));
+        $folder = trim((string) ($meta['folder'] ?? ''), '/');
+
+        if ($filename === '' || $filename === '.') {
+            return null;
+        }
+
+        return $folder !== '' ? "{$folder}/{$filename}" : $filename;
+    }
 
     /**
      * The File subclass a given upload payload will resolve to — the class of
@@ -48,19 +300,17 @@ class AssetService
     public function resolveTargetClass(array $meta): string
     {
         $filename = basename(trim((string) ($meta['filename'] ?? '')));
-        $folder = trim((string) ($meta['folder'] ?? ''), '/');
-        $conflict = (string) ($meta['conflict'] ?? 'overwrite');
 
         if ($filename === '' || $filename === '.') {
             return File::class;
         }
 
-        $targetPath = $folder !== '' ? "{$folder}/{$filename}" : $filename;
-        $existing = File::get()->filter('FileFilename', $targetPath)->first();
-
         // `rename` never reuses the existing record — it writes a new record of
-        // the extension-derived class — so only skip/overwrite adopt its class.
-        if ($existing && $conflict !== 'rename') {
+        // the extension-derived class — so resolveExisting() returns null for
+        // it and only skip/overwrite adopt the existing record's class.
+        $existing = $this->resolveExisting($meta);
+
+        if ($existing) {
             return get_class($existing);
         }
 
@@ -132,7 +382,9 @@ class AssetService
         $existing = File::get()->filter('FileFilename', $targetPath)->first();
 
         if ($existing && $conflict === 'skip') {
-            return ['record' => $this->finalize($existing, $meta, false), 'existed' => true];
+            // A true no-op, as documented: no metadata rewrite, no publish
+            // (#246).
+            return ['record' => $existing, 'existed' => true];
         }
 
         if ($existing && $conflict === 'overwrite' && $existing->getHash() === sha1($binary)) {

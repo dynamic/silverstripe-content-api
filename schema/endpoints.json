@@ -429,7 +429,7 @@
                 },
                 "publish": {
                   "type": "boolean",
-                  "default": true
+                  "description": "Publish the asset after writing. Defaults to the composition's own mode: false under publish \"none\", true otherwise. Publishing needs the asset class's action verb; without it, an asset that does not set publish is written draft-only with an ACTION_VERB_MISSING warning."
                 }
               },
               "required": [
@@ -517,7 +517,8 @@
           },
           "publish": {
             "type": "boolean",
-            "default": true
+            "default": true,
+            "description": "Publish after writing. Needs the asset class's action verb; when publish is not sent and the class lacks action, the file is written draft-only with an ACTION_VERB_MISSING warning."
           }
         },
         "required": [

@@ -19,7 +19,36 @@ All notable changes to this project are documented here. Format loosely follows
   `silverstripe-content-api-mcp#25`'s open success criterion (a server-side way to verify a real
   restructure session ran through MCP tools).
 
+### Security
+- **(#227, #229, #235)** Composition and asset write paths now check the verb for what they do to
+  each record, at both the class and record level (new `PermissionPolicy::authorize()`). See
+  docs/en/04_security-model.md#composition-and-asset-paths for the full table.
+  - Composition `prune` needs `delete` on every archived element plus `canDelete()`. All
+    candidates are checked before any is archived.
+  - A match-only composition (no `page.fields`) needs the page class `update` verb.
+    `createIfMissing` needs the page class `create` verb. A `parentId` must exist (`404
+    NOT_FOUND` otherwise) and reaches `canCreate()`'s context as `Parent`.
+  - `POST assets` and composition `assets[]` share one authorization
+    (`AssetService::authorizeIngest()`). A new file needs `create` plus `canCreate()` with its
+    folder as `Parent` (and `Folder::canCreate()` for a missing folder). `overwrite` needs
+    `update` plus `canEdit()` on the existing file, found on the draft stage. `skip` needs
+    `read`. Publishing needs `action`.
+
+  **Behavior changes:**
+  - An asset upload that does not send `publish`, on a class without `action`, is now written
+    draft-only with an `ACTION_VERB_MISSING` warning in `data.warnings`; it used to publish. An
+    explicit `"publish": true` without `action` is `403 FORBIDDEN_CLASS`.
+  - A composition `assets[]` entry without its own `publish` now follows the composition: it is
+    draft-only under `publish: "none"` (it used to publish).
+  - Composition asset ingest, `overwrite` and `prune` now need the verbs above, where they
+    previously needed none of them.
+- **(#239)** An asset `publish` value is parsed strictly, in JSON and multipart alike: the string
+  `"false"` no longer reads as true, and anything other than a boolean, `1`/`0` or
+  `"true"`/`"false"`/`"1"`/`"0"` is `400 PAYLOAD_INVALID`.
+
 ### Fixed
+- **(#246)** Asset `conflict: skip` is a true no-op, as documented. It no longer rewrites `title`
+  or `externalId` on the existing record.
 - **(#233)** `POST compositions/page` can create new elements again when a project lists an
   element's parent link in `api_protected_fields` (`ParentID`/`Parent`, as the guarded-policy
   setup does to keep it off the client surfaces). Previously every new element failed with
