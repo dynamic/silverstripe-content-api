@@ -42,6 +42,7 @@ enum ErrorCode: string
     case ACTION_VERB_MISSING = 'ACTION_VERB_MISSING';
     case VALUE_SANITISED = 'VALUE_SANITISED';
     case STAGE_CLASS_MISMATCH = 'STAGE_CLASS_MISMATCH';
+    case PAYLOAD_TOO_LARGE = 'PAYLOAD_TOO_LARGE';
 
     public function httpStatus(): int
     {
@@ -60,6 +61,7 @@ enum ErrorCode: string
             ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE, ErrorCode::ACTION_VERB_MISSING,
             ErrorCode::VALUE_SANITISED => 422,
             ErrorCode::PAYLOAD_INVALID => 400,
+            ErrorCode::PAYLOAD_TOO_LARGE => 413,
             ErrorCode::ASSET_READ_FAILED => 502,
             ErrorCode::FEATURE_UNAVAILABLE => 501,
             ErrorCode::SERVER_ERROR, ErrorCode::ROLLBACK_UNVERIFIED => 500,

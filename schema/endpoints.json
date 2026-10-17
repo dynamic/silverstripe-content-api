@@ -529,7 +529,7 @@
     },
     {
       "name": "content_asset_read",
-      "description": "Read one asset (numeric id or ext:) with url, hash and filename.",
+      "description": "Read one asset (numeric id or ext:) with url, visibility, hash and filename. url is fetchable without a CMS login only when visibility is \"public\"; a \"protected\" (draft-only or restricted) file's url needs a CMS session that may view it.",
       "method": "GET",
       "path": "assets/{id}",
       "inputSchema": {
