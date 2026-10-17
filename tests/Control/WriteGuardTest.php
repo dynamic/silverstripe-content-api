@@ -385,4 +385,22 @@ class WriteGuardTest extends ContentApiTestCase
             'ParentID reverted — the trusted internal channel does not leak onto the public PUT surface'
         );
     }
+
+    /**
+     * #225: colymba's own write path sanitises an HTML field too.
+     */
+    public function testColymbaHtmlWritesAreSanitised(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", [
+            'Body' => '<script>alert(1)</script><p>ok</p>',
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $stored = (string) ApiTestObject::get()->byID($record->ID)->getField('Body');
+        $this->assertStringNotContainsString('<script', $stored);
+        $this->assertStringContainsString('<p>ok</p>', $stored);
+    }
 }

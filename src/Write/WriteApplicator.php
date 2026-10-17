@@ -9,10 +9,16 @@ use Dynamic\ContentApi\Registry\ClassRegistry;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorConfig;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorField;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorSanitiser;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\FieldType\DBEnum;
+use SilverStripe\ORM\FieldType\DBHTMLText;
+use SilverStripe\ORM\FieldType\DBHTMLVarchar;
 use SilverStripe\ORM\FieldType\DBMultiEnum;
 use SilverStripe\Versioned\Versioned;
+use SilverStripe\View\Parsers\HTMLValue;
 
 /**
  * Applies a sparse write payload to a record: only keys present in the
@@ -50,6 +56,20 @@ class WriteApplicator
     use Injectable;
 
     private static string $policy = 'guarded';
+
+    /**
+     * Sanitise HTML-typed field writes like a CMS save does — see
+     * sanitiseHtml(). Set false to store API-written HTML raw.
+     */
+    private static bool $sanitise_html = true;
+
+    /**
+     * The HTMLEditorConfig identifier whose element rules sanitising uses.
+     * `cms` is the config a CMS edit form saves through; outside the CMS the
+     * active config is `default`, which declares no element rules and would
+     * make sanitising a no-op.
+     */
+    private static string $html_editor_config = 'cms';
 
     /**
      * Never writable regardless of policy.
@@ -298,6 +318,10 @@ class WriteApplicator
 
         foreach ($plan as [$name, $columnName, $relationName, $value]) {
             $value = $this->transformValue($record, $name, $value);
+
+            if ($relationName === null) {
+                $value = $this->sanitiseHtml($record, $columnName, $value);
+            }
 
             if ($relationName !== null) {
                 $resolved = $this->resolveRelation($relationName, $hasOne[$relationName], $value);
@@ -875,6 +899,45 @@ class WriteApplicator
     {
         return Config::inst()->get($className, 'api_unknown_fields')
             ?: (string) static::config()->get('unknown_fields');
+    }
+
+    /**
+     * Run an HTML-typed field's value (`DBHTMLText`/`DBHTMLVarchar`) through
+     * the configured HTMLEditorSanitiser, so an API write stores what a CMS
+     * save of the same value would (#225): `HTMLEditorField::saveInto()`
+     * sanitises against the editor config (`html_editor_config`, `cms` by
+     * default — what a CMS edit form uses), and nothing else on a
+     * write path does. Without it a token with `update` on a class with an
+     * HTML field can put script into a public page, since templates render
+     * these fields raw.
+     *
+     * On by default. Off when either this class's `sanitise_html` or the
+     * CMS's own `HTMLEditorField.sanitise_server_side` is false, so a project
+     * that disabled CMS sanitising gets the same raw storage here. Public:
+     * WriteGuardExtension applies the same step to colymba's `/api` writes.
+     */
+    public function sanitiseHtml(DataObject $record, string $columnName, mixed $value): mixed
+    {
+        if (
+            !is_string($value)
+            || $value === ''
+            || !static::config()->get('sanitise_html')
+            || !HTMLEditorField::config()->get('sanitise_server_side')
+        ) {
+            return $value;
+        }
+
+        $field = $record->dbObject($columnName);
+
+        if (!$field instanceof DBHTMLText && !$field instanceof DBHTMLVarchar) {
+            return $value;
+        }
+
+        $html = HTMLValue::create($value);
+        HTMLEditorSanitiser::create(HTMLEditorConfig::get((string) static::config()->get('html_editor_config')))
+            ->sanitise($html);
+
+        return $html->getContent();
     }
 
     protected function transformValue(DataObject $record, string $fieldName, mixed $value): mixed

@@ -40,6 +40,9 @@ class ApiTestObject extends DataObject implements TestOnly
         // enumValues() directly, instead of each comma-separated piece,
         // would reject every legitimate multi-value write).
         'Colors' => "MultiEnum('red,green,blue', 'red')",
+        // An HTML field — exists so write-path HTML sanitising (#225) has a
+        // real DBHTMLText column to test against.
+        'Body' => 'HTMLText',
     ];
 
     private static array $has_one = [

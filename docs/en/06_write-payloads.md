@@ -29,6 +29,11 @@ its own declared list — see `schema/$ClassRef`'s `values` — and rejected wit
 `422 INVALID_VALUE` if it isn't in it; a MultiEnum's comma-separated values are each checked
 independently.
 
+HTML-typed fields (`DBHTMLText`/`DBHTMLVarchar`) are sanitised on write with the CMS editor's
+rules, the same as a CMS save: elements and attributes the `cms` editor config doesn't allow are
+removed. See `WriteApplicator.sanitise_html` in [Configuration](02_configuration.md#writeapplicator)
+to turn it off.
+
 ### has_one values
 
 A non-polymorphic has_one accepts:

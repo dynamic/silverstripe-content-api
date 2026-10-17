@@ -22,6 +22,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
 use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorField;
+use Dynamic\ContentApi\Write\WriteApplicator;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Versioned\Versioned;
 
@@ -2544,5 +2546,47 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('updated', $body['data']['results'][0]['status']);
         $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($childOne->ID)->ParentID);
         $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($childTwo->ID)->ParentID);
+    }
+
+    private function writeBody(string $html): string
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => (int) $record->ID,
+            'fields' => ['Body' => $html],
+        ]]], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status'], json_encode($body));
+
+        return (string) ApiTestObject::get()->byID($record->ID)->getField('Body');
+    }
+
+    /**
+     * #225: an HTML field written through the API is sanitised like a CMS
+     * save, so script never reaches a page that renders it raw.
+     */
+    public function testHtmlFieldWritesAreSanitised(): void
+    {
+        $stored = $this->writeBody('<script>alert(1)</script><p>ok</p>');
+
+        $this->assertStringNotContainsString('<script', $stored);
+        $this->assertStringContainsString('<p>ok</p>', $stored);
+    }
+
+    public function testHtmlSanitisingCanBeTurnedOff(): void
+    {
+        Config::modify()->set(WriteApplicator::class, 'sanitise_html', false);
+
+        $this->assertStringContainsString('<script>', $this->writeBody('<script>alert(1)</script><p>ok</p>'));
+    }
+
+    public function testHtmlSanitisingFollowsTheCmsSwitch(): void
+    {
+        Config::modify()->set(HTMLEditorField::class, 'sanitise_server_side', false);
+
+        $this->assertStringContainsString('<script>', $this->writeBody('<script>alert(1)</script><p>ok</p>'));
     }
 }

@@ -88,6 +88,15 @@ All notable changes to this project are documented here. Format loosely follows
   checked only the owning record. **Behavior change:** projects writing has_many relations need
   `update` on the child class.
 
+- **(#225)** HTML-typed field writes (`DBHTMLText`/`DBHTMLVarchar`) are sanitised with
+  `HTMLEditorSanitiser` and the `cms` editor config's rules, on the module's pipeline and on
+  colymba's `/api`, so an API write stores what a CMS save would. Any token with `update` on a
+  class with an HTML field could previously put script into a page that renders it raw.
+  **Behavior change:** markup outside the editor rules (`<script>`, `on*` attributes, …) is
+  stripped. New config `WriteApplicator.sanitise_html` (default `true`) turns it off, as does
+  the CMS's own `HTMLEditorField.sanitise_server_side: false`; `html_editor_config` (default
+  `cms`) picks the editor config whose rules apply.
+
 ### Changed
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.
   A refused publish now rolls the conversion back (`(convert rolled back)` in the message)
