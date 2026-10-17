@@ -792,7 +792,8 @@ class FingerprintService
 
         $value = $record->getField($this->externalIds->fieldName());
 
-        return $value === null || $value === '' ? null : (string) $value;
+        // Same falsy rule as RecordSerializer's `externalId`.
+        return $value ? (string) $value : null;
     }
 
     private function onDraft(callable $read): mixed

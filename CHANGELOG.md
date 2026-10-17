@@ -177,8 +177,9 @@ All notable changes to this project are documented here. Format loosely follows
     count no longer grows with the rows it visits.
   - `limit` must be a positive integer and `offset` a non-negative one (`400 PAYLOAD_INVALID`
     otherwise; `limit` is still capped at `max_limit`). An empty filter value (`Title=`) matches
-    an empty or `NULL` field instead of being ignored. `GET fingerprint`'s `includeIds` must be
-    a boolean.
+    an empty or `NULL` text field instead of being ignored; on any other field, or an unknown
+    one, it is now a 400/422 like a non-empty value. `GET fingerprint`'s `includeIds` must be
+    `1`/`0`/`true`/`false`.
   - `GET fingerprint`: related rows and violations report the row's own class; tied related rows
     sort on every emitted field; `externalId` comes from the configured external-id column;
     visibility is decided on the draft stage.

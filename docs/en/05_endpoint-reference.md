@@ -50,7 +50,7 @@ List with query-string filtering, sorting, and pagination.
 
 | Param | Notes |
 |---|---|
-| `Field=value` | Exact match filter. An empty value (`Title=`) matches records whose field is empty or `NULL` |
+| `Field=value` | Exact match filter. An empty value (`Title=`) matches records whose field is empty or `NULL` (also under `ExactMatch`, `not`, `case`, `nocase`); it applies to text fields only, anything else is `400 PAYLOAD_INVALID` |
 | `Field__Modifier=value` | e.g. `Title__PartialMatch=Home`. Modifiers: `ExactMatch, PartialMatch, StartsWith, EndsWith, GreaterThan, GreaterThanOrEqual, LessThan, LessThanOrEqual, not, nocase, case` |
 | `sort` | `Field` (ASC) or `-Field` (DESC); comma-separated for multiple |
 | `limit` | A positive integer. Default `50`, capped at `500` regardless of what's requested. Anything else (`0`, negative, non-numeric, `1.9`) is `400 PAYLOAD_INVALID` |

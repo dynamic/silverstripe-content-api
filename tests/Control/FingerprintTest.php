@@ -1108,9 +1108,12 @@ class FingerprintTest extends ContentApiTestCase
      */
     public function testANonBooleanIncludeIdsIsRejected(): void
     {
-        $response = $this->apiGet('fingerprint?includeIds=ture', $this->adminToken);
+        foreach (['ture', 'yes', 'on'] as $value) {
+            $response = $this->apiGet('fingerprint?includeIds=' . $value, $this->adminToken);
+            $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        }
 
-        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+        $this->assertSame(200, $this->apiGet('fingerprint?includeIds=TRUE', $this->adminToken)->getStatusCode());
     }
 
     /**

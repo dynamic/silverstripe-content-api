@@ -15,6 +15,7 @@ use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataList;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\FieldType\DBString;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -124,9 +125,10 @@ class RecordsHandler
             $list = $this->applySort($list, $className, $request);
 
             // canViewRecord() below runs Versioned::canViewVersioned() per
-            // row, a version-number query each unless the cache is primed:
-            // two queries for the whole list instead (#244).
-            if (DataObject::has_extension($className, Versioned::class)) {
+            // row on a draft read, a version-number query each unless the
+            // cache is primed: a few batched queries instead (#244). A live
+            // read returns before any lookup, so it needs none.
+            if ($stage === 'draft' && DataObject::has_extension($className, Versioned::class)) {
                 VersionCache::prime($className, array_map('intval', $list->column('ID')));
             }
 
@@ -281,9 +283,6 @@ class RecordsHandler
         $modifiers = (array) static::config()->get('allowed_filter_modifiers');
 
         foreach ($request->getVars() as $key => $value) {
-            // An empty value is a filter for "no value", not "no filter"
-            // (#244): `?Title=` matches records whose Title is empty or
-            // NULL (a string field stores '' as NULL).
             if (in_array($key, $reserved, true) || $value === null) {
                 continue;
             }
@@ -313,16 +312,39 @@ class RecordsHandler
             }
 
             $filterKey = $modifier ? "{$field}:{$modifier}" : $field;
-            $filterValue = match (true) {
-                $value === '' && $modifier === null => ['', null],
-                str_contains((string) $value, ',') => explode(',', (string) $value),
-                default => $value,
-            };
+            $filterValue = str_contains((string) $value, ',') ? explode(',', (string) $value) : $value;
+
+            // An empty value is a filter for "no value", not "no filter"
+            // (#244). A string field stores '' as NULL, so an exact match
+            // (or its negation) on '' also matches NULL. Only string fields
+            // take one: on a number or boolean MySQL reads '' as 0.
+            if ($filterValue === '' || (is_array($filterValue) && in_array('', $filterValue, true))) {
+                $this->assertStringField($className, $field);
+
+                if (in_array($modifier, [null, 'ExactMatch', 'not', 'case', 'nocase'], true)) {
+                    $filterValue = array_merge((array) $filterValue, [null]);
+                }
+            }
 
             $list = $list->filter($filterKey, $filterValue);
         }
 
         return $list;
+    }
+
+    /**
+     * @throws ApiError PAYLOAD_INVALID when the field isn't a string column
+     */
+    private function assertStringField(string $className, string $field): void
+    {
+        $dbField = DataObject::singleton($className)->dbObject($field);
+
+        if (!$dbField instanceof DBString) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('An empty filter value only applies to a text field; "%s" is not one.', $field)
+            );
+        }
     }
 
     private function applySort(DataList $list, string $className, HTTPRequest $request): DataList
