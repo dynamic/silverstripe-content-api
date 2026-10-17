@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyCollidingDbFieldObje
 use Dynamic\ContentApi\Tests\Stub\ApiTestMultiRelationalPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Write\WriteApplicator;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\ORM\DataObject;
 
@@ -268,5 +269,34 @@ class WriteApplicatorTest extends SapphireTest
         $element = ApiTestElement::create(['Title' => 'Attach attempt']);
         $applicator->applyFields($element, ['Parent' => 999], []);
         $this->assertSame(999, (int) $element->ParentID);
+    }
+
+    /**
+     * #233: a class's `api_protected_fields` restricts client-supplied
+     * fields only. A guarded-policy project typically lists an element's
+     * `ParentID` there to keep it off the client surfaces, and the trusted channel
+     * (a composition's server-derived `ParentID`) must still be able to
+     * write it. The module's global `protected_fields` floor still applies
+     * to trusted writes.
+     */
+    public function testTrustedChannelBypassesClassApiProtectedFieldsButNotTheGlobalFloor(): void
+    {
+        Config::modify()->set(ApiTestElement::class, 'api_protected_fields', ['ParentID', 'Parent']);
+        $applicator = WriteApplicator::create();
+
+        $this->assertFalse($applicator->isFieldWritable(ApiTestElement::class, 'ParentID', 'Parent'));
+        $this->assertTrue($applicator->isFieldWritable(ApiTestElement::class, 'ParentID', 'Parent', true));
+        $this->assertFalse($applicator->isFieldWritable(ApiTestElement::class, 'ClassName', null, true));
+
+        $element = ApiTestElement::create(['Title' => 'Trusted attach']);
+        $applicator->applyFields($element, ['Title' => 'Trusted attach'], ['ParentID' => 42]);
+        $this->assertSame(42, (int) $element->ParentID);
+
+        try {
+            $applicator->applyFields(ApiTestElement::create(), ['ParentID' => 42], []);
+            $this->fail('a client-supplied ParentID listed in api_protected_fields must be rejected');
+        } catch (ApiError $error) {
+            $this->assertSame(ErrorCode::READONLY_FIELD, $error->getErrorCode());
+        }
     }
 }
