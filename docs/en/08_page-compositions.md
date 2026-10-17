@@ -112,9 +112,11 @@ surfaces relate to this module's write pipeline, tracked separately.
 `{"$ref": "heroImg"}` anywhere inside `fields`/`relations` (nested, deep) resolves to
 `{"id": <resolved-record-id>}` once the aliased asset/element has been written. Elements are
 processed with a deferred-retry queue: an element referencing a `$ref` not yet resolved is
-retried after the others process, so `$ref` order within the request doesn't matter. A `$ref`
-that never resolves is `422 UNRESOLVED_REF`; a cycle among only-deferred elements is `422
-CIRCULAR_REF`.
+retried after the others process, so `$ref` order within the request doesn't matter. When a
+pass makes no progress, an alias no stuck element declares (via its own `ref`) is `422
+UNRESOLVED_REF`, however many elements want it. `422 CIRCULAR_REF` means every alias still
+wanted is declared by a stuck element, e.g. two elements referencing each other or one
+referencing its own `ref`.
 
 ### `children`
 
@@ -127,6 +129,11 @@ belongs to a different element, even on a global external-id collision — that 
 treated as not-found (a new child is created) rather than a silent re-parent. A `class` override
 on a child entry must be a subclass of the relation's declared type
 (`400 PAYLOAD_INVALID` otherwise).
+
+Children have no ordering default: array order does **not** set a sort column, because child
+classes share none. Pass the class's own sort field (e.g. `SortOrder`) in `fields`. Without
+`prune`, children are append-and-update only: a child left out of the list stays attached. With
+`prune` enabled, see below.
 
 ## `assets`
 
@@ -150,6 +157,16 @@ hand-authored CMS content (no external id) is invisible to prune and never touch
 `elements[]` list by `externalId`; everything else in the area matching the scope is pruned.
 Each pruned element needs the `delete` verb on its class plus `canDelete()`; every candidate is
 checked before any is archived, so one refusal leaves the area untouched.
+
+Prune also covers each element's `children`. For every relation an element entry names under
+`children`, attached children the request did not write are removed by the same scope rule:
+archived when the child class is versioned, deleted otherwise. An empty list removes every
+child under that relation. A relation the entry does not name is left alone, so omit `children`
+(or the relation) to keep what is there. Every key under `children` must be a has_many of the
+element, even with an empty list (`422 UNKNOWN_RELATION` otherwise). Two entries upserting the
+same element keep each other's children. Each removed
+child needs `delete` on its class plus `canDelete()`, and is reported in `pruned` with its
+`relation` and owning `element` id. A refusal rolls back the whole composition.
 
 ## `publish`
 
@@ -183,7 +200,9 @@ silently drops anything unversioned from its target set rather than erroring.
   "elements": [ { "index": 0, "ref": "heroImg", "externalId": "about-card-1", "id": 56,
                   "status": "created", "warnings": [], "children": [...] } ],
   "assets": [ { "index": 0, "ref": "heroImg", "id": 78, "filename": "...", "status": "created" } ],
-  "pruned": [ { "id": 90, "externalId": "old-card", "className": "ElementCard" } ],
+  "pruned": [ { "id": 90, "externalId": "old-card", "className": "ElementCard" },
+              { "id": 91, "externalId": "old-panel", "className": "Panel",
+                "relation": "Panels", "element": 56 } ],
   "published": [ { "id": 56, "className": "ElementCard" }, { "id": 12, "className": "Page" } ]
 }
 ```

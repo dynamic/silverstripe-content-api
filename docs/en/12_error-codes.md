@@ -35,8 +35,8 @@ otherwise.
 | `READONLY_FIELD` | 422 | Field/relation isn't writable per the guarded/allowlist policy, is protected, or is a bare polymorphic `{Name}Class` column set directly |
 | `INVALID_VALUE` | 422 | A value doesn't fit its column's own constraints — currently: an Enum/MultiEnum field given a value outside its declared list |
 | `UNKNOWN_RELATION` | 422 | has_many/many_many relation name doesn't exist on the class |
-| `UNRESOLVED_REF` | 422 | A composition `$ref` alias never resolves |
-| `CIRCULAR_REF` | 422 | A cycle among only-deferred composition elements (mutual unresolved `$ref`s) |
+| `UNRESOLVED_REF` | 422 | A composition `$ref` alias never resolves and no stuck element declares it |
+| `CIRCULAR_REF` | 422 | Every unresolved composition `$ref` is declared by a stuck element (a cycle, including a self-reference) |
 | `EXTERNAL_ID_UNSUPPORTED` | 422 | Class lacks the external-id column (`ExternalIdentifierExtension` not applied) |
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
 | `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
