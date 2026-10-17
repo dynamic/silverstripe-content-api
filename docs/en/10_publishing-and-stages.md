@@ -4,8 +4,10 @@
 
 SilverStripe's Versioned model applies: every write lands on **draft** first; **live** is a
 separate, explicit publish step. This module makes that explicit in every response
-(`RecordSerializer`'s `stage` block: `{"draft": true, "live": bool, "modifiedOnDraft": bool}`)
-rather than leaving it implicit the way a direct ORM write does.
+(`RecordSerializer`'s `stage` block: `{"draft": bool, "live": bool, "modifiedOnDraft": bool}`,
+read from Versioned's `isOnDraft()`/`isPublished()`/`isModifiedOnDraft()`) rather than leaving it
+implicit the way a direct ORM write does. `draft` is `false` only for a live-only record (one
+deleted from draft), which a default draft read can't reach.
 
 ## `_stage` on reads
 
@@ -70,6 +72,11 @@ old one, and querying through the new class's own (narrower) subclass set would 
 silently fail to find it — a subclass's own subclass set never includes its ancestor. That would
 report a genuinely-live, genuinely-divergent record as `liveExists: false` / `ok: true`; the
 actual class difference now surfaces correctly as an ordinary `ClassName` field mismatch instead.
+
+The same state blocks taking the page down: `unpublish`, `archive` and a batch `delete` refuse
+with `409 STAGE_CLASS_MISMATCH` while the live row is a different class from the draft, because
+Versioned would miss the old-class live row, report success, and leave the page live. Publish the
+conversion first, then take it down.
 
 Response carries both a machine-readable structure (`fields`, `owned`, `liveExists`, `ok`) and a
 flat `report: [{label, ok, message}]` list, so a project can drop its own version of

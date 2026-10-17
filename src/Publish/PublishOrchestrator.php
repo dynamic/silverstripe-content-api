@@ -596,6 +596,8 @@ class PublishOrchestrator
             return $this->unpublishOwnedTree($record, $member, $force, $dryRun);
         }
 
+        $this->assertStagesShareClass($record, 'unpublish');
+
         if (!$force) {
             $this->assertNoDescendants($record, [Versioned::LIVE], 'Unpublishing');
         } else {
@@ -675,6 +677,8 @@ class PublishOrchestrator
      */
     protected function unpublishOwnedTree(DataObject $root, Member $member, bool $force, bool $dryRun = false): array
     {
+        $this->assertStagesShareClass($root, 'unpublish');
+
         $walked = $this->ownedTreeWalker->walkOwnedExcluding($root, PublishOrchestrator::UNPUBLISH_EXCLUDED_CLASSES);
 
         $targets = [];
@@ -734,6 +738,45 @@ class PublishOrchestrator
             'unpublished' => $unpublished,
             'skipped' => $skipped,
         ];
+    }
+
+    /**
+     * Refuse an unpublish/archive when the record's live row is a different
+     * class from its draft (a draft-only class conversion, #239).
+     * Versioned's doUnpublish() re-reads the live row through the draft
+     * row's class, misses the old-class row, and reports success while the
+     * page stays live; doArchive() would also delete the draft row, leaving
+     * the live one unreachable by any stage action. Read by base class so
+     * the live row is found whatever its class.
+     *
+     * @throws ApiError STAGE_CLASS_MISMATCH
+     */
+    protected function assertStagesShareClass(DataObject $record, string $action): void
+    {
+        $live = Versioned::withVersionedMode(function () use ($record) {
+            Versioned::set_stage(Versioned::LIVE);
+
+            return DataObject::get_by_id($record->baseClass(), (int) $record->ID);
+        });
+
+        // Versioned re-reads the live row through the draft row's class and
+        // its subclasses, so only a live row outside that tree is missed
+        // (a draft converted to an ancestor still unpublishes correctly).
+        if ($live && !is_a($live, get_class($record))) {
+            throw new ApiError(
+                ErrorCode::STAGE_CLASS_MISMATCH,
+                sprintf(
+                    'Cannot %s %s #%d: it is live as %s but %s on draft (a draft-only class conversion). '
+                        . 'Publish the conversion first, then %s.',
+                    $action,
+                    $record->ClassName,
+                    $record->ID,
+                    $live->ClassName,
+                    $record->ClassName,
+                    $action
+                )
+            );
+        }
     }
 
     /**
@@ -903,6 +946,7 @@ class PublishOrchestrator
     public function archive(DataObject $record, bool $force = false): void
     {
         $this->assertVersioned($record, 'archive');
+        $this->assertStagesShareClass($record, 'archive');
 
         $stages = [Versioned::LIVE, Versioned::DRAFT];
 
