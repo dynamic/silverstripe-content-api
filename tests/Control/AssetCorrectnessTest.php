@@ -9,7 +9,9 @@ use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use ReflectionMethod;
 use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\Assets\File;
+use SilverStripe\Assets\Folder;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\ORM\Queries\SQLUpdate;
 
 /**
  * #240 (assets) and #246: asset uploads match, identify and report files
@@ -128,18 +130,80 @@ class AssetCorrectnessTest extends ContentApiTestCase
         $method->setAccessible(true);
         $handler = AssetHandler::create();
 
-        $cases = [UPLOAD_ERR_INI_SIZE => 'PAYLOAD_TOO_LARGE', UPLOAD_ERR_PARTIAL => 'PAYLOAD_INVALID'];
+        $cases = [
+            'ini size' => [['error' => UPLOAD_ERR_INI_SIZE], 'PAYLOAD_TOO_LARGE'],
+            'form size' => [['error' => UPLOAD_ERR_FORM_SIZE], 'PAYLOAD_TOO_LARGE'],
+            'partial' => [['error' => UPLOAD_ERR_PARTIAL], 'PAYLOAD_INVALID'],
+            'file[] array' => [['error' => [UPLOAD_ERR_OK]], 'PAYLOAD_INVALID'],
+        ];
 
-        foreach ($cases as $code => $expected) {
+        foreach ($cases as $label => [$upload, $expected]) {
             try {
-                $method->invoke($handler, ['error' => $code, 'size' => 0, 'tmp_name' => '']);
-                $this->fail('expected an ApiError for upload error ' . $code);
+                $method->invoke($handler, $upload + ['size' => 0, 'tmp_name' => '']);
+                $this->fail('expected an ApiError for ' . $label);
             } catch (ApiError $error) {
-                $this->assertSame($expected, $error->toArray()['code']);
+                $this->assertSame($expected, $error->toArray()['code'], $label);
             }
         }
 
         $method->invoke($handler, ['error' => UPLOAD_ERR_OK, 'size' => 10, 'tmp_name' => '/tmp/x']);
         $this->addToAssertionCount(1);
+    }
+
+    /**
+     * PHP reads post_max_size 0 as no limit, so a body without a file part
+     * is not "too large" under it.
+     */
+    public function testAZeroPostMaxSizeIsNoLimit(): void
+    {
+        $method = new ReflectionMethod(AssetHandler::class, 'exceedsPostLimit');
+        $method->setAccessible(true);
+        $handler = AssetHandler::create();
+
+        $this->assertFalse($method->invoke($handler, 5000, '0'));
+        $this->assertTrue($method->invoke($handler, 5000, '4K'));
+        $this->assertFalse($method->invoke($handler, 4096, '4K'));
+    }
+
+    /**
+     * A `skip` upload with nothing at its path writes a new file, so its key
+     * must not already be on another one.
+     */
+    public function testASkipThatWritesANewFileStillChecksItsKey(): void
+    {
+        $this->upload(['filename' => 'a.png', 'folder' => 'first', 'externalId' => 'skip-key']);
+
+        [$response] = $this->upload([
+            'filename' => 'b.png',
+            'folder' => 'second',
+            'externalId' => 'skip-key',
+            'conflict' => 'skip',
+        ]);
+
+        $this->assertErrorCode($response, 'ASSET_CONFLICT', 409);
+        $this->assertSame(1, File::get()->filter('FixtureIdentifier', 'skip-key')->count());
+    }
+
+    /**
+     * A folder whose stored name the current FolderNameFilter would change
+     * (a legacy "v1.2") is still the folder an upload lands in and is found
+     * in, as Folder::find_or_make() resolves it.
+     */
+    public function testAnExistingFolderKeepsItsStoredName(): void
+    {
+        // Folder::onBeforeWrite() filters the name now, so set the legacy
+        // one directly.
+        $legacy = Folder::find_or_make('v1-2');
+        SQLUpdate::create('"File"', ['"Name"' => 'v1.2', '"Title"' => 'v1.2'], ['"ID"' => $legacy->ID])->execute();
+        $this->assertSame('v1.2/', Folder::get()->byID($legacy->ID)->getFilename(), 'fixture keeps the raw name');
+
+        [, $first] = $this->upload(['filename' => 'doc.png', 'folder' => 'v1.2']);
+        [$response, $second] = $this->upload(['filename' => 'doc.png', 'folder' => 'v1.2']);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertTrue($second['data']['existed']);
+        $this->assertSame($first['data']['id'], $second['data']['id']);
+        $this->assertSame((int) $legacy->ID, (int) File::get()->byID($first['data']['id'])->ParentID);
+        $this->assertSame(0, Folder::get()->filter('Name', 'v1-2')->count(), 'no stray filtered folder');
     }
 }

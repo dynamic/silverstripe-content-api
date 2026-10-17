@@ -299,7 +299,9 @@ class AssetService
      * Looking up the raw path missed any name the filters rewrite
      * ("Team Photo.png" in "About Us" is stored as
      * "About-Us/Team-Photo.png"), so a re-upload made a "-v2" sibling
-     * instead of finding the file (#240).
+     * instead of finding the file (#240). A folder that already exists
+     * keeps its stored path, since find_or_make() also matches a segment
+     * by its raw name (a legacy "v1.2" the current filter would rename).
      */
     protected function targetPath(array $meta): ?string
     {
@@ -314,6 +316,12 @@ class AssetService
 
         if ($folder === '') {
             return $filename;
+        }
+
+        $existing = $this->findFolder($folder);
+
+        if ($existing) {
+            return rtrim((string) $existing->getFilename(), '/') . '/' . $filename;
         }
 
         $folderFilter = FolderNameFilter::create();
@@ -496,10 +504,12 @@ class AssetService
         $targetPath = (string) $this->targetPath($meta);
         $existing = File::get()->filter('FileFilename', $targetPath)->first();
 
-        if ($conflict !== 'skip') {
-            // `rename` always writes a new record, so for it the path's file
-            // is never the one the key may live on.
-            $this->assertExternalIdConsistent($meta, $conflict === 'rename' ? null : $existing, $targetPath);
+        if (!($existing && $conflict === 'skip')) {
+            // A skip that finds its file writes nothing. Otherwise only
+            // `overwrite` reuses the path's file; `rename`, and a skip with
+            // nothing at the path, write a new record the key must not
+            // already be on.
+            $this->assertExternalIdConsistent($meta, $conflict === 'overwrite' ? $existing : null, $targetPath);
         }
 
         if ($existing && $conflict === 'skip') {

@@ -67,7 +67,9 @@ finds the `About-Us/Team-Photo.png` the first upload stored instead of creating 
 
 An upload's `externalId` stays on one file. A key already held by a file at another path, or a
 path whose file already carries a different key, is `409 ASSET_CONFLICT`. Upload to the path the
-key lives at, or use a new key.
+key lives at, or use a new key. `rename` always writes a new file, so a `rename` upload with a key
+already on any file is a 409 too, including a re-run of the same request (in a composition that
+rolls the whole composition back): use `overwrite` or `skip` for keyed, re-runnable uploads.
 
 `AssetService.verify_content_type` (default `false`) adds a content check: with it on, a file
 whose extension maps to `Image` must sniff as `image/*`, or the upload is `422
@@ -75,8 +77,9 @@ VALIDATION_FAILED`. Off by default, matching core's extension-only upload valida
 project allows the extension, is stored unsanitised either way.
 
 Multipart uploads report PHP's own limits: a file over `upload_max_filesize`, or a body over
-`post_max_size`, is `413 PAYLOAD_TOO_LARGE` naming the limit; other PHP upload errors are `400
-PAYLOAD_INVALID` with the reason.
+`post_max_size`, is `413 PAYLOAD_TOO_LARGE` naming the limit (a `post_max_size` of `0` is no
+limit); other PHP upload errors, and a `file[]` array part, are `400 PAYLOAD_INVALID` with the
+reason.
 
 ### Hash-skip always returns the full record
 
@@ -91,7 +94,8 @@ Numeric id or `ext:<external-id>`. Returns the record plus `url`, `visibility` a
 
 `url` is the file's URL with no session grant. `visibility` says whether it is fetchable without
 logging in: `public` (published) or `protected` (draft-only, or restricted), where the URL only
-works for a CMS session allowed to view the file. Upload responses carry the same fields.
+works for a CMS session allowed to view the file. Both are `null` for a record with no stored
+file. Upload responses carry the same fields.
 
 ## In compositions
 

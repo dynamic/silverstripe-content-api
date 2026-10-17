@@ -161,11 +161,13 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Fixed
 - **(#240, #246)** Asset uploads match, identify and report files the way SilverStripe stores them:
-  - The existing-file lookup uses the stored path (folder and file name filters), so
-    re-uploading a name the filters rewrite finds the file instead of creating a `-v2` sibling.
+  - The existing-file lookup uses the stored path (folder and file name filters, or an existing
+    folder's stored name), so re-uploading a name the filters rewrite finds the file instead of
+    creating a `-v2` sibling.
   - An `externalId` held by a file at another path, or a path whose file has a different key,
     is `409 ASSET_CONFLICT` (the code previously had no thrower), not a second file with the key
-    or a silent re-key.
+    or a silent re-key. This covers every mode that writes a new file: `rename`, and `skip` with
+    nothing at the path.
   - `url` is built without granting the request's session access, and a new `visibility` field
     says whether it is `public` or `protected`.
   - Opt-in `AssetService.verify_content_type` refuses image-extension uploads whose bytes don't

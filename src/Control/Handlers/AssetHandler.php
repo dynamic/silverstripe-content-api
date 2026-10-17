@@ -124,9 +124,13 @@ class AssetHandler
      */
     protected function assertUploadReceived(?array $upload): void
     {
+        if (is_array($upload['error'] ?? null)) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'Send one file in the "file" part, not an array.');
+        }
+
         $error = (int) ($upload['error'] ?? UPLOAD_ERR_OK);
 
-        if (in_array($error, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) {
+        if ($error === UPLOAD_ERR_INI_SIZE) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_TOO_LARGE,
                 sprintf(
@@ -136,9 +140,16 @@ class AssetHandler
             );
         }
 
+        if ($error === UPLOAD_ERR_FORM_SIZE) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_TOO_LARGE,
+                'The uploaded file exceeds the form\'s MAX_FILE_SIZE.'
+            );
+        }
+
         $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
 
-        if ($upload === null && $contentLength > $this->bytes((string) ini_get('post_max_size'))) {
+        if ($upload === null && $this->exceedsPostLimit($contentLength, (string) ini_get('post_max_size'))) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_TOO_LARGE,
                 sprintf('The request body exceeds the server\'s limit (post_max_size %s).', ini_get('post_max_size'))
@@ -156,6 +167,17 @@ class AssetHandler
         if (isset($messages[$error])) {
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, $messages[$error]);
         }
+    }
+
+    /**
+     * Whether a body of $contentLength bytes is over post_max_size, where
+     * PHP reads a limit of 0 as none.
+     */
+    protected function exceedsPostLimit(int $contentLength, string $postMaxSize): bool
+    {
+        $limit = $this->bytes($postMaxSize);
+
+        return $limit > 0 && $contentLength > $limit;
     }
 
     private function bytes(string $size): int
