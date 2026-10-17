@@ -111,8 +111,14 @@ abstract class ContentApiTestCase extends FunctionalTest
      *   because assets share the File table and AssetsTest reads back through
      *   File::get().
      * - ContentApiGrantExtension on SiteTree: without it the CONTENT_API_ACCESS-only
-     *   apiUser fails SiteTree::canEdit()/canView() at InheritedPermissions'
-     *   CMS_ACCESS gate, so subtree publishes and fingerprint visibility refuse.
+     *   apiUser fails SiteTree::canEdit() at InheritedPermissions' global
+     *   CMS_ACCESS edit check, and canView() at SiteTree::isOrphaned() for a live
+     *   page under a draft-only parent, so subtree publishes and fingerprint
+     *   visibility refuse.
+     *
+     * This is the minimum the suite needs, not everything a host applies (a host
+     * typically also puts ContentApiGrantExtension on File/BaseElement and
+     * ExternalIdentifierExtension on SiteTree).
      *
      * Merged with the subclass's own `$required_extensions` rather than set as a
      * static here, because several subclasses declare that static and would
