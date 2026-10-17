@@ -137,9 +137,12 @@ SilverStripe\Core\Injector\Injector:
   ContentApiLogHandler:
     class: Monolog\Handler\StreamHandler
     constructor:
-      - '../silverstripe.log'
+      - '/var/log/silverstripe/content-api.log'
       - 'info'
 ```
+
+Use an absolute, writable path: a relative one resolves against the current directory, which
+differs between web requests (`public/`) and `sake`.
 
 When the logger has no handler, the module says so once per process through PHP's `error_log()`.
 
@@ -269,7 +272,7 @@ task.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `excluded_fields` | `['TopPage']` | Fields and has_ones never suggested in `api_writable_fields`, on top of `WriteApplicator.protected_fields` and the external-id column (`ExternalIdResolver.external_id_field`), which is set through `externalId` |
+| `excluded_fields` | `HasBrokenFile`, `HasBrokenLink`, `ReportClass`, `TopPage`, `TopPageLocale` | Fields and has_ones never suggested in `api_writable_fields`, on top of `WriteApplicator.protected_fields` and the external-id column (`ExternalIdResolver.external_id_field`), which is set through `externalId` |
 | `excluded_relations` | `BackLinks`, `EditorGroups`, `EditorMembers`, `FileTracking`, `LinkTracking`, `ViewerGroups`, `ViewerMembers`, `VirtualPages` | Framework-maintained relations never suggested in `api_writable_relations` |
 
 ## ColorTokenTransformer

@@ -83,7 +83,11 @@ class ExposureScaffolder
      * always left out on top of these: it is set through `externalId`.
      */
     private static array $excluded_fields = [
+        'HasBrokenFile',
+        'HasBrokenLink',
+        'ReportClass',
         'TopPage',
+        'TopPageLocale',
     ];
 
     /**

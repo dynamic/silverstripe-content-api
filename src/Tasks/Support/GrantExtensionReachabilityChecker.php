@@ -276,8 +276,14 @@ class GrantExtensionReachabilityChecker
         }
     }
 
-    protected function methodCallsExtendedCan(string $className, string $method, array $visited = []): bool
-    {
+    protected function methodCallsExtendedCan(
+        string $className,
+        string $method,
+        array $visited = [],
+        ?string $grantClass = null
+    ): bool {
+        $grantClass ??= $className;
+
         $source = $this->methodSource($className, $method);
 
         // Couldn't read the source (unusual — e.g. a compiled/phar class)
@@ -296,7 +302,10 @@ class GrantExtensionReachabilityChecker
         // A body that delegates to `parent::canX()` reaches extendedCan()
         // if the parent's canX() does (#245): ElementalArea::canView() and
         // ::canEdit() both start with parent::canEdit(). Follow each called
-        // name up the chain, once per class and method.
+        // name up the chain, once per class and method. The hook that runs
+        // is extendedCan('canX'), which grants canX's verbs, so a call to a
+        // different method only counts when the class declares one of
+        // those (canView() via parent::canEdit() needs update or action).
         $declaring = $this->declaringClass($className, $method);
         $visited[$declaring . '::' . strtolower($method)] = true;
         $parent = get_parent_class($declaring);
@@ -305,14 +314,21 @@ class GrantExtensionReachabilityChecker
             return false;
         }
 
+        $declared = $this->registry->ownAccessVerbs($grantClass);
+
         foreach (array_unique($calls[1]) as $called) {
-            if (!method_exists($parent, $called)) {
+            $answers = array_keys(array_filter(
+                self::VERB_METHODS,
+                fn (string $verbMethod) => strcasecmp($verbMethod, $called) === 0
+            ));
+
+            if (!method_exists($parent, $called) || array_intersect($answers, $declared) === []) {
                 continue;
             }
 
             $key = $this->declaringClass($parent, $called) . '::' . strtolower($called);
 
-            if (!isset($visited[$key]) && $this->methodCallsExtendedCan($parent, $called, $visited)) {
+            if (!isset($visited[$key]) && $this->methodCallsExtendedCan($parent, $called, $visited, $grantClass)) {
                 return true;
             }
         }

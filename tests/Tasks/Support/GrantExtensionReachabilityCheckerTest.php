@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Tests\Tasks\Support;
 
 use Dynamic\ContentApi\Tasks\Support\GrantExtensionReachabilityChecker;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantAbstractObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantCrossDelegatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantExtraSourceObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionReadOnlyObject;
@@ -27,6 +28,7 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
         ApiTestGrantMissingExtensionWritableFieldsOnlyObject::class,
         ApiTestGrantMissingExtensionSubObject::class,
         ApiTestGrantParentDelegatingObject::class,
+        ApiTestGrantCrossDelegatingObject::class,
         ApiTestGrantUnreachableSubObject::class,
     ];
 
@@ -62,6 +64,11 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
         $this->assertNotContains(ApiTestGrantParentDelegatingObject::class, $flagged);
         $this->assertContains(ApiTestGrantUnreachableSubObject::class, $flagged);
         $this->assertContains(ApiTestGrantUnreachableObject::class, $flagged);
+        $this->assertContains(
+            ApiTestGrantCrossDelegatingObject::class,
+            $flagged,
+            'canView() via parent::canEdit() never consults a read-only grant'
+        );
     }
 
     /**
