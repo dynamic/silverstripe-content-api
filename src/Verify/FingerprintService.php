@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Verify;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use SilverStripe\CMS\Model\SiteTree;
@@ -87,11 +88,14 @@ class FingerprintService
     private static array $dependencies = [
         'registry' => '%$' . ClassRegistry::class,
         'policy' => '%$' . PermissionPolicy::class,
+        'externalIds' => '%$' . ExternalIdResolver::class,
     ];
 
     public ?ClassRegistry $registry = null;
 
     public ?PermissionPolicy $policy = null;
+
+    public ?ExternalIdResolver $externalIds = null;
 
     /**
      * @param array<int, string>|null $classRefs restrict the OUTPUT to these
@@ -374,9 +378,16 @@ class FingerprintService
         // (more for any record whose draft/live versions differ) unless
         // primed. Pre-populating both stages' caches turns what would be
         // O(pages) queries across a whole-site scan into two.
-        $ids = array_keys($byId);
-        Versioned::prepopulate_versionnumber_cache(SiteTree::class, Versioned::DRAFT, $ids);
-        Versioned::prepopulate_versionnumber_cache(SiteTree::class, Versioned::LIVE, $ids);
+        VersionCache::prime(SiteTree::class, array_keys($byId));
+
+        // Visibility is decided on the draft stage, like the draft reads in
+        // RecordsHandler: SiteTree::canView()'s isOrphaned() looks the parent
+        // up on the current stage, so in an ambient Live mode a published
+        // page under a draft-only parent read as orphaned and vanished (#244).
+        $visibleIds = $this->onDraft(fn () => array_fill_keys(array_keys(array_filter(
+            $byId,
+            fn (SiteTree $page) => $this->isPageVisible($page, $member)
+        )), true));
 
         $paths = [];
         $parents = [];
@@ -393,7 +404,7 @@ class FingerprintService
         foreach ($byId as $id => $page) {
             $classNames[$id] = $page->ClassName;
 
-            if (!$this->isPageVisible($page, $member)) {
+            if (!isset($visibleIds[$id])) {
                 continue;
             }
 
@@ -406,7 +417,7 @@ class FingerprintService
                 'showInMenus' => (bool) $page->ShowInMenus,
                 'showInSearch' => (bool) $page->ShowInSearch,
                 'live' => isset($liveIds[$id]),
-                'externalId' => $page->hasField('FixtureIdentifier') ? ($page->FixtureIdentifier ?: null) : null,
+                'externalId' => $this->externalIdOf($page),
             ];
 
             if ($includeIds) {
@@ -599,10 +610,15 @@ class FingerprintService
         if ($isVersioned) {
             // Same reasoning as buildPages(): canViewRecord() below
             // routes through Versioned::canViewVersioned() per record.
-            $recordIds = array_map(static fn (DataObject $r) => (int) $r->ID, $records);
-            Versioned::prepopulate_versionnumber_cache($className, Versioned::DRAFT, $recordIds);
-            Versioned::prepopulate_versionnumber_cache($className, Versioned::LIVE, $recordIds);
+            VersionCache::prime($className, array_map(static fn (DataObject $r) => (int) $r->ID, $records));
         }
+
+        // Decided on the draft stage, as buildPages() does (#244).
+        $readable = $this->onDraft(fn () => array_map(
+            fn (DataObject $record) => in_array('read', $this->registry->accessVerbs($record->ClassName), true)
+                && $this->policy->canViewRecord($record, $member),
+            $records
+        ));
 
         $rows = [];
         $unresolved = 0;
@@ -611,7 +627,7 @@ class FingerprintService
         $total = 0;
         $liveTotal = 0;
 
-        foreach ($records as $record) {
+        foreach ($records as $index => $record) {
             // Checked FIRST, before anything is counted anywhere —
             // matching RecordsHandler::readList()'s #20 precedent that
             // filtering after counting/pagination leaks the hidden-record
@@ -631,10 +647,7 @@ class FingerprintService
             // same "explicit per-subclass deny overridden by a broader
             // ancestor exposure" gap isPageVisible() exists to close for
             // pages.
-            if (
-                !in_array('read', $this->registry->accessVerbs($record->ClassName), true)
-                || !$this->policy->canViewRecord($record, $member)
-            ) {
+            if (!$readable[$index]) {
                 continue;
             }
 
@@ -665,11 +678,13 @@ class FingerprintService
                 continue;
             }
 
+            // The row's own class, like a page row, not the configured
+            // related class (#244).
             $row = [
                 'ownerPath' => $ownerPath,
-                'className' => $className,
+                'className' => $record->ClassName,
                 'live' => $isLive,
-                'externalId' => $record->hasField('FixtureIdentifier') ? ($record->FixtureIdentifier ?: null) : null,
+                'externalId' => $this->externalIdOf($record),
             ];
 
             if ($includeIds) {
@@ -696,7 +711,7 @@ class FingerprintService
 
                 if ($ownerBlockedBy !== []) {
                     $violations[] = [
-                        'className' => $className,
+                        'className' => $record->ClassName,
                         'path' => $ownerPath,
                         'blockedBy' => $ownerBlockedBy,
                     ];
@@ -704,11 +719,17 @@ class FingerprintService
             }
         }
 
-        usort(
-            $rows,
-            static fn (array $a, array $b) => [$a['ownerPath'], (string) ($a['externalId'] ?? '')]
-                <=> [$b['ownerPath'], (string) ($b['externalId'] ?? '')]
-        );
+        // Every emitted field is a sort key, so rows that tie on owner and
+        // external id still come out in one order on every environment
+        // (#244); the id breaks a remaining tie only when it is emitted.
+        $key = static fn (array $row) => [
+            $row['ownerPath'],
+            (string) ($row['externalId'] ?? ''),
+            $row['className'],
+            $row['live'],
+            $row['id'] ?? 0,
+        ];
+        usort($rows, static fn (array $a, array $b) => $key($a) <=> $key($b));
 
         $section = ['records' => $rows, 'unresolved' => $unresolved];
 
@@ -757,5 +778,29 @@ class FingerprintService
         );
 
         return $deduped;
+    }
+
+    /**
+     * The record's external id from the configured column, as the records
+     * endpoints report it (#244).
+     */
+    protected function externalIdOf(DataObject $record): ?string
+    {
+        if (!$this->externalIds->supports($record->ClassName)) {
+            return null;
+        }
+
+        $value = $record->getField($this->externalIds->fieldName());
+
+        return $value === null || $value === '' ? null : (string) $value;
+    }
+
+    private function onDraft(callable $read): mixed
+    {
+        return Versioned::withVersionedMode(function () use ($read) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            return $read();
+        });
     }
 }

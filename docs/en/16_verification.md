@@ -66,9 +66,14 @@ deterministic, path-keyed snapshot of the site's content via
   section's row count; for `related` it also includes records this caller can see but whose owner
   couldn't be resolved (reported separately via `unresolved`), so `totals.draft` there can exceed
   `records.length`.
-- **Determinism is the whole point.** Every collection is sorted (by path, or by owner path then
-  external id for `related` rows sharing one owner); ids are excluded from `data` unless
-  `includeIds=true`.
+- **Determinism is the whole point.** Every collection is sorted: `pages` by path; `related`
+  rows by owner path, external id, class and `live` (and `id` under `includeIds`), so rows that
+  tie on owner and external id still have one order. Every row, `related` ones included,
+  reports its own class, and `externalId` comes from the configured
+  `ExternalIdResolver.external_id_field`. Ids are excluded from `data` unless `includeIds=true`
+  (a boolean: `1`/`0`/`true`/`false`; anything else is `400 PAYLOAD_INVALID`).
+- Visibility is decided on the draft stage, whatever the request's own stage, the same way a
+  draft `GET records` read decides it.
 
 `classes=` restricts which SECTIONS appear in the *response* (`pages`, and each `related` ref) —
 narrowing it to a `related` ref without `pages` still resolves owner paths through the same

@@ -9,11 +9,13 @@ use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
+use Dynamic\ContentApi\Verify\VersionCache;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataList;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * Read endpoints: GET records/$ClassRef and GET records/$ClassRef/$ID.
@@ -107,7 +109,7 @@ class RecordsHandler
 
         $stage = $this->resolveStage($request);
         $limit = $this->resolveLimit($request);
-        $offset = max(0, (int) $request->getVar('offset'));
+        $offset = $this->resolveOffset($request);
 
         return $this->withStage($className, $stage, function () use (
             $request,
@@ -120,6 +122,13 @@ class RecordsHandler
             $list = DataObject::get($className);
             $list = $this->applyFilters($list, $className, $request);
             $list = $this->applySort($list, $className, $request);
+
+            // canViewRecord() below runs Versioned::canViewVersioned() per
+            // row, a version-number query each unless the cache is primed:
+            // two queries for the whole list instead (#244).
+            if (DataObject::has_extension($className, Versioned::class)) {
+                VersionCache::prime($className, array_map('intval', $list->column('ID')));
+            }
 
             // canView is a per-record DataObject method (no generic SQL
             // pushdown), so visibility must be resolved before total/limit/
@@ -216,14 +225,54 @@ class RecordsHandler
         return $stage;
     }
 
+    /**
+     * `limit`: a positive integer, clamped to `max_limit`; absent or empty
+     * means `default_limit`. Anything else is refused rather than coerced
+     * (#244).
+     *
+     * @throws ApiError PAYLOAD_INVALID
+     */
     private function resolveLimit(HTTPRequest $request): int
     {
-        $default = (int) static::config()->get('default_limit');
         $max = (int) static::config()->get('max_limit');
+        $limit = $this->intParam($request, 'limit') ?? (int) static::config()->get('default_limit');
 
-        $limit = (int) ($request->getVar('limit') ?: $default);
+        if ($limit < 1) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'The "limit" parameter must be a positive integer.');
+        }
 
-        return max(1, min($limit, $max));
+        return min($limit, $max);
+    }
+
+    /**
+     * `offset`: a non-negative integer; absent or empty means 0.
+     *
+     * @throws ApiError PAYLOAD_INVALID
+     */
+    private function resolveOffset(HTTPRequest $request): int
+    {
+        return $this->intParam($request, 'offset') ?? 0;
+    }
+
+    /**
+     * @throws ApiError PAYLOAD_INVALID when the value is not a run of digits
+     */
+    private function intParam(HTTPRequest $request, string $name): ?int
+    {
+        $value = $request->getVar($name);
+
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (!is_string($value) || !ctype_digit($value)) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('The "%s" parameter must be a non-negative integer.', $name)
+            );
+        }
+
+        return (int) $value;
     }
 
     private function applyFilters(DataList $list, string $className, HTTPRequest $request): DataList
@@ -232,7 +281,10 @@ class RecordsHandler
         $modifiers = (array) static::config()->get('allowed_filter_modifiers');
 
         foreach ($request->getVars() as $key => $value) {
-            if (in_array($key, $reserved, true) || $value === null || $value === '') {
+            // An empty value is a filter for "no value", not "no filter"
+            // (#244): `?Title=` matches records whose Title is empty or
+            // NULL (a string field stores '' as NULL).
+            if (in_array($key, $reserved, true) || $value === null) {
                 continue;
             }
 
@@ -261,7 +313,11 @@ class RecordsHandler
             }
 
             $filterKey = $modifier ? "{$field}:{$modifier}" : $field;
-            $filterValue = str_contains((string) $value, ',') ? explode(',', (string) $value) : $value;
+            $filterValue = match (true) {
+                $value === '' && $modifier === null => ['', null],
+                str_contains((string) $value, ',') => explode(',', (string) $value),
+                default => $value,
+            };
 
             $list = $list->filter($filterKey, $filterValue);
         }

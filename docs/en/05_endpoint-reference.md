@@ -50,11 +50,11 @@ List with query-string filtering, sorting, and pagination.
 
 | Param | Notes |
 |---|---|
-| `Field=value` | Exact match filter |
+| `Field=value` | Exact match filter. An empty value (`Title=`) matches records whose field is empty or `NULL` |
 | `Field__Modifier=value` | e.g. `Title__PartialMatch=Home`. Modifiers: `ExactMatch, PartialMatch, StartsWith, EndsWith, GreaterThan, GreaterThanOrEqual, LessThan, LessThanOrEqual, not, nocase, case` |
 | `sort` | `Field` (ASC) or `-Field` (DESC); comma-separated for multiple |
-| `limit` | Default `50`, capped at `500` regardless of what's requested |
-| `offset` | Default `0` |
+| `limit` | A positive integer. Default `50`, capped at `500` regardless of what's requested. Anything else (`0`, negative, non-numeric, `1.9`) is `400 PAYLOAD_INVALID` |
+| `offset` | A non-negative integer. Default `0`; anything else is `400 PAYLOAD_INVALID` |
 | `_stage` | `draft` (default) or `live`. Underscored because bare `stage` is SilverStripe's own reserved staging param, consumed by the Versioned middleware before any controller runs |
 
 A comma-containing filter value is split into an `IN (...)`-style array match. Filtering and

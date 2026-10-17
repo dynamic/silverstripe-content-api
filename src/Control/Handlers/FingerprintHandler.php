@@ -64,7 +64,15 @@ class FingerprintHandler
             }
         }
 
-        $includeIds = filter_var($request->getVar('includeIds'), FILTER_VALIDATE_BOOLEAN);
+        // A value that isn't a boolean is refused, not read as false (#244).
+        $rawIncludeIds = $request->getVar('includeIds');
+        $includeIds = $rawIncludeIds === null || $rawIncludeIds === ''
+            ? false
+            : filter_var($rawIncludeIds, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+        if ($includeIds === null) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'includeIds must be a boolean (1/0, true/false).');
+        }
 
         // FingerprintService applies class- AND record-level ACL per row
         // (same as RecordsHandler::readList()) — the coarse gate above is

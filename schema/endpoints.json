@@ -58,17 +58,21 @@
           },
           "filters": {
             "type": "object",
-            "description": "Field or Field__Modifier keys; modifiers: ExactMatch, PartialMatch, StartsWith, EndsWith, GreaterThan(OrEqual), LessThan(OrEqual), not, nocase, case"
+            "description": "Field or Field__Modifier keys; modifiers: ExactMatch, PartialMatch, StartsWith, EndsWith, GreaterThan(OrEqual), LessThan(OrEqual), not, nocase, case. An empty value matches an empty or NULL field"
           },
           "sort": {
             "type": "string"
           },
           "limit": {
             "type": "integer",
-            "maximum": 500
+            "minimum": 1,
+            "maximum": 500,
+            "description": "Default 50; values over 500 are capped. 0, negative or non-numeric is 400 PAYLOAD_INVALID"
           },
           "offset": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 0,
+            "description": "Default 0; negative or non-numeric is 400 PAYLOAD_INVALID"
           },
           "_stage": {
             "type": "string",
