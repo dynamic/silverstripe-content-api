@@ -112,7 +112,7 @@ actions](#publishunpublisharchive-actions) for how to pass it); `subtree` alone 
 `liveOnly`:
 
 - **Authorization**: every descendant either mode visits is checked (class `action` verb +
-  `canEdit()`) — a token scoped to `Page` can't reach a descendant of a subclass whose own
+  `canPublish()`, which falls back to `canEdit()`) — a token scoped to `Page` can't reach a descendant of a subclass whose own
   `api_access` only grants `read`, and a member without CMS access to a specific child page can't
   publish it by publishing an ancestor they can edit instead. The whole walk is checked *before*
   anything is written — a permission gap on descendant #12 refuses the entire call rather than
@@ -283,7 +283,7 @@ graphs — `owns` mode only ever touches the former.
   wrote and it isn't all walk-reachable" problem publish's internal callers have.
 
 Same check-everything-before-writing-anything shape as publish's `owns` mode: every non-excluded
-descendant is authorization-checked (class `action` verb + `canEdit()` — the same verb a plain
+descendant is authorization-checked (class `action` verb + `canUnpublish()` — the same verb a plain
 `single` unpublish already uses, per #80's reasoning that unpublish is `action`-shaped and
 `delete` is reserved for the force-bypass that reaches records the caller never named) before any
 `doUnpublish()` call. `dryRun` runs the same guard and walk, returning the preview shape below,

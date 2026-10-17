@@ -3,8 +3,7 @@
 namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
-use Dynamic\ContentApi\Tests\Stub\ApiTestPublishDenyingExtension;
-use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestStageGatedObject;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -14,13 +13,9 @@ use SilverStripe\Versioned\Versioned;
  */
 class StageAccessTest extends ContentApiTestCase
 {
-    protected static $required_extensions = [
-        ApiTestVersionedObject::class => [ApiTestPublishDenyingExtension::class],
-    ];
-
-    private function record(): ApiTestVersionedObject
+    private function record(): ApiTestStageGatedObject
     {
-        $record = ApiTestVersionedObject::create(['Title' => 'Stage gated']);
+        $record = ApiTestStageGatedObject::create(['Title' => 'Stage gated']);
         $record->write();
 
         return $record;
@@ -28,7 +23,7 @@ class StageAccessTest extends ContentApiTestCase
 
     private function isLive(int $id): bool
     {
-        return Versioned::get_by_stage(ApiTestVersionedObject::class, Versioned::LIVE)->byID($id) !== null;
+        return Versioned::get_by_stage(ApiTestStageGatedObject::class, Versioned::LIVE)->byID($id) !== null;
     }
 
     public function testRecordPublishHonoursCanPublish(): void
@@ -36,7 +31,7 @@ class StageAccessTest extends ContentApiTestCase
         $record = $this->record();
 
         $response = $this->apiPost(
-            "records/ApiTestVersioned/{$record->ID}/publish",
+            "records/ApiTestStageGated/{$record->ID}/publish",
             [],
             $this->mintTokenFor('apiUser')
         );
@@ -51,7 +46,7 @@ class StageAccessTest extends ContentApiTestCase
         $record->publishSingle();
 
         $response = $this->apiPost(
-            "records/ApiTestVersioned/{$record->ID}/unpublish",
+            "records/ApiTestStageGated/{$record->ID}/unpublish",
             [],
             $this->mintTokenFor('apiUser')
         );
@@ -67,7 +62,7 @@ class StageAccessTest extends ContentApiTestCase
 
         $body = $this->decode($this->apiPost('batch', ['operations' => [[
             'op' => 'update',
-            'class' => 'ApiTestVersioned',
+            'class' => 'ApiTestStageGated',
             'id' => (int) $record->ID,
             'fields' => ['Title' => 'Published?'],
             'publish' => 'single',
@@ -79,12 +74,49 @@ class StageAccessTest extends ContentApiTestCase
 
         $body = $this->decode($this->apiPost('batch', ['operations' => [[
             'op' => 'update',
-            'class' => 'ApiTestVersioned',
+            'class' => 'ApiTestStageGated',
             'id' => (int) $record->ID,
             'fields' => ['Title' => 'Draft edit'],
         ]]], $token));
 
         $this->assertSame('updated', $body['data']['results'][0]['status']);
-        $this->assertSame('Draft edit', ApiTestVersionedObject::get()->byID($record->ID)->Title);
+        $this->assertSame('Draft edit', ApiTestStageGatedObject::get()->byID($record->ID)->Title);
+    }
+
+    /**
+     * Any delete that takes a record off Live asks canUnpublish() too, as the
+     * CMS's canArchive() does.
+     */
+    public function testBatchDeleteInUnpublishModeHonoursCanUnpublish(): void
+    {
+        $record = $this->record();
+        $record->publishSingle();
+
+        $body = $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'delete',
+            'class' => 'ApiTestStageGated',
+            'id' => (int) $record->ID,
+            'mode' => 'unpublish',
+        ]]], $this->mintTokenFor('populateUser')));
+
+        $this->assertSame('FORBIDDEN_RECORD', $body['data']['results'][0]['error']['code']);
+        $this->assertStringContainsString('unpublish', $body['data']['results'][0]['error']['message']);
+        $this->assertTrue($this->isLive((int) $record->ID));
+    }
+
+    public function testArchiveOfAPublishedRecordHonoursCanUnpublish(): void
+    {
+        $record = $this->record();
+        $record->publishSingle();
+
+        $response = $this->apiPost(
+            "records/ApiTestStageGated/{$record->ID}/archive",
+            [],
+            $this->mintTokenFor('apiUser')
+        );
+
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_RECORD', 403);
+        $this->assertStringContainsString('unpublish', $body['error']['message']);
+        $this->assertTrue($this->isLive((int) $record->ID));
     }
 }

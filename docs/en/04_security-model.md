@@ -214,7 +214,7 @@ area and its elements. Both call sites now route through
 `PublishOrchestrator::publishOwnedTree()` (the primitive the `owns` publish mode itself
 dispatches to — see [Publishing & stages](10_publishing-and-stages.md#publish-modes)) instead of
 their own hand-rolled loops: every area/element/child is now authorization-checked (class
-`action` verb + `canEdit()`) before anything is written, the whole cascade refusing on the first
+`action` verb + `canPublish()`) before anything is written, the whole cascade refusing on the first
 one the caller can't publish rather than leaving earlier ones live with no way to undo it.
 
 **Behavior change**: any class in the walked `$owns` cascade — not just elements — granting
@@ -247,7 +247,7 @@ record, at both the class and record level (`PermissionPolicy::authorize()` pair
 | `POST assets` / composition `assets[]`, new file | `create` on the class the extension maps to | `canCreate()` with the target folder as `Parent`; `Folder::canCreate()` when the folder is missing |
 | `POST assets` / composition `assets[]`, `overwrite` | `update` on the existing file's class | `canEdit()` |
 | `POST assets` / composition `assets[]`, `skip` | `read` | `canView()` (nothing is written) |
-| Asset publish (`publish` true; the default for `POST assets`) | `action` | `canEdit()` for an existing file |
+| Asset publish (`publish` true; the default for `POST assets`) | `action` | `canPublish()` for an existing file |
 
 An asset class's verbs are read from its governing class: the nearest class in its ancestry
 (`Image` → `File`) that declares any. When an asset upload does not send `publish` and its
@@ -265,6 +265,9 @@ existing ACL — the content API adds nothing here beyond calling it.
 A stage transition also asks the model's own stage method (`PermissionPolicy::checkStageAccess()`):
 every publish (any mode, the root and every record a cascade reaches) calls `canPublish()`, and
 every unpublish calls `canUnpublish()`, falling back to `canEdit()` on a model without them.
+Any delete that takes a record off Live counts as an unpublish too: batch `delete` in
+`unpublish` mode always, and `archive` (stage action or delete mode) or `hard` delete when the
+record is published, matching the CMS's `canArchive()`.
 `Versioned` and `SiteTree` consult extensions before their own `canEdit()` fallback, so a project
 extension that allows edit but denies publish is honoured the way the CMS honours it. The
 grant extension defines no `canPublish()`, so a service account it covers publishes on its

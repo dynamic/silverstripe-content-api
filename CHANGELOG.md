@@ -49,18 +49,32 @@ All notable changes to this project are documented here. Format loosely follows
   key) now checks every `$owns`-reachable record `publishRecursive()` will publish: each needs
   the class `action` verb and the record check, the same walk and gate `owns` mode applies. It
   previously published owned drafts of classes the caller had no verb on. All are checked
-  before anything is published.
+  before anything is published. An owned record whose draft and live already match is skipped,
+  since `publishRecursive()` leaves it untouched. **Behavior change:** a recursive publish
+  reaching a changed owned record of a class without `action` (a draft-only image on a
+  read/create-only `File`, say) is now `403`. The walk reads the draft stage, so an owned
+  record that exists only on Live (deleted from draft) and that `publishRecursive()` removes
+  from Live is not checked.
 - **(#235)** Publish and unpublish now honour a model's `canPublish()`/`canUnpublish()` (new
   `PermissionPolicy::checkStageAccess()`), falling back to `canEdit()` without them. This applies
-  to the root of every publish mode, every record a `subtree`/`owns`/`recursive`/relation
-  cascade reaches, and every unpublish. **Behavior change:** a class or extension that allows
-  edit but denies publish or unpublish now gets `403 FORBIDDEN_RECORD` for those operations.
-  `ContentApiGrantExtension` defines no `canPublish()`, so service accounts it covers are
-  unaffected.
+  to:
+  - the root of every publish mode;
+  - every record a `subtree`/`owns`/`recursive`/relation cascade reaches;
+  - every unpublish;
+  - any delete that takes a record off Live: batch `delete` in `unpublish` mode, and
+    `archive`/`hard` on a published record (the CMS's `canArchive()` asks `canUnpublish()`
+    too);
+  - asset publishes of an existing file.
+
+  **Behavior change:** a class or extension that allows edit but denies publish or unpublish now
+  gets `403 FORBIDDEN_RECORD` for those operations. `ContentApiGrantExtension` defines no
+  `canPublish()`, so service accounts it covers publish on its `canEdit()` grant. The exception
+  is a model that overrides `canPublish()` directly without `extendedCan()`, where the model's
+  own rule now applies.
 
 ### Changed
 - **(#241)** A `publish: "recursive"` composition response carries `published`: every record the
-  publish made live, the page last. The publish covers the page's whole `$owns` tree, which can
+  publish touched (`publishSingle()` targets, unchanged ones included), the page last. The publish covers the page's whole `$owns` tree, which can
   include drafts the request did not write. The docs now say so.
 
 ### Fixed

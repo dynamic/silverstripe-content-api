@@ -169,6 +169,17 @@ class RecordWriter
         $this->policy->checkClassAccess($className, 'delete', $member);
         $this->policy->checkRecordAccess($record, 'delete', $member);
 
+        // Taking a record off Live is an unpublish whatever the delete mode,
+        // so it also asks canUnpublish(), as the CMS's canArchive() does
+        // (#235): always for `unpublish`, and for `archive`/`hard` when the
+        // record is published.
+        if (
+            $record->hasExtension(Versioned::class)
+            && ($mode === 'unpublish' || $record->isPublished())
+        ) {
+            $this->policy->checkStageAccess($record, 'unpublish', $member);
+        }
+
         $summary = [
             'id' => (int) $record->ID,
             'className' => $record->ClassName,

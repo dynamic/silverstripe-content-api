@@ -6,12 +6,17 @@ use SilverStripe\Core\Extension;
 use SilverStripe\Dev\TestOnly;
 
 /**
- * Allows edit but denies publish and unpublish — the case a CMS honours
- * and the content API must too (#235).
+ * Allows edit and delete but denies publish and unpublish — the case a CMS
+ * honours and the content API must too (#235).
  */
 class ApiTestPublishDenyingExtension extends Extension implements TestOnly
 {
     public function canEdit($member = null): ?bool
+    {
+        return true;
+    }
+
+    public function canDelete($member = null): ?bool
     {
         return true;
     }
