@@ -89,9 +89,9 @@ itself (FK + Class) writes and reads correctly, but the record won't show up via
 has_many side until `{Name}Relation` is set some other way (e.g. the CMS, or a direct ORM write)
 — assigning it via a client-specified relation name isn't yet a feature this API exposes.
 
-This only applies to writes going through this module's own pipeline (batch and compositions).
-Colymba's generic `/api`, the only single-record write surface, applies payload keys directly
-to DB columns with no relation-shape handling at all — `WriteGuardExtension` only guards *which*
+This only applies to writes going through this module's own pipeline (batch, compositions and
+`PATCH records/$ClassRef/$ID`). Colymba's generic `/api` applies payload keys directly to DB
+columns with no relation-shape handling at all — `WriteGuardExtension` only guards *which*
 fields colymba's own deserializer already decided to write; it doesn't add relation resolution
 to that surface.
 

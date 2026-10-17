@@ -65,17 +65,36 @@ class RecordUpdateHandler
     public ?RecordSerializer $serializer = null;
 
     /**
+     * Whether PATCH is open in the current environment (reported by
+     * `GET schema/site` as `recordUpdateEnabled`).
+     */
+    public static function isEnabled(): bool
+    {
+        return !in_array(
+            Director::get_environment_type(),
+            (array) static::config()->get('disabled_environments'),
+            true
+        );
+    }
+
+    /**
      * @throws ApiError
      */
     public function update(HTTPRequest $request, AuthContext $context): array
     {
-        $environment = Director::get_environment_type();
+        if (!static::isEnabled()) {
+            $environment = Director::get_environment_type();
 
-        if (in_array($environment, (array) static::config()->get('disabled_environments'), true)) {
+            // Not the population gate: SS_CONTENT_API_ALLOW_POPULATE does
+            // not open this, the config key named in details does.
             throw new ApiError(
                 ErrorCode::ENV_FORBIDDEN,
                 sprintf('Single-record updates are disabled in the "%s" environment.', $environment),
-                [['code' => ErrorCode::ENV_FORBIDDEN->value, 'environment' => $environment]]
+                [[
+                    'code' => ErrorCode::ENV_FORBIDDEN->value,
+                    'environment' => $environment,
+                    'config' => 'Dynamic\\ContentApi\\Control\\Handlers\\RecordUpdateHandler.disabled_environments',
+                ]]
             );
         }
 

@@ -126,7 +126,10 @@ verb when `publish` is `single` (`403 FORBIDDEN_CLASS`, nothing written). It nee
 `CONTENT_API_ACCESS` only, not `CONTENT_API_POPULATE`, and is **not** behind the population
 environment gate, so it is the write that works on a live site. A project can close it per
 environment type with `RecordUpdateHandler.disabled_environments` (`403 ENV_FORBIDDEN`; see
-[Configuration](02_configuration.md#recordupdatehandler)).
+[Configuration](02_configuration.md#recordupdatehandler)); `GET schema/site` reports
+`recordUpdateEnabled`. Which fields it can reach is the class's write policy, and `publish:
+"single"` publishes the record's whole draft, pending editor changes included: see
+[Live writes](04_security-model.md#live-writes-patch-recordsclassrefid).
 
 Response: `data` is the updated record (with its `stage`), `meta.operation` is `updated`, and
 `meta.warnings` is present when the write raised any (e.g. `ACTION_VERB_MISSING`).

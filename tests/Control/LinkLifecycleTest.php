@@ -249,7 +249,14 @@ class LinkLifecycleTest extends ContentApiTestCase
         $linkId = (int) $element->CtaID;
         $pageId = (int) $element->getPage()->ID;
         $this->updateCta($element, ['type' => 'ExternalLink', 'url' => '/after', 'title' => 'Go'], 'none');
+        // Publish the owner row alone, leaving only its link pending (on
+        // SS6 the in-place link edit also dirties the owner's row).
+        Versioned::withVersionedMode(function () use ($element) {
+            Versioned::set_stage(Versioned::DRAFT);
+            ApiTestElement::get()->byID($element->ID)->publishSingle();
+        });
         $this->assertFalse(ApiTestElement::get()->byID($element->ID)->stagesDiffer(), 'fixture: owner unchanged');
+        $this->assertSame('/before', $this->onStage(Versioned::LIVE, $linkId)->ExternalUrl, 'fixture: link pending');
 
         Config::modify()->set(ApiTestElement::class, 'api_access', 'read,create,update');
         $response = $this->apiPost(
