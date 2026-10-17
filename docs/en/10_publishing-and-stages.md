@@ -21,7 +21,7 @@ For unversioned classes, `_stage` is a no-op (`RecordsHandler::withStage()` shor
 **Reading the default draft stage once it diverges from live requires `VIEW_DRAFT_CONTENT`** —
 a core `silverstripe/versioned` permission this module doesn't grant on its own. For a page,
 an ancestor diverging is enough (its `canView()` is inherited) unless the grant extension
-answers for the page's own class. A service
+answers for the page's own class (one declaring its own `read` access). A service
 account with only `CONTENT_API_ACCESS` can write a draft-only record but then can't read it
 back until that permission is also granted. See
 [Security model](04_security-model.md#service-account-permissions).

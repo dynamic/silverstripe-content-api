@@ -818,6 +818,8 @@ class CompositionService
         }
 
         $this->applicator->applyFields($child, $fields);
+        // Read before anything else applies fields (#243).
+        $warnings = $this->applicator->getWarnings();
 
         try {
             $child->write();
@@ -834,7 +836,7 @@ class CompositionService
             'id' => (int) $child->ID,
             'status' => $operation,
             'record' => $child,
-        ];
+        ] + ($warnings !== [] ? ['warnings' => $warnings] : []);
     }
 
     /**

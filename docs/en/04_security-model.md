@@ -37,8 +37,8 @@ The veto also reaches a page through its ancestors. A `SiteTree` record with the
 `CanViewType` of Inherit answers `canView()` with its parent's `canView()`, so once a parent has
 unpublished changes, a child whose own stages match is unreadable on draft too, and so is every
 page below it. The exception is a page whose own class the grant extension answers for (one that
-declares its own `api_access`/`content_api_access`): the extension's answer comes before the
-inherited check. An account that reads the draft stage of a page tree needs `VIEW_DRAFT_CONTENT`.
+declares its own `api_access`/`content_api_access` including `read`): the extension's answer
+comes before the inherited check. An account that reads the draft stage of a page tree needs `VIEW_DRAFT_CONTENT`.
 
 **Grant `VIEW_DRAFT_CONTENT` alongside `CONTENT_API_ACCESS`** to any service account that reads
 back a `publish: "none"` write before publishing — the natural "write draft, read back to

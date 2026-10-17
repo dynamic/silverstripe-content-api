@@ -210,7 +210,7 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 
 | Key | Default | Purpose |
 |---|---|---|
-| `verify_content_type` | `false` | When on, an upload whose extension maps to `Image` must sniff as `image/*`, or it is `422 VALIDATION_FAILED`. See [Assets](09_assets.md) |
+| `verify_content_type` | `false` | When on, an upload whose extension maps to `Image` must sniff as `image/*`, or it is `422 VALIDATION_FAILED`. Does nothing when PHP's `fileinfo` extension (`finfo_buffer()`) is missing. See [Assets](09_assets.md) |
 
 ## FingerprintService
 
@@ -227,7 +227,7 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 
 | Key | Default | Purpose |
 |---|---|---|
-| `max_depth` | `25` | Depth bound on the `$owns` walk (`owns` publish/unpublish, `recursive` checks, parity `depth`'s default). Separate from the cycle guard |
+| `max_depth` | `25` | Default depth bound on the owned-tree walks: the `$owns` walk (`owns` publish/unpublish, `recursive` checks) and the duplicate walks apply-template uses. Parity's `depth` defaults to it; an explicit `?depth=N` is used as given. Separate from the cycle guard |
 
 ## ParityHandler
 
@@ -235,7 +235,7 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 
 | Key | Default | Purpose |
 |---|---|---|
-| `default_fields` | `['Title', 'ParentID', 'ClassName', 'ShowInMenus', 'URLSegment', 'Sort']` | Fields `GET records/$ClassRef/$ID/parity` compares when the request names none, filtered per class to the ones it declares |
+| `default_fields` | `['Title', 'ParentID', 'ClassName', 'ShowInMenus', 'URLSegment', 'Sort']` | The fields `GET records/$ClassRef/$ID/parity` compares, filtered per class to the ones it declares |
 
 ## ColorTokenTransformer
 

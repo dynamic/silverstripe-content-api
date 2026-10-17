@@ -23,7 +23,7 @@ otherwise.
 | `ENV_FORBIDDEN` | 403 | Population endpoint called outside `population_enabled_environments` without the override. `details[0]` carries `environment`, `envVar`, and `populationEnabledEnvironments` so a caller can distinguish this from an ACL failure and act on it programmatically (#126) |
 | `UNKNOWN_CLASS` | 404 | Class ref not in the merged models map, or its mapped FQCN doesn't exist. `details[0].code` distinguishes `CLASS_NOT_MAPPED` (a real, registerable class exists with that name but has no `models:` entry — `details[0].message` names the FQCN), `CLASS_ALREADY_MAPPED` (that class is already registered, under a different ref — `details[0].message` names the existing ref, use that instead of adding a duplicate), and `CLASS_NOT_FOUND` (a `models:` entry exists but the FQCN it points at doesn't autoload), when the module can tell which. Never suggests a class the module hardcodes as never-exposable (`Member`/`Group`/`Permission`/etc.) regardless of project config |
 | `NOT_FOUND` | 404 | Record / external id / related record not found, or an unknown `{action}` segment on `records/$ClassRef/$ID/{action}` or `pages/$ID/{action}` |
-| `METHOD_NOT_ALLOWED` | — | Reserved, never raised. A wrong HTTP verb or an unknown path gets SilverStripe's own `text/plain` 404, outside the envelope and with no `error.code` |
+| `METHOD_NOT_ALLOWED` | — | Reserved, never raised. A wrong HTTP verb or an unknown path gets a non-JSON 404 outside the envelope, with no `error.code`: the site's error page, or `text/plain` on an AJAX request |
 | `MULTIPLE_MATCHES` | 409 | An external id (or a `urlSegment` page match) resolves to more than one record |
 | `ALREADY_EXISTS` | 409 | A create conflicts with an existing record |
 | `ASSET_CONFLICT` | 409 | An upload's `externalId` is held by a file at a different path, or the file at the path already carries a different `externalId` (#240) — the API won't create a second file with the key or re-key the existing one |
@@ -60,7 +60,7 @@ these, so read `warnings` on every write. They appear at:
 | Response | Location |
 |---|---|
 | `POST batch` | `data.results[].warnings` (only on a result that has any) |
-| `POST compositions/page` | `data.page.warnings` (the page write's own warnings, plus the `areaRelation` mismatch), `data.elements[].warnings`, `data.assets[].warnings` |
+| `POST compositions/page` | `data.page.warnings` (the page write's own warnings, plus the `areaRelation` mismatch), `data.elements[].warnings`, `data.elements[].children[].warnings`, `data.assets[].warnings` |
 | `POST assets` | `data.warnings` |
 
 | Code | Emitted when |

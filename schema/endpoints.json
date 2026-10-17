@@ -296,7 +296,7 @@
                 },
                 "relations": {
                   "type": "object",
-                  "description": "has_many/many_many writes only: {RelationName: {\"mode\": \"set|add|remove\", \"items\": [id | {\"id\"} | {\"externalId\"}, each optionally with \"extraFields\" for many_many join columns]}}. The relation must be listed in the class's api_writable_relations. A has_one (or its NameID form) here is 400 PAYLOAD_INVALID: put has_one values under fields"
+                  "description": "has_many/many_many writes only: {RelationName: {\"mode\": \"set|add|remove\", \"items\": [id | {\"id\": n} | {\"externalId\": \"...\"}]}}. An object item may add \"extraFields\" for many_many join columns (any extraFields key on a has_many is unknown). The relation must be listed in the class's api_writable_relations (422 READONLY_FIELD otherwise); an unknown relation is 422 UNKNOWN_RELATION. A has_one (or its NameID form) here is 400 PAYLOAD_INVALID: put has_one values under fields"
                 },
                 "publish": {
                   "type": "string",
@@ -461,7 +461,7 @@
                 },
                 "fields": {
                   "type": "object",
-                  "description": "Field values, including has_one values: null, a bare id, {\"id\": n} or {\"externalId\": \"...\"}, or a link payload on a has_one to Link. A polymorphic has_one (no single target class) rejects a bare id and requires {\"class\": \"...\", \"id\": n} or {\"class\": \"...\", \"externalId\": \"...\"}; see content_schema_class for which relations are polymorphic"
+                  "description": "Field values, including has_one values: null, a bare id, {\"id\": n} or {\"externalId\": \"...\"}, or a link payload on a has_one to Link. A polymorphic has_one (no single target class) rejects a bare id and requires {\"class\": \"...\", \"id\": n} or {\"class\": \"...\", \"externalId\": \"...\"}; see content_schema_class for which relations are polymorphic. In a composition, {\"$ref\": \"alias\"} anywhere in fields resolves to the aliased asset or element's {\"id\": n}"
                 },
                 "children": {
                   "type": "object",
@@ -469,7 +469,7 @@
                 },
                 "relations": {
                   "type": "object",
-                  "description": "has_many/many_many writes only: {RelationName: {\"mode\": \"set|add|remove\", \"items\": [id | {\"id\"} | {\"externalId\"}, each optionally with \"extraFields\" for many_many join columns]}}. The relation must be listed in the class's api_writable_relations. A has_one (or its NameID form) here is 400 PAYLOAD_INVALID: put has_one values under fields"
+                  "description": "has_many/many_many writes only: {RelationName: {\"mode\": \"set|add|remove\", \"items\": [id | {\"id\": n} | {\"externalId\": \"...\"}]}}. An object item may add \"extraFields\" for many_many join columns (any extraFields key on a has_many is unknown). The relation must be listed in the class's api_writable_relations (422 READONLY_FIELD otherwise); an unknown relation is 422 UNKNOWN_RELATION. A has_one (or its NameID form) here is 400 PAYLOAD_INVALID: put has_one values under fields"
                 }
               },
               "required": [

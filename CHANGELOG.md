@@ -178,10 +178,12 @@ All notable changes to this project are documented here. Format loosely follows
     `genericCrud` note says an `/api` write lands on the request's stage, usually LIVE; the
     composition `page` gains `elementsRelation`.
   - Docs 04/10: a page under a draft-changed parent is unreadable on draft without
-    `VIEW_DRAFT_CONTENT` unless the grant extension answers for its own class (now pinned by a
-    test).
+    `VIEW_DRAFT_CONTENT` unless the grant extension answers for its own class, i.e. the class declares its own `read`
+    access (now pinned by a test).
   - Docs 12: one warning-code table (seven codes, where each appears); `METHOD_NOT_ALLOWED` is
-    marked reserved, since a wrong verb gets the framework's plain-text 404.
+    marked reserved, since a wrong verb gets a non-JSON 404 outside the envelope. Composition
+    children now report their write warnings (`elements[].children[].warnings`), which were
+    dropped.
   - Docs 02 gains `AssetService`, `FingerprintService`, `OwnedTreeWalker` and `ParityHandler`
     sections; `summary.skipped` is documented as always `0`; the page actions' population gate,
     `schema/site` and the stage-action `mode` body are in 05; no doc names a single-record write
