@@ -268,9 +268,9 @@ class RecordActionsTest extends ContentApiTestCase
         $create = $this->apiPost('records/ApiTest', ['fields' => ['Title' => 'X']], $token);
         $this->assertSame(404, $create->getStatusCode());
 
-        // PATCH — moved to colymba PUT or batch update op.
-        $patch = $this->apiPatch("records/ApiTest/{$record->ID}", ['fields' => ['Title' => 'X']], $token);
-        $this->assertSame(404, $patch->getStatusCode());
+        // PUT — PATCH is the single-record update (#232); PUT stays unrouted.
+        $put = $this->apiSend('PUT', "records/ApiTest/{$record->ID}", ['fields' => ['Title' => 'X']], $token);
+        $this->assertSame(404, $put->getStatusCode());
 
         // DELETE — moved to colymba DELETE or batch delete op / archive action.
         $delete = $this->apiDelete("records/ApiTest/{$record->ID}", $token);

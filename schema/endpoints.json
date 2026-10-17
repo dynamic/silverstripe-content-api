@@ -243,6 +243,44 @@
       }
     },
     {
+      "name": "content_records_update",
+      "description": "Update one existing record's fields: PATCH records/{classRef}/{id} with {fields, publish}. The narrow live-safe write: needs CONTENT_API_ACCESS only (not CONTENT_API_POPULATE) and is not behind the population environment gate, so it works on a live site where content_batch and content_compose_page are closed. Same checks as a batch update op: the update verb on the record's own class plus canEdit(), the field write policy/allowlist (422 READONLY_FIELD/UNKNOWN_FIELD), and the action verb when publish is single (403 FORBIDDEN_CLASS otherwise, nothing written). No creates, no relations (400 PAYLOAD_INVALID): use content_batch for those. Returns the updated record (with its draft/live stage) in data; meta.operation and, when any, meta.warnings (e.g. ACTION_VERB_MISSING). A project can close it per environment (RecordUpdateHandler.disabled_environments, 403 ENV_FORBIDDEN).",
+      "method": "PATCH",
+      "path": "records/{classRef}/{id}",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "classRef": {
+            "type": "string",
+            "description": "Short class registry reference (see content_schema_site's models list for the full set) — e.g. \"BlogPost\", not the fully-qualified PHP class name (\"App\\Model\\BlogPost\" 404s UNKNOWN_CLASS)."
+          },
+          "id": {
+            "type": "string",
+            "description": "Numeric id or ext:<external-id>"
+          },
+          "fields": {
+            "type": "object",
+            "description": "Field values, including has_one values: null, a bare id, {\"id\": n} or {\"externalId\": \"...\"}, or a link payload on a has_one to Link. A polymorphic has_one (no single target class) rejects a bare id and requires {\"class\": \"...\", \"id\": n} or {\"class\": \"...\", \"externalId\": \"...\"}; see content_schema_class for which relations are polymorphic"
+          },
+          "publish": {
+            "type": "string",
+            "enum": [
+              "none",
+              "single"
+            ],
+            "default": "none",
+            "description": "none leaves the change on draft; single publishes this record (needs the action verb)"
+          }
+        },
+        "required": [
+          "classRef",
+          "id",
+          "fields"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "content_batch",
       "description": "Run ordered write operations with per-op results and a summary (agent self-correction contract). atomic=true wraps a transaction and rolls everything back on first failure. On atomic failure, a rolledBack: true result is independently verified before it's reported — every 'created', 'deleted' (whose mode could actually have reached the draft row: archive, or any mode on an unversioned class; unpublish on a versioned class only touches live, so it's correctly skipped), and 'updated' (its declared fields, re-checked against a pre-write snapshot) op is re-checked — an unverified rollback reports 500 ROLLBACK_UNVERIFIED instead, carrying the same results array so every entry can be checked by hand. dryRun=true runs the batch exactly as a real request would (same authorization/resolution/validation) inside a transaction that's unconditionally rolled back afterward, regardless of atomic or outcome. On success (or a predicted atomic failure) every status in the response is prefixed 'would' (wouldCreate/wouldUpdate/wouldDelete) so it can never be mistaken for a confirmed write; a dry run that itself can't be verified as zero-persistence reports 500 ROLLBACK_UNVERIFIED with real (unmapped) verbs instead, since at that point the caller genuinely can't tell whether it committed. Supported on this endpoint only, rejected elsewhere. Attaching an element to a page whose Elemental config doesn't permit that type fails that op with 422 ELEMENT_NOT_ALLOWED_ON_PAGE.",
       "method": "POST",

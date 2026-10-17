@@ -62,6 +62,7 @@ these, so read `warnings` on every write. They appear at:
 | `POST batch` | `data.results[].warnings` (only on a result that has any) |
 | `POST compositions/page` | `data.page.warnings` (the page write's own warnings, plus the `areaRelation` mismatch), `data.elements[].warnings`, `data.elements[].children[].warnings`, `data.assets[].warnings` |
 | `POST assets` | `data.warnings` |
+| `PATCH records/$ClassRef/$ID` | `meta.warnings` |
 
 | Code | Emitted when |
 |---|---|

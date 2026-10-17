@@ -69,8 +69,8 @@ just warns and leaves it in the lock), and delete `patches.lock.json` if it was 
   `dev/build`. **Hashed 1.0.x tokens cannot be carried over — re-mint every service account**
   (`sake dev/tasks/MintContentApiToken email=…`).
 - Removed endpoints → replacements: `POST records/$Class` → `POST api/$Class` or a batch
-  `create`/`upsert` op; `PATCH records/$Class/$ID` → `PUT api/$Class/$ID` or a batch `update`
-  op; `DELETE records/$Class/$ID` → `DELETE api/$Class/$ID` (hard delete!) or a batch `delete`
+  `create`/`upsert` op; `PATCH records/$Class/$ID` was removed then and is back since #232 as a single-record field
+  update (see [Endpoint reference](05_endpoint-reference.md#patch-recordsclassrefid)); `DELETE records/$Class/$ID` → `DELETE api/$Class/$ID` (hard delete!) or a batch `delete`
   op / archive stage action. `POST auth/login|logout|refresh` → `api/auth/login` (colymba's `logout` is off by default, see [Authentication](03_authentication.md#colymba-api-surface-caveats))
   (email/pwd request vars); there is no refresh endpoint — set a longer `tokenLife` and re-mint
   (auto-refresh is off, see [Authentication](03_authentication.md)).
