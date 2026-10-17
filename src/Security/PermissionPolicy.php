@@ -189,7 +189,14 @@ class PermissionPolicy
         $hasOne = (array) DataObject::singleton($className)->hasOne();
 
         foreach ($hasOne as $relationName => $relationClass) {
-            $value = $combined[$relationName] ?? $combined[$relationName . 'ID'] ?? null;
+            // A trusted (server-derived) value wins over a client key for the
+            // same relation, so the context never hydrates a client-chosen
+            // record under a trusted flag.
+            $value = $internalFields[$relationName]
+                ?? $internalFields[$relationName . 'ID']
+                ?? $combined[$relationName]
+                ?? $combined[$relationName . 'ID']
+                ?? null;
 
             if ($value === null) {
                 continue;
