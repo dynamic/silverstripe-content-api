@@ -434,6 +434,11 @@ class CompositionService
         // publishAll() below.
         $this->policy->checkClassAccess($targetClass, 'update', $member);
 
+        // #228: a class change needs the bare `convert` verb on both the
+        // page's current class and the target, as PageHandler::convert().
+        $this->policy->checkClassAccess(get_class($page), 'convert', $member);
+        $this->policy->checkClassAccess($targetClass, 'convert', $member);
+
         if ($publishMode !== 'none') {
             $this->policy->checkClassAccess($targetClass, 'action', $member);
         }

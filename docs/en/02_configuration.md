@@ -36,7 +36,8 @@ surface only.
 
 `ClassRegistry::VERBS` (not configurable, informational): `read`, `create`, `update`, `delete`,
 `action`. Colymba-style `api_access: 'GET,POST'` values are mapped `GET→read`, `POST→create`,
-`PUT`/`PATCH→update`, `DELETE→delete`; a bare verb name (`action`) is also accepted directly.
+`PUT`/`PATCH→update`, `DELETE→delete`; a bare verb name (`action`, `convert`) is also accepted
+directly.
 
 ### Auto-discovery
 
@@ -66,7 +67,7 @@ Set directly on each DataObject class you expose — not on the module. These ar
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `api_access` | `bool\|string` | unset (not exposed) | `true` = all verbs; or a CSV of tokens mapped to read/create/update/delete/action — `GET`/`POST`/`PUT`/`DELETE` map to their HTTP-method namesakes, but `action` (publish/unpublish/archive) has **no HTTP method of its own** and must be listed explicitly as a bare `action` token (e.g. `'GET,POST,PUT,action'`) — a CSV of only HTTP-method verbs looks complete but can never publish a write through this API (#198), with no error saying so. Declaring this (or `content_api_access`) is what exposes the class at all — deny-by-default otherwise. **Inherited**, like any SilverStripe config: a subclass with no `api_access`/`content_api_access` of its own still exposes its ancestor's verbs (see [Class-level gate](04_security-model.md#class-level-gate)) |
+| `api_access` | `bool\|string` | unset (not exposed) | `true` = all verbs; or a CSV of tokens mapped to read/create/update/delete/action — `GET`/`POST`/`PUT`/`DELETE` map to their HTTP-method namesakes, but `action` (publish/unpublish/archive) has **no HTTP method of its own** and must be listed explicitly as a bare `action` token (e.g. `'GET,POST,PUT,action'`) — a CSV of only HTTP-method verbs looks complete but can never publish a write through this API (#198), with no error saying so. `convert` (change a page's class, #228) works the same way: list it as a bare token on every page class that may be converted from or to. Declaring this (or `content_api_access`) is what exposes the class at all — deny-by-default otherwise. **Inherited**, like any SilverStripe config: a subclass with no `api_access`/`content_api_access` of its own still exposes its ancestor's verbs (see [Class-level gate](04_security-model.md#class-level-gate)) |
 | `content_api_access` | `bool\|string` | unset | Same shape as `api_access`; **wins** when both are set. Lets a class have different colymba-vs-content-api exposure. Also inherited — see above |
 | `api_write_policy` | `'guarded'\|'allowlist'` | unset (falls back to `WriteApplicator.policy`) | Per-class override of the global write policy |
 | `api_writable_fields` | `string[]` | `[]` | Allowlist of client-writable db field / has_one relation names. **A non-empty array here puts the class into allowlist mode even under the `guarded` global policy** — declaring the allowlist is itself the opt-in, with no configuration that sets it and has it silently ignored |

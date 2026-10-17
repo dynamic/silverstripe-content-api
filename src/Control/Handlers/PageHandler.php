@@ -195,7 +195,9 @@ class PageHandler
             throw new ApiError(ErrorCode::NOT_FOUND, sprintf('No page found with id %d.', (int) $id));
         }
 
-        $this->policy->checkRecordAccess($page, 'update', $context->member);
+        // The template writes onto the page, so the page class needs
+        // `update` as well as canEdit(), as convert() checks (#235).
+        $this->policy->authorize($page, 'update', $context->member);
 
         // #114: same gap as convert() above, applied to this action —
         // 'update' was checked, but 'action' never was before the page
@@ -212,6 +214,9 @@ class PageHandler
                 sprintf('No template found with id %d.', $templateId)
             );
         }
+
+        $this->policy->checkRecordAccess($template, 'read', $context->member);
+        $this->assertTemplateCreatable($page, $template, $context);
 
         $result = Injector::inst()->get($applicatorClass)->applyTemplateToRecord($page, $template);
 
@@ -302,6 +307,52 @@ class PageHandler
         ];
     }
 
+    /**
+     * Applying a template creates a copy of each template element and of
+     * every child `duplicate()` cascades to, so each of those classes needs
+     * the `create` verb and canCreate() (#235), the same gate
+     * RecordWriter::upsert() applies to any other element creation. Checked
+     * once per distinct class, before anything is written.
+     *
+     * @throws ApiError FORBIDDEN_CLASS | FORBIDDEN_RECORD
+     */
+    protected function assertTemplateCreatable(DataObject $page, DataObject $template, AuthContext $context): void
+    {
+        if (!$template->hasMethod('Elements')) {
+            return;
+        }
+
+        $sourceArea = $template->Elements();
+
+        if (!$sourceArea || !$sourceArea->exists() || !$sourceArea->hasMethod('Elements')) {
+            return;
+        }
+
+        $targetArea = $page->hasMethod('ElementalArea') ? $page->ElementalArea() : null;
+        $elementContext = $targetArea && $targetArea->exists() ? ['ParentID' => (int) $targetArea->ID] : [];
+        $checked = [];
+
+        foreach ($sourceArea->Elements() as $element) {
+            $records = [[$element, $elementContext]];
+
+            foreach ($this->ownedTreeWalker->walkAllDuplicates($element) as $entry) {
+                $records[] = [$entry['record'], []];
+            }
+
+            foreach ($records as [$record, $internalFields]) {
+                $class = get_class($record);
+
+                if (isset($checked[$class])) {
+                    continue;
+                }
+
+                $this->policy->checkClassAccess($class, 'create', $context->member);
+                $this->policy->checkCreateAccess($class, $context->member, [], $internalFields);
+                $checked[$class] = true;
+            }
+        }
+    }
+
     protected function convert(HTTPRequest $request, AuthContext $context): array
     {
         if (!class_exists(SiteTree::class)) {
@@ -344,6 +395,38 @@ class PageHandler
             $this->policy->checkClassAccess($targetClass, 'action', $context->member);
         }
 
+        // #238: the class change and the publish land or fail together, the
+        // same way applyTemplate() wraps its write — otherwise a publish
+        // refused on a descendant leaves the draft converted behind a 403,
+        // and a retry answers "unchanged" without publishing.
+        $data = null;
+
+        try {
+            DbTransaction::run(function () use ($request, $targetClass, $publishMode, $body, $context, &$data) {
+                $data = $this->doConvert($request, $targetClass, $publishMode, $body, $context);
+            });
+        } catch (ApiError $error) {
+            throw new ApiError(
+                $error->getErrorCode(),
+                $error->getMessage() . ' (convert rolled back)',
+                $error->getDetails(),
+                $error->getStatus()
+            );
+        }
+
+        return $data;
+    }
+
+    /**
+     * @throws ApiError
+     */
+    protected function doConvert(
+        HTTPRequest $request,
+        string $targetClass,
+        string $publishMode,
+        array $body,
+        AuthContext $context
+    ): array {
         return Versioned::withVersionedMode(function () use ($request, $targetClass, $publishMode, $body, $context) {
             Versioned::set_stage(Versioned::DRAFT);
 
@@ -378,6 +461,14 @@ class PageHandler
                 ];
             }
 
+            // #228: changing a page's class is a structural change of its
+            // own, not an ordinary field update, so both the current class and
+            // the target must declare the bare `convert` verb. Checked once a
+            // conversion will actually happen, so a same-class no-op and the
+            // home-page refusal answer as before.
+            $this->policy->checkClassAccess(get_class($page), 'convert', $context->member);
+            $this->policy->checkClassAccess($targetClass, 'convert', $context->member);
+
             $converted = $page->newClassInstance($targetClass);
 
             try {
@@ -386,11 +477,16 @@ class PageHandler
                 throw ApiError::fromValidation($exception, 'Page conversion');
             }
 
-            $this->publisher->publish($converted, $publishMode, $context->member);
+            $published = $this->publisher->publish($converted, $publishMode, $context->member);
+            $meta = ['operation' => 'converted'];
+
+            if ($published !== null) {
+                $meta['published'] = $published;
+            }
 
             return [
                 'data' => $this->serializer->serialize($converted),
-                'meta' => ['operation' => 'converted'],
+                'meta' => $meta,
             ];
         });
     }

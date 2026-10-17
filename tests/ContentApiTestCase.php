@@ -171,7 +171,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         Config::modify()->set(ApiTestTag::class, 'api_access', true);
         Config::modify()->set(ApiTestVersionedObject::class, 'api_access', true);
         Config::modify()->set(ApiTestPage::class, 'api_access', true);
-        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,create,update,action');
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,create,update,action,convert');
         Config::modify()->set(ApiTestElement::class, 'api_access', true);
         Config::modify()->set(ApiTestElementItem::class, 'api_access', true);
         Config::modify()->set(ApiTestPlainChildObject::class, 'api_access', true);
