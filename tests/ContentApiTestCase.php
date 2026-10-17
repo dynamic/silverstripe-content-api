@@ -3,7 +3,10 @@
 namespace Dynamic\ContentApi\Tests;
 
 use Colymba\RESTfulAPI\Authenticators\TokenAuthenticator as ColymbaTokenAuthenticator;
+use DNADesign\Elemental\Models\BaseElement;
+use Dynamic\ContentApi\Identity\ExternalIdentifierExtension;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Security\ContentApiGrantExtension;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestCascadeObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
@@ -42,6 +45,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestUnversionedOwnedWrapperObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Assets\File;
 use SilverStripe\Assets\Image;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\FunctionalTest;
@@ -95,6 +99,39 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestSideEffectObject::class,
         ApiTestSideEffectLog::class,
     ];
+
+    /**
+     * Extensions a host project applies through its own exposure YAML (see the
+     * README's "Apply extensions") that this suite depends on, so it also runs
+     * green in a standalone module checkout with no host config:
+     *
+     * - ExternalIdentifierExtension on File and BaseElement: CompositionTest and
+     *   AssetsTest address the real ElementContent / File / Image classes by
+     *   `externalId`, which needs the FixtureIdentifier column. File, not Image,
+     *   because assets share the File table and AssetsTest reads back through
+     *   File::get().
+     * - ContentApiGrantExtension on SiteTree: without it the CONTENT_API_ACCESS-only
+     *   apiUser fails SiteTree::canEdit() at InheritedPermissions' global
+     *   CMS_ACCESS edit check, and canView() at SiteTree::isOrphaned() for a live
+     *   page under a draft-only parent, so subtree publishes and fingerprint
+     *   visibility refuse.
+     *
+     * This is the minimum the suite needs, not everything a host applies (a host
+     * typically also puts ContentApiGrantExtension on File/BaseElement and
+     * ExternalIdentifierExtension on SiteTree).
+     *
+     * Merged with the subclass's own `$required_extensions` rather than set as a
+     * static here, because several subclasses declare that static and would
+     * shadow it. ExtensionTestState skips anything the host already applies.
+     */
+    public static function getRequiredExtensions()
+    {
+        return array_merge_recursive(parent::getRequiredExtensions(), [
+            File::class => [ExternalIdentifierExtension::class],
+            BaseElement::class => [ExternalIdentifierExtension::class],
+            SiteTree::class => [ContentApiGrantExtension::class],
+        ]);
+    }
 
     protected function setUp(): void
     {

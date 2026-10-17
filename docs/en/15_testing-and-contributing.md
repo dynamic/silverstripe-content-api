@@ -39,6 +39,25 @@ vendor/bin/phpcbf src/ tests/    # auto-fix — composer lint-clean
 vendor/bin/phpstan analyse       # phpstan.neon.dist
 ```
 
+### Standalone (no host project)
+
+The suite also runs from a standalone module checkout with its own `composer install`, using
+any reachable MySQL database. Inside a DDEV web container:
+
+```bash
+env SS_DATABASE_CLASS=MySQLDatabase SS_DATABASE_SERVER=db SS_DATABASE_USERNAME=db \
+    SS_DATABASE_PASSWORD=db SS_DATABASE_NAME=standalone SS_ENVIRONMENT_TYPE=dev \
+    vendor/bin/phpunit
+```
+
+Extensions a host normally applies through its exposure YAML (`ExternalIdentifierExtension`
+on `File`/`BaseElement`, `ContentApiGrantExtension` on `SiteTree`) are applied by
+`ContentApiTestCase::getRequiredExtensions()`. That is the minimum the suite needs, not a
+host's full exposure config: a test that depends on any other extension must add it there too,
+or it passes in a host and fails standalone. When `app/` is missing, silverstripe/cms's test
+bootstrap scaffolds `app/code/Page.php` in the checkout. Delete it before the next host-project
+run (see Gotchas).
+
 ## Pre-push gate
 
 This repo has **no GitHub Actions workflow** — deliberately, not an oversight. `gh api
@@ -85,9 +104,9 @@ PR — nothing else will catch a regression for you.
 
 ## Gotchas
 
-> **A stray `app/` doesn't belong in this checkout.** `.gitignore` excludes `/app/` as
-> "recipe-plugin scaffolding; not module code." If an `app/code/Page.php`/`PageController.php`
-> scaffold ever lands on disk here (e.g. left over from another tool run), delete it — a vendor
+> **A stray `app/` doesn't belong in this checkout.** `.gitignore` excludes `/app/`. If an
+> `app/code/Page.php`/`PageController.php` scaffold lands on disk here (silverstripe/cms's
+> `tests/bootstrap/app.php` creates one during a standalone `phpunit` run), delete it — a vendor
 > module has no business defining a `Page` class. A full class-manifest rebuild (`dev/build`, an
 > unscoped `phpunit`/`phpstan` run, or the flush above) fatals with `There are two files
 > containing the "Page" class` for as long as it sits there. Module-scoped `phpcs`/`phpstan
