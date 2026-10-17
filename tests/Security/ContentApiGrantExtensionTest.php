@@ -8,6 +8,7 @@ use Dynamic\ContentApi\Security\ContentApiPermissions;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Security\Group;
@@ -86,6 +87,46 @@ class ContentApiGrantExtensionTest extends SapphireTest
         $this->assertFalse((bool) $subPage->canEdit($member));
         $this->assertFalse((bool) $subPage->canCreate($member));
         $this->assertFalse((bool) $subPage->canDelete($member));
+    }
+
+    /**
+     * #231: under a grant root, an undeclared subclass is granted exactly
+     * the verbs it inherits.
+     */
+    public function testAGrantRootGrantsTheInheritedVerbs(): void
+    {
+        Config::modify()->set(ContentApiGrantExtension::class, 'grant_roots', [SiteTree::class]);
+        Config::modify()->set(ApiTestPage::class, 'content_api_access', 'GET,PUT');
+
+        $subPage = ApiTestGrantSubPage::create(['Title' => 'Rooted Subpage']);
+        $subPage->write();
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT']);
+
+        $this->assertTrue((bool) $subPage->canEdit($member));
+        $this->assertTrue((bool) $subPage->canView($member));
+        $this->assertFalse((bool) $subPage->canDelete($member), 'DELETE is not inherited, so not granted');
+        $this->assertFalse((bool) $subPage->canCreate($member), 'POST is not inherited, so not granted');
+    }
+
+    /**
+     * #231: an excluded class and its subclasses get no inherited grant,
+     * and the module's default exclusions are in place.
+     */
+    public function testAnExcludedClassGetsNoInheritedGrant(): void
+    {
+        Config::modify()->set(ContentApiGrantExtension::class, 'grant_roots', [SiteTree::class]);
+        Config::modify()->merge(ContentApiGrantExtension::class, 'grant_exclude', [ApiTestGrantSubPage::class]);
+
+        $subPage = ApiTestGrantSubPage::create(['Title' => 'Excluded Subpage']);
+        $subPage->write();
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT']);
+
+        $this->assertFalse((bool) $subPage->canEdit($member));
+        $this->assertContains(
+            'SilverStripe\\ErrorPage\\ErrorPage',
+            (array) Config::inst()->get(ContentApiGrantExtension::class, 'grant_exclude')
+        );
+        $this->assertSame([], ClassRegistry::singleton()->grantVerbs(ApiTestGrantSubPage::class));
     }
 
     /**

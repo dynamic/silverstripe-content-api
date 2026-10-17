@@ -131,6 +131,34 @@ override at all — only a deprecated `canArchive()` whose own docblock says to 
 instead on the version branch `2` depends on). A class declaring only `delete` on this branch can
 archive both a draft-only record and an already-published one.
 
+### Grant roots (opt-in)
+
+Declaring `api_access` once on `SiteTree` or `BaseElement` exposes every subclass at the class
+gate but grants none of them at record level, because the extension reads each class's own
+declaration. A project that wants the record-level grant to follow the same inheritance can name
+the ancestors as grant roots:
+
+```yml
+Dynamic\ContentApi\Security\ContentApiGrantExtension:
+  grant_roots:
+    - SilverStripe\CMS\Model\SiteTree
+    - DNADesign\Elemental\Models\BaseElement
+  grant_exclude:
+    - App\Model\CheckoutPage
+```
+
+A class under a grant root that declares nothing itself is granted exactly the verbs it inherits
+(`ClassRegistry::accessVerbs()`; an explicit per-class deny still grants nothing), unless it or
+an ancestor is in `grant_exclude`. A class's own declaration always wins. With no roots (the
+default) nothing changes.
+
+`grant_exclude` ships with `ErrorPage`, `RedirectorPage`, `VirtualPage` and `UserDefinedForm`:
+the classes the original blanket grant leaked write and archive access to. Add commerce pages,
+forms and any other class that must not be service-account writable. Config arrays merge
+additively, so a project can add exclusions in YAML but can only remove a shipped one with
+`Config::modify()->set()` in `_config.php`. `CheckGrantExtensionReachability` lists the roots and
+exclusions in force and checks the inherited grants too.
+
 ### The `extendedCan()` contract this extension depends on
 
 `ContentApiGrantExtension` only works through `DataObject::extendedCan()` — the standard

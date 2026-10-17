@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Tasks\Support;
 
+use Dynamic\ContentApi\Security\ContentApiGrantExtension;
 use Dynamic\ContentApi\Tasks\Support\GrantExtensionReachabilityChecker;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantAbstractObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantCrossDelegatingObject;
@@ -15,7 +16,9 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestGrantReachableObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableSubObject;
 use ReflectionMethod;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
+use SilverStripe\ORM\DataObject;
 
 class GrantExtensionReachabilityCheckerTest extends SapphireTest
 {
@@ -69,6 +72,22 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
             $flagged,
             'canView() via parent::canEdit() never consults a read-only grant'
         );
+    }
+
+    /**
+     * #231: the report names configured grant roots and exclusions, and
+     * says nothing about them when none is configured.
+     */
+    public function testReportsGrantRootsAndExclusions(): void
+    {
+        $checker = GrantExtensionReachabilityChecker::create();
+        $this->assertSame([], $checker->grantRootSummary());
+
+        Config::modify()->set(ContentApiGrantExtension::class, 'grant_roots', [DataObject::class]);
+        $summary = implode("\n", $checker->grantRootSummary());
+
+        $this->assertStringContainsString(DataObject::class, $summary);
+        $this->assertStringContainsString('ErrorPage', $summary);
     }
 
     /**

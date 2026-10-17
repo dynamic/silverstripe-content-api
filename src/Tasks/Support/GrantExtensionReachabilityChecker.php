@@ -102,7 +102,9 @@ class GrantExtensionReachabilityChecker
                 continue;
             }
 
-            foreach ($this->registry->ownAccessVerbs($className) as $verb) {
+            // The verbs the grant actually answers for, own declaration or
+            // inherited under a grant root (#231).
+            foreach ($this->registry->grantVerbs($className) as $verb) {
                 $method = self::VERB_METHODS[$verb] ?? null;
 
                 if ($method === null || !method_exists($className, $method)) {
@@ -133,6 +135,29 @@ class GrantExtensionReachabilityChecker
         }
 
         return $findings;
+    }
+
+    /**
+     * The configured `ContentApiGrantExtension.grant_roots` and
+     * `grant_exclude`, as report lines (#231): roots widen which classes
+     * check() examines, so the report says which are in force.
+     *
+     * @return string[] empty when no grant root is configured
+     */
+    public function grantRootSummary(): array
+    {
+        $roots = (array) Config::inst()->get(ContentApiGrantExtension::class, 'grant_roots');
+
+        if ($roots === []) {
+            return [];
+        }
+
+        $exclude = (array) Config::inst()->get(ContentApiGrantExtension::class, 'grant_exclude');
+
+        return [
+            'Grant roots (undeclared subclasses get their inherited verbs): ' . implode(', ', $roots),
+            'Excluded from the inherited grant: ' . ($exclude === [] ? '(none)' : implode(', ', $exclude)),
+        ];
     }
 
     /**

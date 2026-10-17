@@ -67,6 +67,16 @@ use SilverStripe\Security\Security;
  *   inherited — not broader), and is deliberate: the module's design
  *   principle throughout is that a class's own `can*()` methods are the real
  *   safety boundary, not map membership (see `ClassRegistry`'s own docblock).
+ * - Opt-in hierarchy roots (#231): `grant_roots` lists ancestors whose
+ *   undeclared subclasses get the grant for the verbs they inherit, so a
+ *   project can declare `api_access` once on `SiteTree`/`BaseElement`
+ *   instead of once per concrete class. `grant_exclude` takes a class and
+ *   its subclasses back out; it ships with the classes the blanket-grant
+ *   incident above leaked (ErrorPage, RedirectorPage, VirtualPage,
+ *   UserDefinedForm), and since YAML merges arrays additively those can only
+ *   be removed with `Config::modify()->set()` in PHP. A class's own
+ *   declaration still wins over both. Empty roots (the default) leave the
+ *   behaviour above unchanged. See `ClassRegistry::grantVerbs()`.
  * - Verb scoping: `archive` is gated on the `delete` verb / canDelete(), not
  *   `action`/canEdit() (see #45) — this extension only grants canDelete()
  *   when the class's own declaration lists the delete verb, so a class that
@@ -135,6 +145,28 @@ class ContentApiGrantExtension extends Extension
 
     public ?ClassRegistry $registry = null;
 
+    /**
+     * Ancestors whose undeclared subclasses are granted the verbs they
+     * inherit (#231). Empty: only classes declaring their own access.
+     *
+     * @var string[]
+     */
+    private static array $grant_roots = [];
+
+    /**
+     * Classes (and their subclasses) under a grant root that never get the
+     * inherited grant. Additive in YAML, so a default can only be removed in
+     * PHP.
+     *
+     * @var string[]
+     */
+    private static array $grant_exclude = [
+        'SilverStripe\\ErrorPage\\ErrorPage',
+        'SilverStripe\\CMS\\Model\\RedirectorPage',
+        'SilverStripe\\CMS\\Model\\VirtualPage',
+        'SilverStripe\\UserForms\\Model\\UserDefinedForm',
+    ];
+
     protected function canView($member = null): ?bool
     {
         return $this->grant('read', $member);
@@ -179,7 +211,7 @@ class ContentApiGrantExtension extends Extension
             return null;
         }
 
-        $declared = $this->registry->ownAccessVerbs(get_class($owner));
+        $declared = $this->registry->grantVerbs(get_class($owner));
 
         foreach ((array) $verbs as $verb) {
             if (in_array($verb, $declared, true)) {

@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Registry;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Security\ContentApiGrantExtension;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
@@ -558,6 +559,36 @@ class ClassRegistry
      * @return string[] subset of ClassRegistry::VERBS, empty = declares
      *   nothing of its own (whether or not it inherits something)
      */
+    /**
+     * The verbs ContentApiGrantExtension grants a class at record level: its
+     * own declaration (ownAccessVerbs()) when it has one; otherwise, when
+     * the class sits under one of the extension's `grant_roots` and under
+     * none of its `grant_exclude` classes, the verbs it inherits
+     * (accessVerbs()), so an explicit per-class deny still grants nothing
+     * (#231).
+     *
+     * @return string[]
+     */
+    public function grantVerbs(string $className): array
+    {
+        $own = $this->ownAccessVerbs($className);
+
+        if ($own !== []) {
+            return $own;
+        }
+
+        $under = fn (string $key) => array_filter(
+            (array) Config::inst()->get(ContentApiGrantExtension::class, $key),
+            fn ($root) => is_string($root) && is_a($className, $root, true)
+        ) !== [];
+
+        if (!$under('grant_roots') || $under('grant_exclude')) {
+            return [];
+        }
+
+        return $this->accessVerbs($className);
+    }
+
     public function ownAccessVerbs(string $className): array
     {
         $config = Config::inst();
