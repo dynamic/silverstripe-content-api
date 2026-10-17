@@ -14,6 +14,7 @@ Call this first. Returns:
   "api": "silverstripe-content-api/v1",
   "environment": "dev",
   "populationEnabled": true,
+  "recordUpdateEnabled": true,
   "crud": { "provider": "colymba/silverstripe-restfulapi", "route": "api",
             "auth": "api/auth/login", "models": ["BlockPage", "ElementContent", ...] },
   "integrations": { "restfulapi": true, "elemental": true, "linkfield": true,
@@ -32,6 +33,7 @@ Call this first. Returns:
 |---|---|
 | `environment` | Current `Director::get_environment_type()` |
 | `populationEnabled` | Whether population endpoints would currently pass [environment gating](04_security-model.md#environment-gating) for this caller |
+| `recordUpdateEnabled` | Whether `PATCH records/$ClassRef/$ID` is open in this environment (not part of the population gate; see [Live writes](04_security-model.md#live-writes-patch-recordsclassrefid)) |
 | `crud` | Where colymba's generic surface lives (route, auth endpoint, exposed models) — a live pointer, not a hardcoded `/api` assumption |
 | `integrations` | Which optional integrations are installed. `essentialsColors` is `false` when `essentials-tools` isn't installed, otherwise the live palette/button labels/token syntax |
 | `classes` | Every exposed class (deny-by-default — a mapped-but-inaccessible class is omitted entirely, not listed with empty access), keyed by short ref |

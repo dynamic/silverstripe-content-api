@@ -12,6 +12,7 @@ use Dynamic\ContentApi\Control\Handlers\FingerprintHandler;
 use Dynamic\ContentApi\Control\Handlers\PageHandler;
 use Dynamic\ContentApi\Control\Handlers\ParityHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordActionsHandler;
+use Dynamic\ContentApi\Control\Handlers\RecordUpdateHandler;
 use Dynamic\ContentApi\Control\Handlers\RecordsHandler;
 use Dynamic\ContentApi\Control\Handlers\SchemaHandler;
 use Dynamic\ContentApi\Errors\ApiError;
@@ -55,6 +56,7 @@ class ContentApiController extends Controller
     private static array $url_handlers = [
         'GET auth/session' => 'handleAuthSession',
         'POST records/$ClassRef!/$ID!/$RecordAction!' => 'handleRecordAction',
+        'PATCH records/$ClassRef!/$ID!' => 'handleRecordUpdate',
         // Must sit above the plain single-record GET below — SilverStripe
         // matches $url_handlers top-down, and "$ClassRef!/$ID!" alone would
         // otherwise swallow ".../$ID/parity" first (#120).
@@ -77,6 +79,7 @@ class ContentApiController extends Controller
         'handleReadOne',
         'handleReadList',
         'handleRecordAction',
+        'handleRecordUpdate',
         'handleRecordParity',
         'handlePageAction',
         'handleAssetUpload',
@@ -93,6 +96,7 @@ class ContentApiController extends Controller
         'authHandler' => '%$' . AuthHandler::class,
         'recordsHandler' => '%$' . RecordsHandler::class,
         'recordActionsHandler' => '%$' . RecordActionsHandler::class,
+        'recordUpdateHandler' => '%$' . RecordUpdateHandler::class,
         'parityHandler' => '%$' . ParityHandler::class,
         'pageHandler' => '%$' . PageHandler::class,
         'assetHandler' => '%$' . AssetHandler::class,
@@ -110,6 +114,8 @@ class ContentApiController extends Controller
     public ?RecordsHandler $recordsHandler = null;
 
     public ?RecordActionsHandler $recordActionsHandler = null;
+
+    public ?RecordUpdateHandler $recordUpdateHandler = null;
 
     public ?ParityHandler $parityHandler = null;
 
@@ -162,6 +168,15 @@ class ContentApiController extends Controller
             $this->requireAuth($request);
 
             return $this->recordActionsHandler->recordAction($request, $this->authContext);
+        });
+    }
+
+    public function handleRecordUpdate(HTTPRequest $request): HTTPResponse
+    {
+        return $this->withEnvelope(function () use ($request) {
+            $this->requireAuth($request);
+
+            return $this->recordUpdateHandler->update($request, $this->authContext);
         });
     }
 

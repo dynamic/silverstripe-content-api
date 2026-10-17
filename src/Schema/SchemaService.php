@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Schema;
 
+use Dynamic\ContentApi\Control\Handlers\RecordUpdateHandler;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
@@ -77,6 +78,9 @@ class SchemaService
             // every GET schema/site against a blocked environment logged a
             // false "blocked" warning on nothing more than a read.
             'populationEnabled' => $this->environmentGate->isPopulationAllowed(),
+            // PATCH records/$ClassRef/$ID, which the population gate doesn't
+            // cover (#232).
+            'recordUpdateEnabled' => RecordUpdateHandler::isEnabled(),
             'crud' => $this->crudSurface(),
             'integrations' => $this->detectIntegrations(),
             'classes' => $classes,
