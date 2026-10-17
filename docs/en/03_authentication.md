@@ -75,17 +75,24 @@ caveats this module and its consumers need to work around themselves.
 
 - **Plaintext token storage.** `Member.ApiToken` is stored unhashed — anyone with CMS or DB
   access to Member records can read live tokens.
-- **`?token=` query-var fallback is always active** on `/api`. Keep tokens out of URLs (access
-  logs, browser history, referrer headers).
+- **`?token=` query-var fallback is off.** colymba reads a token from the request var named by
+  `TokenAuthenticator.tokenQueryVar` when the header is missing; this module renames it to
+  `content_api_query_token_disabled`, so `/api` accepts the `X-Silverstripe-Apitoken` header
+  only. Setting `tokenQueryVar: token` in project config restores the fallback (tokens in URLs
+  leak into access logs, browser history and referrer headers).
 - **Grace-window expiry.** Colymba's own `authenticate()` treats a token as valid while
   `ApiTokenExpire > now − tokenLife` — a token can remain accepted up to a full `tokenLife`
   *past* its advertised expiry.
 - **Session login as a side effect.** Every authenticated `/api` request logs the member into
   the session IdentityStore.
-- ⚠️ **`api/auth/logout?email=…` is unauthenticated upstream** — any caller can expire a known
-  service account's token (a DoS on integrations). Restrict `/api/auth/*` at the network edge,
-  or provision service tokens via `MintContentApiToken` and avoid `logout` for anything you
-  depend on. See [Upstream issues](upstream-issues.md) item 5.
+- **`api/auth/*` is not gated by `authentication_policy`.** Upstream, `logout?email=…` lets
+  any caller expire a named member's token and `lostPassword?email=…` sends a reset email to
+  any address, both unauthenticated. This module turns both off and keeps `login` (a documented
+  contract): `Dynamic\ContentApi\Auth\ColymbaAuthHardening.auth_actions` is a string-keyed map
+  (`login: true`, `logout: false`, `lostPassword: false`) that the module's `_config.php`
+  applies to colymba's `TokenAuthenticator.allowed_actions`. Flip any entry in project YAML,
+  e.g. `logout: true`. A disabled action answers `403`. See
+  [Upstream issues](upstream-issues.md) item 5.
 
-Treat `/api` as a trusted server-to-server surface — these are documented workarounds, not
-pending upstream fixes. `/content-api/v1` is unaffected by all five points.
+Treat `/api` as a trusted server-to-server surface. `/content-api/v1` is unaffected by all of
+the above.

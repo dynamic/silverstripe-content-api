@@ -3,12 +3,16 @@
 namespace Dynamic\ContentApi\Write;
 
 use Dynamic\ContentApi\Errors\ApiError;
+use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Security\PermissionPolicy;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\Security\Security;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * Field-level write guard for colymba/silverstripe-restfulapi's generic
@@ -92,6 +96,35 @@ class WriteGuardExtension extends Extension
             }
         }
 
+        // #230: colymba applies every scalar key with `$model->{$key} =
+        // $value`, and ModelData::__set() calls a matching set{Key}() when one
+        // exists — so a key that isn't a schema name still runs a setter
+        // (File::setFilename() re-parenting a file, Versioned's
+        // setMigratingVersion(), ...). onBeforeWrite() only reverts changed
+        // DB fields and never sees a setter's other effects. Drop every key
+        // that isn't a schema name for the class before colymba sees it,
+        // matching /content-api/v1's own unknown-field rejection.
+        $schemaKeys = $this->schemaKeys();
+        $dropped = [];
+
+        foreach (array_keys($body) as $key) {
+            if (!isset($schemaKeys[$key])) {
+                unset($body[$key]);
+                $dropped[] = $key;
+            }
+        }
+
+        if ($dropped !== []) {
+            $filtered = true;
+            Injector::inst()->get(LoggerInterface::class)->notice(sprintf(
+                'WriteGuardExtension dropped non-schema payload key(s) for %s on /api: %s.',
+                get_class($this->getOwner()),
+                json_encode(array_map('strval', $dropped))
+            ));
+        }
+
+        $this->authorizeRelationTargets($body, $writableRelations);
+
         $translatedRelations = $this->translatePolymorphicHasOnes($body);
         $filtered = $translatedRelations !== [] || $filtered;
 
@@ -124,6 +157,101 @@ class WriteGuardExtension extends Extension
             }
 
             $rawJson = $encoded;
+        }
+    }
+
+    /**
+     * Every payload key colymba may legitimately apply for this class: its
+     * DB columns (composites and their sub-columns included), each has_one
+     * by relation name and by its {Name}ID/{Name}Class/{Name}Relation
+     * columns, every many relation, and colymba's own ManyManyExtraFields.
+     *
+     * @return array<string, true>
+     */
+    private function schemaKeys(): array
+    {
+        $owner = $this->getOwner();
+        $keys = array_keys(DataObject::getSchema()->fieldSpecs(get_class($owner)));
+
+        foreach (array_keys((array) $owner->hasOne()) as $relation) {
+            array_push($keys, $relation, $relation . 'ID', $relation . 'Class', $relation . 'Relation');
+        }
+
+        $keys = array_merge(
+            $keys,
+            array_keys((array) $owner->hasMany()),
+            array_keys((array) $owner->manyMany()),
+            ['ManyManyExtraFields']
+        );
+
+        return array_fill_keys($keys, true);
+    }
+
+    /**
+     * colymba's relation write is `removeAll()` then `add()` per id, which
+     * writes each has_many child's foreign key and changes many_many join
+     * rows. The far side gets the same authorization the module's own
+     * pipeline applies (#235): `update` + canEdit() on every has_many item
+     * and on every existing child removeAll() will clear, `read` + canView()
+     * on every many_many item. Checked before colymba applies anything; a
+     * refusal fails the request.
+     *
+     * @param array<string, mixed> $body
+     * @param string[] $writableRelations
+     * @throws HTTPResponse_Exception
+     */
+    private function authorizeRelationTargets(array $body, array $writableRelations): void
+    {
+        $owner = $this->getOwner();
+        $hasMany = (array) $owner->hasMany();
+        $member = Security::getCurrentUser();
+        $policy = Injector::inst()->get(PermissionPolicy::class);
+
+        try {
+            foreach ($writableRelations as $relation) {
+                if (!isset($body[$relation]) || !is_array($body[$relation])) {
+                    continue;
+                }
+
+                if (!$member) {
+                    throw new ApiError(ErrorCode::FORBIDDEN, 'Relation writes on /api need an authenticated member.');
+                }
+
+                $isHasMany = isset($hasMany[$relation]);
+                $relationClass = $owner->getRelationClass($relation);
+
+                if ($isHasMany && $owner->isInDB()) {
+                    foreach ($owner->{$relation}() as $existing) {
+                        $policy->authorize($existing, 'update', $member);
+                    }
+                }
+
+                foreach ($body[$relation] as $id) {
+                    // Read on the draft stage: /api requests default to Live,
+                    // which would hide a draft-only target. A target that
+                    // doesn't resolve is refused, not skipped —
+                    // ManyManyList::add() inserts a join row for any id
+                    // without looking it up.
+                    $target = is_numeric($id) && $relationClass
+                        ? Versioned::withVersionedMode(function () use ($relationClass, $id) {
+                            Versioned::set_stage(Versioned::DRAFT);
+
+                            return DataObject::get_by_id($relationClass, (int) $id);
+                        })
+                        : null;
+
+                    if (!$target) {
+                        throw new ApiError(
+                            ErrorCode::NOT_FOUND,
+                            sprintf('Related %s not found for relation "%s".', $relationClass, $relation)
+                        );
+                    }
+
+                    $policy->authorize($target, $isHasMany ? 'update' : 'read', $member);
+                }
+            }
+        } catch (ApiError $error) {
+            throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
         }
     }
 

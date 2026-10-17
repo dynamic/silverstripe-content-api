@@ -98,4 +98,15 @@ class ApiTestObject extends DataObject implements TestOnly
     {
         return true;
     }
+
+    /**
+     * Set by setSetterProbe() — proves a non-schema payload key on colymba's
+     * /api never reaches a magic set{Key}() setter (#230).
+     */
+    public static bool $setterProbeCalled = false;
+
+    public function setSetterProbe(mixed $value): void
+    {
+        ApiTestObject::$setterProbeCalled = true;
+    }
 }
