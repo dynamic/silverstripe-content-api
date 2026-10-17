@@ -41,7 +41,7 @@ class, see [Assets](09_assets.md#authorization)); `rename` always writes a new r
 
 | Key | Notes |
 |---|---|
-| `match` | **Required.** `{"id"}`, `{"urlSegment"}`, or `{"externalId"}`. `urlSegment` matching more than one page is `409 MULTIPLE_MATCHES` |
+| `match` | **Required.** `{"id"}`, `{"urlSegment"}`, or `{"externalId"}`. `urlSegment` matching more than one page is `409 MULTIPLE_MATCHES`. A `urlSegment` is normalised the way SiteTree stores one (`About Us` → `about-us`) before matching and creating, so a re-run matches the page the first run created; a `createIfMissing` segment SiteTree would still rewrite (taken, or reserved like `admin`) is `409 URLSEGMENT_COLLISION`, match by `externalId` instead |
 | `createIfMissing` | `{title, parentId, className?}`. Required if `match` finds nothing (`404 NOT_FOUND` otherwise) |
 | `convertTo` | Short class ref; changes the page's class via `newClassInstance()` if it differs. No-op if already that class. Needs the bare `convert` verb on both the current and the target class (see [`POST pages/$ID/convert`](05_endpoint-reference.md#post-pagesidconvert)) |
 | `force` | Required `true` to convert the site home page (`403 HOMEPAGE_CONVERSION_FORBIDDEN` otherwise) |

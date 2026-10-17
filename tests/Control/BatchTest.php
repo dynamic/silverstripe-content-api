@@ -2636,8 +2636,8 @@ class BatchTest extends ContentApiTestCase
 
         $result = $body['data']['results'][0];
 
-        if (class_exists('SilverStripe\\TinyMCE\\TinyMCEConfig')) {
-            // SS6: the unknown identifier still has the default rules.
+        if (class_exists('SilverStripe\\Model\\ModelData')) {
+            // SS6: an unknown identifier still gets the default element rules.
             $this->assertSame('updated', $result['status'], json_encode($body));
         } else {
             // SS5: an empty config, so the probe refuses the write.
