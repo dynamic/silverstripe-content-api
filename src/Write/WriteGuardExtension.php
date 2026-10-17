@@ -376,6 +376,25 @@ class WriteGuardExtension extends Extension
 
             if (($invalidValue || !$writable) && array_key_exists($column, $changed)) {
                 $owner->setField($column, $changed[$column]['before']);
+
+                continue;
+            }
+
+            // An HTML-typed value colymba wrote straight to the model gets the
+            // same sanitising the module's own pipeline applies (#225).
+            if ($relationName === null && array_key_exists($column, $changed)) {
+                $current = $owner->getField($column);
+
+                try {
+                    $clean = $applicator->sanitiseHtml($owner, $column, $current);
+                } catch (ApiError $error) {
+                    throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
+                }
+
+
+                if ($clean !== $current) {
+                    $owner->setField($column, $clean);
+                }
             }
         }
     }

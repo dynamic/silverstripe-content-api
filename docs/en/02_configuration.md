@@ -161,6 +161,8 @@ the log the way it does on the wire.
 | `protected_fields` | `ID, ClassName, Created, LastEdited, Version, Password, Salt, PasswordEncryption, AutoLoginHash, TempIDHash, ApiToken, ApiTokenExpire` | Global denylist — never writable regardless of policy, merged with per-class `api_protected_fields`. This global floor also applies to the trusted internal-fields channel |
 | `unknown_fields` | `'strict'` | Global default for unrecognized payload keys, overridable per class via `api_unknown_fields` |
 | `transformers` | `[]` | Ordered list of `ValueTransformer` service refs, first-match-wins. The essentials/linkfield config docs (below) append to this list when their integration is installed |
+| `sanitise_html` | `true` | Run every `DBHTMLText`/`DBHTMLVarchar` write (module pipeline and colymba `/api`) through `HTMLEditorSanitiser`, so the API stores what a CMS save would: elements and attributes outside the editor config's rules (`<script>`, `on*` handlers, …) are stripped, and a module write that lost markup carries a `VALUE_SANITISED` warning. Also off when `HTMLEditorField.sanitise_server_side` is false. Runs after `transformers` |
+| `html_editor_config` | `'cms'` | The `HTMLEditorConfig` identifier whose element rules sanitising applies. `cms` is the config a CMS edit form saves through; the config active outside the CMS isn't. An identifier with no usable rules (unknown, or emptied) refuses the write with `500 SERVER_ERROR` rather than storing raw or stripped HTML |
 
 This is the single source of truth for field writability on **every** write surface — the
 module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` write path.

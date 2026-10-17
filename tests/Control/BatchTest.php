@@ -22,6 +22,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
 use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorField;
+use Dynamic\ContentApi\Write\WriteApplicator;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Versioned\Versioned;
 
@@ -2544,5 +2546,96 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame('updated', $body['data']['results'][0]['status']);
         $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($childOne->ID)->ParentID);
         $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($childTwo->ID)->ParentID);
+    }
+
+    private function writeBody(string $html, ?array &$result = null): string
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => (int) $record->ID,
+            'fields' => ['Body' => $html],
+        ]]], $this->adminToken));
+
+        $result = $body['data']['results'][0];
+        $this->assertSame('updated', $result['status'], json_encode($body));
+
+        return (string) ApiTestObject::get()->byID($record->ID)->getField('Body');
+    }
+
+    /**
+     * #225: an HTML field written through the API is sanitised like a CMS
+     * save, so script never reaches a page that renders it raw.
+     */
+    public function testHtmlFieldWritesAreSanitised(): void
+    {
+        $stored = $this->writeBody('<script>alert(1)</script><p>ok</p>');
+
+        $this->assertStringNotContainsString('<script', $stored);
+        $this->assertStringContainsString('<p>ok</p>', $stored);
+    }
+
+    public function testHtmlSanitisingCanBeTurnedOff(): void
+    {
+        Config::modify()->set(WriteApplicator::class, 'sanitise_html', false);
+
+        $this->assertStringContainsString('<script>', $this->writeBody('<script>alert(1)</script><p>ok</p>'));
+    }
+
+    public function testHtmlSanitisingFollowsTheCmsSwitch(): void
+    {
+        Config::modify()->set(HTMLEditorField::class, 'sanitise_server_side', false);
+
+        $this->assertStringContainsString('<script>', $this->writeBody('<script>alert(1)</script><p>ok</p>'));
+    }
+
+    public function testSanitisingReportsWhatItRemoved(): void
+    {
+        $this->writeBody('<p onclick="steal()">a</p><script>alert(1)</script>', $result);
+
+        $this->assertSame('VALUE_SANITISED', $result['warnings'][0]['code']);
+        $this->assertSame('Body', $result['warnings'][0]['field']);
+    }
+
+    public function testAllowedMarkupIsNotReportedOrChanged(): void
+    {
+        $html = '<p class="lead">Hello <a href="[sitetree_link,id=1]">home</a></p>';
+        $stored = $this->writeBody($html, $result);
+
+        $this->assertSame([], array_column($result['warnings'] ?? [], 'code'));
+        $this->assertStringContainsString('[sitetree_link,id=1]', $stored);
+    }
+
+    public function testEventHandlerAttributesAreStripped(): void
+    {
+        $stored = $this->writeBody('<p onclick="steal()">a</p>');
+
+        $this->assertStringNotContainsString('onclick', $stored);
+        $this->assertStringContainsString('<p>a</p>', $stored);
+    }
+
+    /**
+     * An editor config with no element rules would sanitise nothing (SS5)
+     * or everything (SS6); the write is refused instead.
+     */
+    public function testAMisconfiguredEditorConfigRefusesTheWrite(): void
+    {
+        Config::modify()->set(WriteApplicator::class, 'html_editor_config', 'no-such-editor-config');
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => (int) $record->ID,
+            'fields' => ['Body' => '<script>alert(1)</script>'],
+        ]]], $this->adminToken));
+
+        $this->assertSame('SERVER_ERROR', $body['data']['results'][0]['error']['code']);
+        $this->assertStringNotContainsString(
+            '<script',
+            (string) ApiTestObject::get()->byID($record->ID)->getField('Body')
+        );
     }
 }
