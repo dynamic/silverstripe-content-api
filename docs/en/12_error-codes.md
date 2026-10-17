@@ -26,7 +26,7 @@ otherwise.
 | `METHOD_NOT_ALLOWED` | 405 | Wrong HTTP verb for the route |
 | `MULTIPLE_MATCHES` | 409 | An external id (or a `urlSegment` page match) resolves to more than one record |
 | `ALREADY_EXISTS` | 409 | A create conflicts with an existing record |
-| `ASSET_CONFLICT` | 409 | Asset path conflict not resolvable by the chosen `conflict` mode |
+| `ASSET_CONFLICT` | 409 | An upload's `externalId` is held by a file at a different path, or the file at the path already carries a different `externalId` (#240) — the API won't create a second file with the key or re-key the existing one |
 | `UNPUBLISH_STRANDS_DESCENDANTS` | 409 | `unpublish` or `archive` (stage action, or batch `delete` with `mode: "unpublish"`/`"archive"`) would cascade-delete `Hierarchy` descendants currently nested under the record (`SiteTree.enforce_strict_hierarchy`, the framework default) — pass `force: true` to bypass and accept the loss (#71) |
 | `STAGE_CLASS_MISMATCH` | 409 | An unpublish/archive/delete of a record whose live row is a different class from its draft (a draft-only class conversion). Publish the conversion first (#239) |
 | `CROSS_PAGE_REPARENT` | 409 | A composition's server-derived element placement (never an explicit client `fields.ParentID` write, which stays governed only by `ELEMENT_NOT_ALLOWED_ON_PAGE`) would move an already-parented element onto a DIFFERENT page's `ElementalArea` — almost always means `page.match` resolved to the wrong page, since a global `externalId` lookup matched a record that already belongs elsewhere (#201) |
@@ -42,6 +42,7 @@ otherwise.
 | `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
 | `ACTION_VERB_MISSING` | 422 | Warning code, never thrown — see below |
 | `VALUE_SANITISED` | 422 | Warning code, never thrown — see below |
+| `PAYLOAD_TOO_LARGE` | 413 | A multipart upload exceeds the server's `upload_max_filesize` or `post_max_size` (the message names the limit) |
 | `PAYLOAD_INVALID` | 400 | Malformed payload shape: bad relation value, missing polymorphic `class` hint, `..` in a folder path, bad `conflict`/`mode` value, missing `filename`, invalid `_stage`, unsupported filter modifier, missing `page.match`, etc. |
 | `HOMEPAGE_CONVERSION_FORBIDDEN` | 403 | Converting the site home page's class without `force: true` |
 | `ASSET_READ_FAILED` | 502 | Uploaded binary is empty/unreadable |

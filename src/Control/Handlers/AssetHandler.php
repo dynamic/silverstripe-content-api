@@ -114,6 +114,87 @@ class AssetHandler
     }
 
     /**
+     * Report why PHP didn't deliver a multipart upload instead of the generic
+     * "requires a file part" (#246): an over-limit file arrives with an
+     * UPLOAD_ERR_* code and no temp file, and a body over post_max_size
+     * arrives with $_FILES empty.
+     *
+     * @param array<string, mixed>|null $upload
+     * @throws ApiError PAYLOAD_TOO_LARGE | PAYLOAD_INVALID
+     */
+    protected function assertUploadReceived(?array $upload): void
+    {
+        if (is_array($upload['error'] ?? null)) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'Send one file in the "file" part, not an array.');
+        }
+
+        $error = (int) ($upload['error'] ?? UPLOAD_ERR_OK);
+
+        if ($error === UPLOAD_ERR_INI_SIZE) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_TOO_LARGE,
+                sprintf(
+                    'The uploaded file exceeds the server\'s limit (upload_max_filesize %s).',
+                    ini_get('upload_max_filesize')
+                )
+            );
+        }
+
+        if ($error === UPLOAD_ERR_FORM_SIZE) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_TOO_LARGE,
+                'The uploaded file exceeds the form\'s MAX_FILE_SIZE.'
+            );
+        }
+
+        $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+
+        if ($upload === null && $this->exceedsPostLimit($contentLength, (string) ini_get('post_max_size'))) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_TOO_LARGE,
+                sprintf('The request body exceeds the server\'s limit (post_max_size %s).', ini_get('post_max_size'))
+            );
+        }
+
+        $messages = [
+            UPLOAD_ERR_PARTIAL => 'The file was only partially uploaded.',
+            UPLOAD_ERR_NO_FILE => 'No file was uploaded in the "file" part.',
+            UPLOAD_ERR_NO_TMP_DIR => 'The server has no temporary directory for uploads.',
+            UPLOAD_ERR_CANT_WRITE => 'The server could not write the upload to disk.',
+            UPLOAD_ERR_EXTENSION => 'A PHP extension stopped the upload.',
+        ];
+
+        if (isset($messages[$error])) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, $messages[$error]);
+        }
+    }
+
+    /**
+     * Whether a body of $contentLength bytes is over post_max_size, where
+     * PHP reads a limit of 0 as none.
+     */
+    protected function exceedsPostLimit(int $contentLength, string $postMaxSize): bool
+    {
+        $limit = $this->bytes($postMaxSize);
+
+        return $limit > 0 && $contentLength > $limit;
+    }
+
+    private function bytes(string $size): int
+    {
+        $size = trim($size);
+        $unit = strtolower(substr($size, -1));
+        $value = (int) $size;
+
+        return match ($unit) {
+            'g' => $value * 1024 ** 3,
+            'm' => $value * 1024 ** 2,
+            'k' => $value * 1024,
+            default => $value,
+        };
+    }
+
+    /**
      * @return array{0: string, 1: array<string, mixed>} binary + meta
      */
     protected function extractUpload(HTTPRequest $request): array
@@ -131,6 +212,7 @@ class AssetHandler
 
         if (str_contains($contentType, 'multipart/form-data')) {
             $upload = $_FILES['file'] ?? null;
+            $this->assertUploadReceived($upload);
 
             if (!$upload || !is_uploaded_file($upload['tmp_name'] ?? '')) {
                 throw new ApiError(
@@ -193,7 +275,12 @@ class AssetHandler
         $data = $this->serializer->serialize($record);
 
         $data['filename'] = $record->getFilename();
-        $data['url'] = $record->getURL();
+        // No session grant (#246): File::getURL() grants the current
+        // session access to a protected file, which a token client never
+        // has, so `url` would look fetchable when it isn't. `visibility`
+        // says whether it is: "public" (published) or "protected".
+        $data['url'] = $record->File->getURL(false);
+        $data['visibility'] = $record->getVisibility();
         $data['hash'] = $record->getHash();
 
         return $data;

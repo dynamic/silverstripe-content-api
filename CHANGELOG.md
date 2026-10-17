@@ -160,6 +160,23 @@ All notable changes to this project are documented here. Format loosely follows
   include drafts the request did not write. The docs now say so.
 
 ### Fixed
+- **(#240, #246)** Asset uploads match, identify and report files the way SilverStripe stores them:
+  - The existing-file lookup uses the stored path (folder and file name filters, or an existing
+    folder's stored name), so re-uploading a name the filters rewrite finds the file instead of
+    creating a `-v2` sibling.
+  - An `externalId` held by a file at another path, or a path whose file has a different key,
+    is `409 ASSET_CONFLICT` (the code previously had no thrower), not a second file with the key
+    or a silent re-key. This covers every mode that writes a new file: `rename`, and `skip` with
+    nothing at the path.
+  - `url` is built without granting the request's session access, and a new `visibility` field
+    says whether it is `public` or `protected`.
+  - Opt-in `AssetService.verify_content_type` refuses image-extension uploads whose bytes don't
+    sniff as an image (`422 VALIDATION_FAILED`).
+  - Multipart uploads over PHP's limits are a new `413 PAYLOAD_TOO_LARGE` naming the limit, and
+    other PHP upload errors have accurate messages, instead of "requires a file part".
+
+  **Behavior change:** a renamed re-upload keeping its key, or a re-key of an existing file, is
+  now a 409.
 - **(#240)** External ids identify exactly one record:
   - Every write that assigns one (`externalId` on create or update, and `fields.FixtureIdentifier`)
     refuses a key already held anywhere in the class tree that carries the column, with `409

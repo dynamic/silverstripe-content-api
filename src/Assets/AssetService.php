@@ -8,9 +8,12 @@ use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use SilverStripe\Assets\File;
+use SilverStripe\Assets\FileNameFilter;
 use SilverStripe\Assets\Folder;
 use SilverStripe\Assets\FolderNameFilter;
+use SilverStripe\Assets\Image;
 use SilverStripe\Assets\Storage\AssetStore;
+use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
@@ -37,7 +40,17 @@ use SilverStripe\Versioned\Versioned;
  */
 class AssetService
 {
+    use Configurable;
     use Injectable;
+
+    /**
+     * Opt-in check that an upload's bytes match its extension (#246): with
+     * it on, a file whose extension maps to Image must sniff as `image/*`
+     * (finfo), so HTML named `.jpg` is refused instead of becoming an Image
+     * the protected-file route would serve as `text/html`. Off by default,
+     * matching core's extension-only Upload_Validator.
+     */
+    private static bool $verify_content_type = false;
 
     private static array $dependencies = [
         'externalIds' => '%$' . ExternalIdResolver::class,
@@ -279,6 +292,17 @@ class AssetService
         });
     }
 
+    /**
+     * The path SilverStripe will store for an upload: each folder segment
+     * through FolderNameFilter (what Folder::find_or_make() names it) and
+     * the filename through FileNameFilter (what File::setFilename() does).
+     * Looking up the raw path missed any name the filters rewrite
+     * ("Team Photo.png" in "About Us" is stored as
+     * "About-Us/Team-Photo.png"), so a re-upload made a "-v2" sibling
+     * instead of finding the file (#240). A folder that already exists
+     * keeps its stored path, since find_or_make() also matches a segment
+     * by its raw name (a legacy "v1.2" the current filter would rename).
+     */
     protected function targetPath(array $meta): ?string
     {
         $filename = basename(trim((string) ($meta['filename'] ?? '')));
@@ -288,7 +312,100 @@ class AssetService
             return null;
         }
 
-        return $folder !== '' ? "{$folder}/{$filename}" : $filename;
+        $filename = FileNameFilter::create()->filter($filename);
+
+        if ($folder === '') {
+            return $filename;
+        }
+
+        $existing = $this->findFolder($folder);
+
+        if ($existing) {
+            return rtrim((string) $existing->getFilename(), '/') . '/' . $filename;
+        }
+
+        $folderFilter = FolderNameFilter::create();
+        $segments = array_map(
+            fn (string $segment) => $folderFilter->filter($segment),
+            array_values(array_filter(preg_split('#[/\\\\]+#', $folder) ?: []))
+        );
+
+        return implode('/', $segments) . '/' . $filename;
+    }
+
+    /**
+     * See `verify_content_type`.
+     *
+     * @throws ApiError VALIDATION_FAILED
+     */
+    protected function assertContentMatchesExtension(string $binary, string $filename): void
+    {
+        if (!static::config()->get('verify_content_type') || !function_exists('finfo_buffer')) {
+            return;
+        }
+
+        $class = File::get_class_for_file_extension(strtolower((string) pathinfo($filename, PATHINFO_EXTENSION)));
+
+        if (!is_a($class, Image::class, true)) {
+            return;
+        }
+
+        $mime = (string) finfo_buffer(finfo_open(FILEINFO_MIME_TYPE), $binary);
+
+        if (!str_starts_with($mime, 'image/')) {
+            throw new ApiError(
+                ErrorCode::VALIDATION_FAILED,
+                sprintf('"%s" has an image extension but its content is %s.', $filename, $mime),
+                [['field' => 'base64', 'code' => ErrorCode::VALIDATION_FAILED->value, 'message' => $mime]]
+            );
+        }
+    }
+
+    /**
+     * An asset upload's external id must keep pointing at one file (#240):
+     * a key already held by a file at another path, or a path whose file
+     * carries a different key, is refused rather than creating a second
+     * file with the same key or silently re-keying the existing one.
+     *
+     * @throws ApiError ASSET_CONFLICT
+     */
+    protected function assertExternalIdConsistent(array $meta, ?File $atPath, string $targetPath): void
+    {
+        $key = (string) ($meta['externalId'] ?? '');
+
+        if ($key === '' || !$this->externalIds->supports(File::class)) {
+            return;
+        }
+
+        $field = $this->externalIds->fieldName();
+        $holder = $this->externalIds->tryFind(File::class, $key);
+
+        if ($holder && (!$atPath || (int) $holder->ID !== (int) $atPath->ID)) {
+            throw new ApiError(
+                ErrorCode::ASSET_CONFLICT,
+                sprintf(
+                    'External id "%s" is already held by the file at "%s", not "%s". Upload to that path, '
+                        . 'or use a new external id.',
+                    $key,
+                    (string) $holder->getField('FileFilename'),
+                    $targetPath
+                )
+            );
+        }
+
+        $current = $atPath ? (string) $atPath->getField($field) : '';
+
+        if ($current !== '' && $current !== $key) {
+            throw new ApiError(
+                ErrorCode::ASSET_CONFLICT,
+                sprintf(
+                    'The file at "%s" has external id "%s"; it will not be re-keyed to "%s".',
+                    $targetPath,
+                    $current,
+                    $key
+                )
+            );
+        }
     }
 
     /**
@@ -382,8 +499,18 @@ class AssetService
             throw new ApiError(ErrorCode::ASSET_READ_FAILED, 'Uploaded file is empty.');
         }
 
-        $targetPath = $folder !== '' ? "{$folder}/{$filename}" : $filename;
+        $this->assertContentMatchesExtension($binary, $filename);
+
+        $targetPath = (string) $this->targetPath($meta);
         $existing = File::get()->filter('FileFilename', $targetPath)->first();
+
+        if (!($existing && $conflict === 'skip')) {
+            // A skip that finds its file writes nothing. Otherwise only
+            // `overwrite` reuses the path's file; `rename`, and a skip with
+            // nothing at the path, write a new record the key must not
+            // already be on.
+            $this->assertExternalIdConsistent($meta, $conflict === 'overwrite' ? $existing : null, $targetPath);
+        }
 
         if ($existing && $conflict === 'skip') {
             // A true no-op, as documented: no metadata rewrite, no publish
