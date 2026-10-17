@@ -121,6 +121,79 @@ class RecordSerializer
     }
 
     /**
+     * The DB columns a serialized record of this class can expose, for
+     * validating list filters and sorts (#236): a predicate on any other
+     * column would leak its value through which rows match or how they
+     * order. Mirrors collectFields(): `api_fields` when set, otherwise every
+     * db field and has_one; `hidden_fields` removed; a has_one contributes
+     * its FK column, never its Class/Relation companions; a composite its
+     * sub-columns. `ID`, `ClassName` (emitted as `className`) and the
+     * external-id column (emitted as `externalId`) are always included.
+     *
+     * @return string[]
+     */
+    public function readableColumns(string $className): array
+    {
+        if (isset($this->readableColumns[$className])) {
+            return $this->readableColumns[$className];
+        }
+
+        $schema = DataObject::getSchema();
+        $singleton = DataObject::singleton($className);
+        $hidden = (array) static::config()->get('hidden_fields');
+        $hasOne = (array) $singleton->hasOne();
+        $dbFields = $schema->fieldSpecs($className);
+        $apiFields = Config::inst()->get($className, 'api_fields');
+        $companions = [];
+
+        foreach (array_keys($hasOne) as $relation) {
+            $companions[] = $relation . 'Class';
+            $companions[] = $relation . 'Relation';
+        }
+
+        $wanted = is_array($apiFields) ? $apiFields : array_merge(array_keys($dbFields), array_keys($hasOne));
+        $composites = $schema->compositeFields($className);
+        // `className` is always emitted, so ClassName is always readable.
+        $columns = ['ID', 'ClassName'];
+
+        foreach ($wanted as $name) {
+            if (in_array($name, $hidden, true)) {
+                continue;
+            }
+
+            if (isset($hasOne[$name])) {
+                $columns[] = $name . 'ID';
+                continue;
+            }
+
+            if (isset($dbFields[$name]) && !in_array($name, $companions, true)) {
+                $columns[] = $name;
+
+                // A composite (e.g. Money) is emitted whole, so its
+                // sub-columns (PriceAmount, PriceCurrency) are readable too.
+                if (isset($composites[$name])) {
+                    foreach (array_keys($dbFields) as $column) {
+                        if ($column !== $name && str_starts_with($column, $name)) {
+                            $columns[] = $column;
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($this->externalIds->supports($className)) {
+            $columns[] = $this->externalIds->fieldName();
+        }
+
+        return $this->readableColumns[$className] = array_values(array_unique($columns));
+    }
+
+    /**
+     * @var array<string, string[]> readableColumns() per class, per request
+     */
+    private array $readableColumns = [];
+
+    /**
      * @return array{0: array<string, mixed>, 1: array<string, mixed>}
      */
     private function collectFields(DataObject $record, string $externalIdField): array

@@ -57,9 +57,16 @@ List with query-string filtering, sorting, and pagination.
 | `offset` | Default `0` |
 | `_stage` | `draft` (default) or `live`. Underscored because bare `stage` is SilverStripe's own reserved staging param, consumed by the Versioned middleware before any controller runs |
 
-A comma-containing filter value is split into an `IN (...)`-style array match. Filtering/sorting
-on an unrecognized field returns `422 UNKNOWN_FIELD`; an unsupported modifier returns `400
+A comma-containing filter value is split into an `IN (...)`-style array match. Filtering and
+sorting accept only columns a response can show (`RecordSerializer::readableColumns()`): the
+class's `api_fields` when set (otherwise every db field), the FK column of each emitted has_one,
+`ID` and the external-id column — never a `hidden_fields` column or anything outside
+`api_fields`, since a predicate on a withheld column would leak its value through which rows
+match. Anything else returns `422 UNKNOWN_FIELD`; an unsupported modifier returns `400
 PAYLOAD_INVALID`.
+
+Every response from this API carries `Cache-Control: no-cache, no-store, must-revalidate,
+private`: responses are per-token and can carry draft content.
 
 **Visibility is resolved before pagination**, row by row (`canView()` has no SQL pushdown) — so
 `meta.total` reflects only records the caller can view, and a page is never short a record that
@@ -156,4 +163,5 @@ additionally require `CONTENT_API_POPULATE` and pass
 
 ## `GET schema`, `GET schema/$ClassRef`
 
-Full reference: [Schema introspection](11_schema-introspection.md).
+Full reference: [Schema introspection](11_schema-introspection.md). `GET schema/$ClassRef` for a
+mapped class that grants no verbs is `403 FORBIDDEN_CLASS`, as on the records routes.

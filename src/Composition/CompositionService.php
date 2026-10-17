@@ -722,7 +722,9 @@ class CompositionService
         $fields = $this->resolveRefs((array) ($entry['fields'] ?? []));
 
         if ($child) {
-            $this->policy->checkClassAccess($childClass, 'update', $member);
+            // The scoped lookup matches the whole subclass tree, so the gate
+            // is the found child's own class (#236).
+            $this->policy->checkClassAccess(get_class($child), 'update', $member);
             $this->policy->checkRecordAccess($child, 'update', $member);
             $operation = 'updated';
         } else {

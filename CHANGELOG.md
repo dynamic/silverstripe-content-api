@@ -116,6 +116,25 @@ All notable changes to this project are documented here. Format loosely follows
   **Behavior change:** `logout`/`lostPassword` callers get `403`, and `/api` clients passing
   `?token=` must send the `X-Silverstripe-Apitoken` header (or set `tokenQueryVar: token`).
 
+- **(#236)** Read-side exposure closed on `/content-api/v1`:
+  - A subclass that explicitly denies or narrows its ancestor's verbs stays denied when its row
+    is reached through the ancestor's ref. Reads, list rows (and `meta.total`), stage actions
+    (including the forced-unpublish `delete` check), parity and upsert-to-existing all check
+    the record's own class. Asset endpoints resolve the nearest class that *declares* access,
+    so an explicitly denied `Image` is no longer governed by `File`'s grant.
+  - List filters and sorts accept only columns a response can show (`api_fields`, emitted
+    has_one FKs, `ID`, the external-id column, minus `hidden_fields`). A withheld column used to
+    leak its value through which rows matched.
+  - `GET schema/$ClassRef` refuses a mapped class with no verbs (`403 FORBIDDEN_CLASS`) instead
+    of serving its full field inventory.
+  - Every response carries `Cache-Control: no-cache, no-store, must-revalidate, private`.
+
+  **Behavior change:** ancestor-ref reads and actions on explicitly denied subclass rows return
+  `403` and list totals drop; filtering or sorting on a never-emitted column returns `422`
+  (`ClassName`, `ID` and the external-id column stay filterable). A project that set
+  `Image: api_access: false` meaning "no opinion, use File's" must remove the key instead: an
+  explicit `false` on an asset class is now a deny.
+
 ### Changed
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.
   A refused publish now rolls the conversion back (`(convert rolled back)` in the message)

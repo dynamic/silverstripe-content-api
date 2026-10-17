@@ -119,6 +119,10 @@ class RecordActionsHandler
             $forceUnpublish
         ) {
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
+            // The URL's class gate inherits, and the row loads polymorphically,
+            // so a subclass that explicitly denies (or narrows) its ancestor's
+            // verbs is checked against its own class too (#236).
+            $this->policy->checkClassAccess(get_class($record), $verb, $context->member);
             $this->policy->checkRecordAccess($record, $verb, $context->member);
 
             // A stricter canPublish()/canUnpublish() than canEdit() is
@@ -133,6 +137,7 @@ class RecordActionsHandler
             }
 
             if ($forceUnpublish) {
+                $this->policy->checkClassAccess(get_class($record), 'delete', $context->member);
                 $this->policy->checkRecordAccess($record, 'delete', $context->member);
             }
 
