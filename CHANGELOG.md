@@ -19,6 +19,13 @@ All notable changes to this project are documented here. Format loosely follows
   `silverstripe-content-api-mcp#25`'s open success criterion (a server-side way to verify a real
   restructure session ran through MCP tools).
 
+### Fixed
+- **(#234)** The test suite now passes in a standalone module checkout, not only inside a host
+  project. `ContentApiTestCase::getRequiredExtensions()` applies the extensions 22 tests relied on
+  a host's exposure YAML for (`ExternalIdentifierExtension` on `File`/`BaseElement`,
+  `ContentApiGrantExtension` on `SiteTree`). Test-only change; no runtime behavior changes. Landed
+  on branch `1` first (unreleased), merged up here.
+
 ## [2.8.0] - 2026-09-02
 
 ### Added
