@@ -64,11 +64,14 @@ class PublishOrchestrator
     private static array $dependencies = [
         'policy' => '%$' . PermissionPolicy::class,
         'ownedTreeWalker' => '%$' . OwnedTreeWalker::class,
+        'ownedLinks' => '%$' . OwnedLinks::class,
     ];
 
     public ?PermissionPolicy $policy = null;
 
     public ?OwnedTreeWalker $ownedTreeWalker = null;
+
+    public ?OwnedLinks $ownedLinks = null;
 
     public const MODES = ['none', 'single', 'recursive', 'subtree', 'owns'];
 
@@ -187,24 +190,100 @@ class PublishOrchestrator
             // skipped: publishRecursive() leaves it untouched, so refusing
             // over it (a shared, already-live image, say) would block a
             // publish for a change that never happens.
+            $owners = [$record];
+
             foreach ($this->ownedTreeWalker->walk($record) as $entry) {
                 $owned = $entry['record'];
 
-                if ($this->isSameRecord($owned, $record) || !$owned->stagesDiffer()) {
+                if ($this->isSameRecord($owned, $record)) {
                     continue;
                 }
 
-                $this->assertDescendantPublishable($owned, $member);
+                $owners[] = $owned;
+
+                if ($owned->stagesDiffer()) {
+                    $this->assertDescendantPublishable($owned, $member);
+                }
             }
 
-            $record->publishRecursive();
+            [$links, $stale] = $this->linkWork($owners, $member);
+
+            DbTransaction::run(function () use ($record, $links, $stale) {
+                $this->publishEach($links);
+                $record->publishRecursive();
+                $this->archiveEach($stale);
+            });
 
             return null;
         }
 
-        $record->publishSingle();
+        [$links, $stale] = $this->linkWork([$record], $member);
+
+        DbTransaction::run(function () use ($record, $links, $stale) {
+            $this->publishEach($links);
+            $record->publishSingle();
+            $this->archiveEach($stale);
+        });
 
         return null;
+    }
+
+    /**
+     * The links the owners publish with them, and the stale links their
+     * publish retires (#242, see OwnedLinks). A pending link needs its
+     * canPublish(), which linkfield's Link defers to the owner, under the
+     * owner's class verb (the caller's check for the root, the cascade's
+     * for every other owner). Retiring a stale link needs canEdit() on its
+     * owner: a link the owner no longer points at has no owner for its own
+     * can*() to defer to. All checked before anything is written.
+     *
+     * @param DataObject[] $owners
+     * @return array{0: DataObject[], 1: DataObject[]} pending links, stale links
+     * @throws ApiError FORBIDDEN_RECORD
+     */
+    protected function linkWork(array $owners, Member $member): array
+    {
+        $pending = [];
+        $stale = [];
+
+        foreach ($owners as $owner) {
+            foreach ($this->ownedLinks->pending($owner) as $link) {
+                $this->policy->checkStageAccess($link, 'publish', $member);
+                $pending[get_class($link) . ':' . $link->ID] = $link;
+            }
+
+            $retire = $this->ownedLinks->stale($owner);
+
+            if ($retire !== []) {
+                $this->policy->checkRecordAccess($owner, 'update', $member);
+
+                foreach ($retire as $link) {
+                    $stale[get_class($link) . ':' . $link->ID] = $link;
+                }
+            }
+        }
+
+        return [array_values($pending), array_values($stale)];
+    }
+
+    /**
+     * @param DataObject[] $records
+     */
+    private function publishEach(array $records): void
+    {
+        foreach ($records as $record) {
+            $record->publishSingle();
+        }
+    }
+
+    /**
+     * @param DataObject[] $records
+     */
+    private function archiveEach(array $records): void
+    {
+        foreach ($records as $record) {
+            $record->doArchive();
+        }
     }
 
     /**
@@ -229,19 +308,20 @@ class PublishOrchestrator
     protected function publishSubtree(DataObject $record, Member $member, bool $liveOnly, bool $dryRun): array
     {
         $targets = $this->collectSubtreeTargets($record, $member, $liveOnly, true);
+        [$links, $stale] = $this->linkWork($targets, $member);
 
         // One transaction for the whole cascade (#238): authorization is
         // checked before the loop, but a publish hook or DB error on target
         // N would otherwise leave targets 1..N-1 live behind a bare error.
         if (!$dryRun) {
-            DbTransaction::run(function () use ($targets) {
-                foreach ($targets as $target) {
-                    $target->publishSingle();
-                }
+            DbTransaction::run(function () use ($targets, $links, $stale) {
+                $this->publishEach($links);
+                $this->publishEach($targets);
+                $this->archiveEach($stale);
             });
         }
 
-        return array_map(fn (DataObject $target) => $this->subtreeEntry($target), $targets);
+        return array_map(fn (DataObject $target) => $this->subtreeEntry($target), array_merge($links, $targets));
     }
 
     /**
@@ -343,7 +423,8 @@ class PublishOrchestrator
         Member $member,
         string $operation = 'publish'
     ): void {
-        $this->policy->checkClassAccess(get_class($record), 'action', $member);
+        // An owned link answers to its owner's class verb (#242).
+        $this->policy->checkClassAccess($this->ownedLinks->governingClass($record), 'action', $member);
         $this->policy->checkStageAccess($record, $operation, $member);
     }
 
@@ -499,14 +580,19 @@ class PublishOrchestrator
             $this->assertDescendantPublishable($target, $member);
         }
 
+        // The owners' links publish first, with the cascade (#242).
+        [$links, $stale] = $this->linkWork(array_merge(array_values($targets), [$root]), $member);
+
+        foreach ($links as $link) {
+            $targets = [get_class($link) . ':' . $link->ID => $link] + $targets;
+        }
+
         // One transaction for the whole cascade, as publishSubtree() (#238).
         if (!$dryRun) {
-            DbTransaction::run(function () use ($targets, $root) {
-                foreach ($targets as $target) {
-                    $target->publishSingle();
-                }
-
+            DbTransaction::run(function () use ($targets, $root, $stale) {
+                $this->publishEach($targets);
                 $root->publishSingle();
+                $this->archiveEach($stale);
             });
         }
 

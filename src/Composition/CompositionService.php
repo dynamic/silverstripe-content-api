@@ -819,6 +819,7 @@ class CompositionService
 
         try {
             $child->write();
+            $this->applicator->afterOwnerWrite($child);
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception, sprintf('Child "%s"', $externalId));
         }

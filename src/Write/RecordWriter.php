@@ -364,10 +364,7 @@ class RecordWriter
             }
         }
 
-        $this->applicator->applyFields($record, $fields, $internalFields);
-        $this->assertElementPlacementAllowed($record, $priorParentID, array_key_exists('ParentID', $internalFields));
-
-        // The DB write, any relation writes it enables (has_one FK repoints,
+        // Field application, the DB write, any relation writes it enables (has_one FK repoints,
         // has_many/many_many attaches — a relation that resolves to
         // NOT_FOUND after the record itself is already persisted would
         // otherwise leave a half-written draft record behind while the
@@ -380,9 +377,27 @@ class RecordWriter
         // fails — a descendant permission gap would leave the field write
         // standing while the operation reports "error", the same
         // half-landed-but-reported-as-failed shape as the relation case.
+        // Field application is inside too because a transformer can write
+        // a record of its own (LinkTransformer's link, #242): a later
+        // failure in the operation must roll that back with the owner.
         try {
-            DbTransaction::run(function () use ($record, $relations, $publishMode, $member) {
+            DbTransaction::run(function () use (
+                $record,
+                $fields,
+                $internalFields,
+                $priorParentID,
+                $relations,
+                $publishMode,
+                $member
+            ) {
+                $this->applicator->applyFields($record, $fields, $internalFields);
+                $this->assertElementPlacementAllowed(
+                    $record,
+                    $priorParentID,
+                    array_key_exists('ParentID', $internalFields)
+                );
                 $record->write();
+                $this->applicator->afterOwnerWrite($record);
                 $dirtiedPublished = $this->applicator->applyRelations(
                     $record,
                     $relations,

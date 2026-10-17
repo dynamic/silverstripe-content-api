@@ -206,6 +206,12 @@ way during a real IA restructure — see #71):
    (a generic "publish every relation" pass could not distinguish an intentionally-draft related
    record from an accidentally-orphaned one).
 
+   The one exception is a has_one link (silverstripe/linkfield): the API writes it as part of
+   its owner, with Owner fields naming the owner, and every publish of the owner publishes the
+   links it owns and archives the ones a type change replaced. In a cascade an owned link answers
+   to its owner's class verb, not the `Link` class's. See
+   [Link payloads](06_write-payloads.md#link-payloads).
+
 ## `publishRecursive()` does not cascade to elements
 
 **A page's `publishRecursive()` does not cascade into owned elemental blocks — confirmed

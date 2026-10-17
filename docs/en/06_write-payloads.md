@@ -113,8 +113,16 @@ Requires `silverstripe/linkfield`. On a has_one field targeting a `Link` subclas
 
 All types accept `title` (→ `LinkText`) and `openInNew`. Sparse and idempotent: if the field
 already points at a link of the *same* type, that record is updated in place; a type change
-writes a new link record. Owner fields are never set by this transformer — linkfield derives
-ownership from the pointing has_one.
+writes a new link record.
+
+A link is part of its owner's write. It is written to draft only, inside the operation's
+transaction (a failed operation leaves no link behind), with its Owner fields (`OwnerClass`,
+`OwnerRelation`, `OwnerID`) naming the owner, so linkfield's own permission checks defer to the
+owner and CMS editors who can edit the owner can edit the link. It goes live when the owner is
+published, by any publish mode or path: an operation's `publish`, a stage action, a cascade or a
+composition's `recursive` publish. Publishing it needs the owner's class `action` verb and the
+link's `canPublish()` (which linkfield defers to the owner); a `"publish": "none"` edit stays on
+draft. When the owner publishes, a link a type change replaced is archived.
 
 A key that's neither in the table above nor `title`/`openInNew` is rejected with
 `422 UNKNOWN_FIELD` — including a key that's valid for a *different* `type` (e.g. `fileId` sent
