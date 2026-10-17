@@ -219,8 +219,15 @@ abstract class ContentApiTestCase extends FunctionalTest
         // PublishOrchestratorTest relies on the opposite — Image having NO
         // grant at all, so the walk excludes it before authorization is ever
         // checked.
+        //
+        // File is pinned to an explicit deny; Image's own declaration is
+        // removed rather than set, so it inherits File's (an explicit
+        // `false` on Image would itself be a deny since #236, not "no
+        // opinion"). Removing it from the merged config also drops any host
+        // YAML value for Image, which is what the pin exists for.
         Config::modify()->set(File::class, 'api_access', false);
-        Config::modify()->set(Image::class, 'api_access', false);
+        Config::modify()->remove(Image::class, 'api_access');
+        Config::modify()->remove(Image::class, 'content_api_access');
         Config::modify()->set(ApiTestOwnedAssetOwnerObject::class, 'api_access', true);
         Config::modify()->set(ApiTestOwnedPageObject::class, 'api_access', 'action');
         Config::modify()->set(ApiTestOwnsCycleObject::class, 'api_access', true);

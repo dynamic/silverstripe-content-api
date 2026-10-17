@@ -2636,8 +2636,12 @@ class BatchTest extends ContentApiTestCase
 
         $result = $body['data']['results'][0];
 
-        if ($result['status'] === 'error') {
-            $this->assertSame('SERVER_ERROR', $result['error']['code']);
+        if (class_exists('SilverStripe\\Model\\ModelData')) {
+            // SS6: an unknown identifier still gets the default element rules.
+            $this->assertSame('updated', $result['status'], json_encode($body));
+        } else {
+            // SS5: an empty config, so the probe refuses the write.
+            $this->assertSame('SERVER_ERROR', $result['error']['code'] ?? null, json_encode($body));
         }
 
         $this->assertStringNotContainsString(

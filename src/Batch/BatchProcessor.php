@@ -10,7 +10,10 @@ use Dynamic\ContentApi\Serialize\RecordSerializer;
 use Dynamic\ContentApi\Write\DbTransaction;
 use Dynamic\ContentApi\Write\DryRunContext;
 use Dynamic\ContentApi\Write\RecordWriter;
+use Psr\Log\LoggerInterface;
+use SilverStripe\Control\Director;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
@@ -699,6 +702,25 @@ class BatchProcessor
                 'index' => $index,
                 'status' => 'error',
                 'error' => $error->toArray(),
+            ];
+        } catch (Throwable $exception) {
+            // Anything else stays this op's own error instead of turning the
+            // whole request into a 500 that loses every result before it
+            // (#238). The op's own write transaction has already rolled back;
+            // an atomic batch then rolls back as for any other op error.
+            Injector::inst()->get(LoggerInterface::class)->error(
+                sprintf('Batch op %d failed: %s', $index, $exception->getMessage()),
+                ['exception' => $exception]
+            );
+
+            $message = Director::isDev() || Director::isTest()
+                ? sprintf('%s: %s', get_class($exception), $exception->getMessage())
+                : 'Internal server error.';
+
+            return [
+                'index' => $index,
+                'status' => 'error',
+                'error' => (new ApiError(ErrorCode::SERVER_ERROR, $message))->toArray(),
             ];
         }
     }

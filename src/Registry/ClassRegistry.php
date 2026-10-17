@@ -575,6 +575,22 @@ class ClassRegistry
     }
 
     /**
+     * Whether a class declares `api_access` or `content_api_access` at its
+     * own level (not inherited from an ancestor; an extension applied to the
+     * class counts, as it does for accessVerbs()), counting an explicit
+     * falsy deny as a declaration — unlike ownAccessVerbs(), which can't
+     * tell an explicit deny from "says nothing".
+     */
+    public function declaresAccess(string $className): bool
+    {
+        $config = Config::inst();
+        $flags = Config::UNINHERITED;
+
+        return $config->get($className, 'content_api_access', $flags) !== null
+            || $config->get($className, 'api_access', $flags) !== null;
+    }
+
+    /**
      * Parses an `api_access`/`content_api_access` value already confirmed
      * present into verbs: `true` = all, a CSV of colymba-style HTTP verbs
      * (or bare verb names) maps via `METHOD_VERB_MAP`, anything else
