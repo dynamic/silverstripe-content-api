@@ -20,7 +20,7 @@ Populate's `PopulateFileFrom` handling. Population-domain endpoint: requires
 | `title` | no | — | Sets `File.Title` |
 | `externalId` | no | — | Sets the external-id column if the resolved class supports it |
 | `conflict` | no | `overwrite` | `overwrite`, `skip`, or `rename` — see below |
-| `publish` | no | `true` | Whether to `publishSingle()` after write. A boolean, or `"true"`/`"false"`/`1`/`0`; anything else is `400 PAYLOAD_INVALID` |
+| `publish` | no | `true` | Whether to `publishSingle()` after write. A boolean, `1`/`0`, or the strings `"true"`/`"false"`/`"1"`/`"0"` (multipart form fields included); anything else is `400 PAYLOAD_INVALID` |
 
 An empty binary is `502 ASSET_READ_FAILED`. The target class is resolved from the file
 extension (`File::get_class_for_file_extension()`), or from an existing file's class at the
@@ -51,13 +51,15 @@ The verbs an upload needs depend on what it does to which record:
   needs `Folder::canCreate()`.
 - **`overwrite`**: `update` on the existing file's class plus `canEdit()`.
 - **`skip`**: `read` only.
-- **Publishing** (`publish` true, the default): `action` on the class written. When `publish`
+- **Publishing** (`publish` true; the default for `POST assets`): `action` on the class written. When `publish`
   is not sent and the class lacks `action`, the file is written draft-only and the response's
   `data.warnings` carries `ACTION_VERB_MISSING`. An explicit `"publish": true` without `action`
   is `403 FORBIDDEN_CLASS`.
 
 Verbs are read from the asset's governing class: the nearest class in its ancestry (`Image` →
-`File`) that declares any. Composition `assets[]` entries use the same rules.
+`File`) that declares any. Composition `assets[]` entries use the same rules, except that an
+entry without its own `publish` follows the composition's mode (draft-only under `"none"`, the
+composition default).
 
 ### Hash-skip always returns the full record
 

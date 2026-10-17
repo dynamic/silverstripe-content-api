@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\Assets\File;
+use SilverStripe\Assets\Folder;
 use SilverStripe\Assets\Image;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Versioned\Versioned;
@@ -402,6 +403,50 @@ class AssetsTest extends ContentApiTestCase
     public function testUnparseablePublishIsRejected(): void
     {
         [$response] = $this->uploadPixel(['publish' => 'sometimes']);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
+    /**
+     * #235: the record-level half of an overwrite. A non-admin populate
+     * member holding every File verb still cannot canEdit() the file.
+     */
+    public function testOverwriteNeedsCanEditOnTheExistingFile(): void
+    {
+        [, $first] = $this->uploadPixel();
+
+        [$response] = $this->uploadPixel(
+            ['base64' => base64_encode('replacement')],
+            $this->mintTokenFor('populateUser')
+        );
+
+        $this->assertErrorCode($response, 'FORBIDDEN_RECORD', 403);
+        $this->assertSame($first['data']['hash'], File::get()->byID($first['data']['id'])->getHash());
+    }
+
+    public function testUploadIntoAMissingFolderNeedsFolderCanCreate(): void
+    {
+        [$response, $body] = $this->uploadPixel(
+            ['folder' => 'brand-new-folder'],
+            $this->mintTokenFor('populateUser')
+        );
+
+        $this->assertErrorCode($response, 'FORBIDDEN_RECORD', 403);
+        $this->assertSame('Not allowed to create folders.', $body['error']['message']);
+        $this->assertNull(Folder::get()->filter('Name', 'brand-new-folder')->first());
+    }
+
+    public function testNullPublishMeansNotSent(): void
+    {
+        [$response, $body] = $this->uploadPixel(['publish' => null]);
+
+        $this->assertSame(201, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertTrue($body['data']['stage']['live']);
+    }
+
+    public function testEmptyPublishStringIsRejected(): void
+    {
+        [$response] = $this->uploadPixel(['publish' => '']);
 
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }

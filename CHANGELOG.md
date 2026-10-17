@@ -38,12 +38,13 @@ All notable changes to this project are documented here. Format loosely follows
   - An asset upload that does not send `publish`, on a class without `action`, is now written
     draft-only with an `ACTION_VERB_MISSING` warning in `data.warnings`; it used to publish. An
     explicit `"publish": true` without `action` is `403 FORBIDDEN_CLASS`.
-  - A composition `assets[]` entry without its own `publish` now follows the composition, so it
-    stays draft-only under `publish: "none"`.
+  - A composition `assets[]` entry without its own `publish` now follows the composition: it is
+    draft-only under `publish: "none"` (it used to publish).
   - Composition asset ingest, `overwrite` and `prune` now need the verbs above, where they
     previously needed none of them.
-- **(#239)** An asset `publish` value is parsed strictly: the JSON string `"false"` no longer
-  reads as true, and an unparseable value is `400 PAYLOAD_INVALID`.
+- **(#239)** An asset `publish` value is parsed strictly, in JSON and multipart alike: the string
+  `"false"` no longer reads as true, and anything other than a boolean, `1`/`0` or
+  `"true"`/`"false"`/`"1"`/`"0"` is `400 PAYLOAD_INVALID`.
 
 ### Fixed
 - **(#246)** Asset `conflict: skip` is a true no-op, as documented. It no longer rewrites `title`

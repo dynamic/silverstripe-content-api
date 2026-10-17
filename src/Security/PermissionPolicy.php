@@ -109,7 +109,9 @@ class PermissionPolicy
      * must expose the verb (checkClassAccess()) and the model's can*() must
      * allow it (checkRecordAccess()). Use this on any path that changes or
      * publishes a record it did not get from an already-authorized write,
-     * e.g. a composition's prune or an asset overwrite.
+     * e.g. a composition's prune or a match-only page write. (Assets use
+     * AssetService::authorizeIngest(), which reads the class verb from the
+     * asset's governing class instead.)
      *
      * @throws ApiError FORBIDDEN | FORBIDDEN_CLASS | FORBIDDEN_RECORD
      */

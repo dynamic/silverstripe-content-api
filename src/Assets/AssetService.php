@@ -76,7 +76,8 @@ class AssetService
      */
     public function authorizeIngest(array $meta, Member $member): array
     {
-        $explicitPublish = array_key_exists('publish', $meta) ? $this->publishFlag($meta['publish']) : null;
+        // A JSON null means "not sent".
+        $explicitPublish = isset($meta['publish']) ? $this->publishFlag($meta['publish']) : null;
         $publish = $explicitPublish ?? true;
         $conflict = (string) ($meta['conflict'] ?? 'overwrite');
         $existing = $this->resolveExisting($meta);
@@ -165,9 +166,13 @@ class AssetService
             return $value;
         }
 
-        $parsed = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        $parsed = match (true) {
+            $value === 1, $value === '1', $value === 'true' => true,
+            $value === 0, $value === '0', $value === 'false' => false,
+            default => null,
+        };
 
-        if ($parsed === null || is_array($value)) {
+        if ($parsed === null) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
                 '"publish" must be true or false.',

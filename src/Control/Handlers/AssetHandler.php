@@ -149,8 +149,10 @@ class AssetHandler
                 'conflict' => $request->postVar('conflict'),
             ], fn ($value) => $value !== null && $value !== '');
 
+            // Parsed strictly by AssetService::authorizeIngest() (#239), not
+            // here, so a typo is a 400 rather than a silent false.
             if ($request->postVar('publish') !== null) {
-                $meta['publish'] = filter_var($request->postVar('publish'), FILTER_VALIDATE_BOOLEAN);
+                $meta['publish'] = (string) $request->postVar('publish');
             }
 
             return [$binary, $meta];

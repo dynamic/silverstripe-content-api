@@ -26,9 +26,10 @@ FEATURE_UNAVAILABLE` otherwise), `CONTENT_API_POPULATE`, and passes
 }
 ```
 
-Atomic: any failure rolls the whole request back. Exception: asset binaries are content-addressed
-and converge on retry, so a partially-ingested asset from an aborted run is never a problem —
-re-POSTing the same payload is safe and idempotent (updates existing records, never duplicates).
+Atomic: any failure rolls the database writes back. Exception: asset binaries written to the
+asset store persist if the request aborts. A retry with the default `conflict: overwrite` reuses
+the existing file record (and so needs `update` on the asset class, see
+[Assets](09_assets.md#authorization)); `rename` always writes a new record.
 
 ## `page`
 

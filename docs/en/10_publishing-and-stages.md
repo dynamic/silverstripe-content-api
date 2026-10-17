@@ -137,8 +137,8 @@ actions](#publishunpublisharchive-actions) for how to pass it); `subtree` alone 
   versioned, so any page or element declaring `private static $owns = ['SomeImageRelation']` (a
   common pattern for image-bearing elements, and the standard Elemental "add an asset" wiring)
   pulls `SilverStripe\Assets\File`/`Image` into the checked set too — and asset classes are the
-  ones most likely to be configured `read`/`create`-only in a project's exposure config, since
-  publishing an asset was never previously a thing this module authorization-checked. A project
+  ones most likely to be configured `read`/`create`-only in a project's exposure config; publishing
+  an asset needs `action` (see [Assets](09_assets.md#authorization)). A project
   whose element, area, page, or **owned asset** classes grant `create`/`update` in `api_access`
   but withhold `action` will start getting `403 FORBIDDEN_CLASS` on a composition or
   apply-template call with a publishing mode, where it previously published silently. Grant

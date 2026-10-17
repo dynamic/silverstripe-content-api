@@ -509,7 +509,7 @@ class CompositionService
 
         unset($entry['base64'], $entry['ref']);
 
-        if (!array_key_exists('publish', $entry) && $publishMode === 'none') {
+        if (!isset($entry['publish']) && $publishMode === 'none') {
             $entry['publish'] = false;
         }
 

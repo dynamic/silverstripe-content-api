@@ -247,7 +247,7 @@ record, at both the class and record level (`PermissionPolicy::authorize()` pair
 | `POST assets` / composition `assets[]`, new file | `create` on the class the extension maps to | `canCreate()` with the target folder as `Parent`; `Folder::canCreate()` when the folder is missing |
 | `POST assets` / composition `assets[]`, `overwrite` | `update` on the existing file's class | `canEdit()` |
 | `POST assets` / composition `assets[]`, `skip` | `read` | `canView()` (nothing is written) |
-| Asset publish (`publish` true, the default) | `action` | `canEdit()` for an existing file |
+| Asset publish (`publish` true; the default for `POST assets`) | `action` | `canEdit()` for an existing file |
 
 An asset class's verbs are read from its governing class: the nearest class in its ancestry
 (`Image` → `File`) that declares any. When an asset upload does not send `publish` and its
