@@ -13,6 +13,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionSubObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionWritableFieldsOnlyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantParentDelegatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantReachableObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableInheritingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableSubObject;
 use ReflectionMethod;
@@ -88,6 +89,24 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
 
         $this->assertStringContainsString(DataObject::class, $summary);
         $this->assertStringContainsString('ErrorPage', $summary);
+        $this->assertStringContainsString('Warning: DataObject is a grant root', $summary);
+    }
+
+    /**
+     * #231: under a grant root, check() examines an undeclared subclass the
+     * root grants, so its unreachable inherited canEdit() is reported.
+     */
+    public function testChecksInheritedGrantsUnderARoot(): void
+    {
+        $flagged = fn () => array_column(GrantExtensionReachabilityChecker::create()->check(), 'class');
+        $this->assertNotContains(ApiTestGrantUnreachableInheritingObject::class, $flagged());
+
+        Config::modify()->set(
+            ContentApiGrantExtension::class,
+            'grant_roots',
+            [ApiTestGrantUnreachableObject::class]
+        );
+        $this->assertContains(ApiTestGrantUnreachableInheritingObject::class, $flagged());
     }
 
     /**

@@ -309,7 +309,8 @@ the two merge to one column on a site using both.
 ## ContentApiGrantExtension
 
 `Dynamic\ContentApi\Security\ContentApiGrantExtension`. Its opt-in is the class's own
-`api_access`/`content_api_access` declaration. Apply it per class, like
+`api_access`/`content_api_access` declaration, or, for a class that declares none, a
+`grant_roots` entry above it. Apply it per class, like
 `ExternalIdentifierExtension` and `WriteGuardExtension`:
 
 ```yml

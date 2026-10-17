@@ -37,9 +37,10 @@ use SilverStripe\Security\Security;
  * alone lets the account edit/publish/archive pages but never create an
  * element, even one nested under an opted-in page.
  *
- * SECURITY — the grant is scoped to classes that declare their OWN
- * `content_api_access` (or `api_access` — same precedence as
- * `ClassRegistry::accessVerbs()`), and to the verbs that declaration lists.
+ * SECURITY — by default the grant is scoped to classes that declare their
+ * OWN `content_api_access` (or `api_access` — same precedence as
+ * `ClassRegistry::accessVerbs()`), and to the verbs that declaration lists;
+ * `grant_roots` (below) is the one opt-in that widens it.
  * Both halves are load-bearing:
  *
  * - Class scoping: `ClassRegistry::accessVerbs()` resolves
@@ -75,15 +76,19 @@ use SilverStripe\Security\Security;
  *   incident above leaked (ErrorPage, RedirectorPage, VirtualPage,
  *   UserDefinedForm), and since YAML merges arrays additively those can only
  *   be removed with `Config::modify()->set()` in PHP. A class's own
- *   declaration still wins over both. Empty roots (the default) leave the
- *   behaviour above unchanged. See `ClassRegistry::grantVerbs()`.
+ *   declaration (an explicit deny included) still wins over both, and the
+ *   inherited value is read level by level without extra sources, so an
+ *   extension-contributed `api_access` never grants. Empty roots (the
+ *   default) leave the behaviour above unchanged. See
+ *   `ClassRegistry::grantVerbs()`.
  * - Verb scoping: `archive` is gated on the `delete` verb / canDelete(), not
  *   `action`/canEdit() (see #45) — this extension only grants canDelete()
  *   when the class's own declaration lists the delete verb, so a class that
  *   lists publish verbs but not DELETE never gets archive.
  *
- * Also note: this extension's grant is per concrete class, not inherited by
- * further subclasses via the record-level check. `File`/`Image` is a real
+ * Also note: without a grant root, this extension's grant is per concrete
+ * class, not inherited by further subclasses via the record-level check
+ * (`grant_roots: [File]` is the opt-in fix for the case below). `File`/`Image` is a real
  * example — a project following the documented "`Image` inherits `File`'s
  * `api_access`" convention gets `canCreate()` granted (checked against
  * `File` itself), but a later `canEdit()`/`canDelete()` on the created

@@ -92,13 +92,14 @@ holds.
 
 Two caveats worth knowing:
 
-- **The grant is per concrete class, not inherited via the record-level check either.** A project
+- **Without a [grant root](#grant-roots-opt-in), the grant is per concrete class, not inherited via
+  the record-level check either.** A project
   following the documented "`Image` inherits `File`'s `api_access`" convention gets `canCreate()`
   on an uploaded `Image` (checked against `File` itself), but a later `canEdit()`/`canDelete()` on
   that record checks `Image`'s own uninherited declaration — empty, if `Image` never declares its
   own — and falls through to `FILE_EDIT_ALL`, which a `CONTENT_API_ACCESS`-only account doesn't
   hold. Declare access on every concrete class a service account needs to write, not just the
-  ancestor it inherits HTTP exposure from.
+  ancestor it inherits HTTP exposure from, or name the ancestor in `grant_roots`.
 - **The uninherited check doesn't require the class to be registered in `ClassRegistry`'s exposure
   map.** `content_api_access` is module-specific, so only a project sets it deliberately; the
   legacy `api_access` key is one third-party code can self-declare for unrelated reasons, so a
@@ -147,10 +148,12 @@ Dynamic\ContentApi\Security\ContentApiGrantExtension:
     - App\Model\CheckoutPage
 ```
 
-A class under a grant root that declares nothing itself is granted exactly the verbs it inherits
-(`ClassRegistry::accessVerbs()`; an explicit per-class deny still grants nothing), unless it or
-an ancestor is in `grant_exclude`. A class's own declaration always wins. With no roots (the
-default) nothing changes.
+A class under a grant root that declares nothing itself is granted exactly the nearest
+ancestor's own declaration, unless it or an ancestor is in `grant_exclude`. A class's own
+declaration always wins, an explicit deny (`api_access: false`) included, and a deny on an
+intermediate ancestor stops the inheritance. Each level is read without extra config sources, so
+`api_access` contributed by an extension, and discovery's read-only default, never become a
+grant. With no roots (the default) nothing changes.
 
 `grant_exclude` ships with `ErrorPage`, `RedirectorPage`, `VirtualPage` and `UserDefinedForm`:
 the classes the original blanket grant leaked write and archive access to. Add commerce pages,

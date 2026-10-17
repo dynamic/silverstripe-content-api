@@ -9,7 +9,8 @@ All notable changes to this project are documented here. Format loosely follows
 - **(#231)** Opt-in grant roots for `ContentApiGrantExtension`: `grant_roots` names ancestors
   (e.g. `SiteTree`, `BaseElement`) whose undeclared subclasses are granted the verbs they inherit;
   `grant_exclude` (shipping with `ErrorPage`, `RedirectorPage`, `VirtualPage`, `UserDefinedForm`)
-  takes classes back out. A class's own declaration still wins, and with no roots nothing
+  takes classes back out. A class's own declaration (an explicit deny included) still wins, the
+  inherited value never comes from an extension or discovery, and with no roots nothing
   changes. New `ClassRegistry::grantVerbs()`; `CheckGrantExtensionReachability` reports the
   roots and exclusions and checks inherited grants. See docs/en/04_security-model.md#grant-roots-opt-in.
 - **(#207)** Opt-in structured server-side request log (`Dynamic\ContentApi\Logging\RequestLogger`):

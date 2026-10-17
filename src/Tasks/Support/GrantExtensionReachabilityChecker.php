@@ -28,9 +28,9 @@ use Throwable;
  *
  * Reflection-based, not a live behavioral probe: for every concrete
  * `DataObject` subclass that both carries `ContentApiGrantExtension` and
- * declares its own (uninherited) `content_api_access`/`api_access` for a
- * verb — the exact same population {@see ContentApiGrantExtension::grant()}
- * itself checks — resolves the `can*()` method PHP will actually call
+ * is granted a verb by `ClassRegistry::grantVerbs()` (its own declaration,
+ * or an inherited one under a grant root) — the exact same population
+ * {@see ContentApiGrantExtension::grant()} itself checks — resolves the `can*()` method PHP will actually call
  * (following normal inheritance) and reads its declaring class's source
  * for a literal `extendedCan(` call, ignoring comments and string
  * literals so a mention in prose (or a real call that's been commented
@@ -153,11 +153,22 @@ class GrantExtensionReachabilityChecker
         }
 
         $exclude = (array) Config::inst()->get(ContentApiGrantExtension::class, 'grant_exclude');
+        // A typo'd exclusion silently excludes nothing, so name it.
+        $label = fn (string $class) => class_exists($class) ? $class : $class . ' (class not found)';
 
-        return [
-            'Grant roots (undeclared subclasses get their inherited verbs): ' . implode(', ', $roots),
-            'Excluded from the inherited grant: ' . ($exclude === [] ? '(none)' : implode(', ', $exclude)),
+        $lines = [
+            'Grant roots (undeclared subclasses get their inherited verbs): '
+                . implode(', ', array_map($label, $roots)),
+            'Excluded from the inherited grant: '
+                . ($exclude === [] ? '(none)' : implode(', ', array_map($label, $exclude))),
         ];
+
+        if (in_array(DataObject::class, $roots, true)) {
+            $lines[] = 'Warning: DataObject is a grant root, so every class carrying the extension inherits '
+                . 'its ancestors\' access as a grant.';
+        }
+
+        return $lines;
     }
 
     /**
@@ -339,7 +350,7 @@ class GrantExtensionReachabilityChecker
             return false;
         }
 
-        $declared = $this->registry->ownAccessVerbs($grantClass);
+        $declared = $this->registry->grantVerbs($grantClass);
 
         foreach (array_unique($calls[1]) as $called) {
             $answers = array_keys(array_filter(

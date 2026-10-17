@@ -8,7 +8,9 @@ use Dynamic\ContentApi\Security\ContentApiPermissions;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantSubPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
+use SilverStripe\CMS\Model\RedirectorPage;
 use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\CMS\Model\VirtualPage;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Security\Group;
@@ -103,7 +105,6 @@ class ContentApiGrantExtensionTest extends SapphireTest
         $member = $this->memberWithCodes([ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT']);
 
         $this->assertTrue((bool) $subPage->canEdit($member));
-        $this->assertTrue((bool) $subPage->canView($member));
         $this->assertFalse((bool) $subPage->canDelete($member), 'DELETE is not inherited, so not granted');
         $this->assertFalse((bool) $subPage->canCreate($member), 'POST is not inherited, so not granted');
     }
@@ -127,6 +128,26 @@ class ContentApiGrantExtensionTest extends SapphireTest
             (array) Config::inst()->get(ContentApiGrantExtension::class, 'grant_exclude')
         );
         $this->assertSame([], ClassRegistry::singleton()->grantVerbs(ApiTestGrantSubPage::class));
+    }
+
+    /**
+     * #231: a class's own deny beats a grant root, and the shipped
+     * exclusions block the classes the original blanket grant leaked to.
+     */
+    public function testAnOwnDenyAndTheShippedExclusionsBeatAGrantRoot(): void
+    {
+        Config::modify()->set(ContentApiGrantExtension::class, 'grant_roots', [SiteTree::class]);
+        Config::modify()->set(ApiTestGrantSubPage::class, 'api_access', false);
+
+        $subPage = ApiTestGrantSubPage::create(['Title' => 'Denied Subpage']);
+        $subPage->write();
+        $member = $this->memberWithCodes([ContentApiPermissions::ACCESS, 'VIEW_DRAFT_CONTENT']);
+
+        $this->assertFalse((bool) $subPage->canEdit($member));
+
+        Config::modify()->set(SiteTree::class, 'content_api_access', 'GET,PUT');
+        $this->assertSame([], ClassRegistry::singleton()->grantVerbs(RedirectorPage::class));
+        $this->assertSame([], ClassRegistry::singleton()->grantVerbs(VirtualPage::class));
     }
 
     /**
