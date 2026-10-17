@@ -92,13 +92,14 @@ holds.
 
 Two caveats worth knowing:
 
-- **The grant is per concrete class, not inherited via the record-level check either.** A project
+- **Without a [grant root](#grant-roots-opt-in), the grant is per concrete class, not inherited via
+  the record-level check either.** A project
   following the documented "`Image` inherits `File`'s `api_access`" convention gets `canCreate()`
   on an uploaded `Image` (checked against `File` itself), but a later `canEdit()`/`canDelete()` on
   that record checks `Image`'s own uninherited declaration — empty, if `Image` never declares its
   own — and falls through to `FILE_EDIT_ALL`, which a `CONTENT_API_ACCESS`-only account doesn't
   hold. Declare access on every concrete class a service account needs to write, not just the
-  ancestor it inherits HTTP exposure from.
+  ancestor it inherits HTTP exposure from, or name the ancestor in `grant_roots`.
 - **The uninherited check doesn't require the class to be registered in `ClassRegistry`'s exposure
   map.** `content_api_access` is module-specific, so only a project sets it deliberately; the
   legacy `api_access` key is one third-party code can self-declare for unrelated reasons, so a
@@ -130,6 +131,36 @@ but not a published one. **That veto does not exist on this branch's `silverstri
 override at all — only a deprecated `canArchive()` whose own docblock says to use `canDelete()`
 instead on the version branch `2` depends on). A class declaring only `delete` on this branch can
 archive both a draft-only record and an already-published one.
+
+### Grant roots (opt-in)
+
+Declaring `api_access` once on `SiteTree` or `BaseElement` exposes every subclass at the class
+gate but grants none of them at record level, because the extension reads each class's own
+declaration. A project that wants the record-level grant to follow the same inheritance can name
+the ancestors as grant roots:
+
+```yml
+Dynamic\ContentApi\Security\ContentApiGrantExtension:
+  grant_roots:
+    - SilverStripe\CMS\Model\SiteTree
+    - DNADesign\Elemental\Models\BaseElement
+  grant_exclude:
+    - App\Model\CheckoutPage
+```
+
+A class under a grant root that declares nothing itself is granted exactly the nearest
+ancestor's own declaration, unless it or an ancestor is in `grant_exclude`. A class's own
+declaration always wins, an explicit deny (`api_access: false`) included, and a deny on an
+intermediate ancestor stops the inheritance. Each level is read without extra config sources, so
+`api_access` contributed by an extension, and discovery's read-only default, never become a
+grant. With no roots (the default) nothing changes.
+
+`grant_exclude` ships with `ErrorPage`, `RedirectorPage`, `VirtualPage` and `UserDefinedForm`:
+the classes the original blanket grant leaked write and archive access to. Add commerce pages,
+forms and any other class that must not be service-account writable. Config arrays merge
+additively, so a project can add exclusions in YAML but can only remove a shipped one with
+`Config::modify()->set()` in `_config.php`. `CheckGrantExtensionReachability` lists the roots and
+exclusions in force and checks the inherited grants too.
 
 ### The `extendedCan()` contract this extension depends on
 

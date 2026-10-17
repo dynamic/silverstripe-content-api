@@ -488,4 +488,71 @@ class ClassRegistryTest extends SapphireTest
 
         $this->assertSame([], $registry->ownAccessVerbs(ApiTestDiscoveryRoot::class));
     }
+
+    /**
+     * #231: grantVerbs() is ownAccessVerbs() unless a grant root applies,
+     * and under a root it inherits only literal ancestor declarations.
+     *
+     * @dataProvider grantVerbsProvider
+     */
+    public function testGrantVerbs(array $config, string $class, array $expected): void
+    {
+        foreach ($config as [$target, $key, $value]) {
+            Config::modify()->set($target, $key, $value);
+        }
+
+        $this->assertEqualsCanonicalizing($expected, ClassRegistry::singleton()->grantVerbs($class));
+    }
+
+    public static function grantVerbsProvider(): array
+    {
+        $grant = 'Dynamic\\ContentApi\\Security\\ContentApiGrantExtension';
+        $root = [ApiTestDiscoveryRoot::class, 'content_api_access', 'GET,PUT'];
+        $rooted = [$grant, 'grant_roots', [ApiTestDiscoveryRoot::class]];
+
+        return [
+            'no roots: own declaration only' => [[$root], ApiTestDiscoveryChild::class, []],
+            'no roots: the declaring class' => [[$root], ApiTestDiscoveryRoot::class, ['read', 'update']],
+            'under a root: inherited' => [[$root, $rooted], ApiTestDiscoveryChild::class, ['read', 'update']],
+            'own deny beats the root' => [
+                [$root, $rooted, [ApiTestDiscoveryChild::class, 'api_access', false]],
+                ApiTestDiscoveryChild::class,
+                [],
+            ],
+            'own narrower declaration beats the root' => [
+                [$root, $rooted, [ApiTestDiscoveryChild::class, 'api_access', 'GET']],
+                ApiTestDiscoveryChild::class,
+                ['read'],
+            ],
+            'intermediate deny stops the walk' => [
+                [$root, $rooted, [ApiTestDiscoveryMiddle::class, 'content_api_access', false]],
+                ApiTestDiscoveryGrandchild::class,
+                [],
+            ],
+            'excluded ancestor' => [
+                [$root, $rooted, [$grant, 'grant_exclude', [ApiTestDiscoveryMiddle::class]]],
+                ApiTestDiscoveryGrandchild::class,
+                [],
+            ],
+            'outside every root' => [
+                [$root, [$grant, 'grant_roots', [Member::class]]],
+                ApiTestDiscoveryChild::class,
+                [],
+            ],
+            'extension-contributed access never grants' => [
+                [[ApiTestDiscoveryRoot::class, 'extensions', [ApiTestExtraSourceAccessExtension::class]], $rooted],
+                ApiTestDiscoveryChild::class,
+                [],
+            ],
+            'discovery default never grants' => [
+                [
+                    [ClassRegistry::class, 'discovery_roots', [ApiTestDiscoveryRoot::class]],
+                    [ClassRegistry::class, 'discovery_write_policy', 'read'],
+                    $rooted,
+                ],
+                ApiTestDiscoveryChild::class,
+                [],
+            ],
+        ];
+    }
 }

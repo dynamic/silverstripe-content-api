@@ -308,9 +308,10 @@ the two merge to one column on a site using both.
 
 ## ContentApiGrantExtension
 
-`Dynamic\ContentApi\Security\ContentApiGrantExtension`. Not configurable — its opt-in is the
-class's own `api_access`/`content_api_access` declaration, not a separate config key. Apply it
-per class, like `ExternalIdentifierExtension` and `WriteGuardExtension`:
+`Dynamic\ContentApi\Security\ContentApiGrantExtension`. Its opt-in is the class's own
+`api_access`/`content_api_access` declaration, or, for a class that declares none, a
+`grant_roots` entry above it. Apply it per class, like
+`ExternalIdentifierExtension` and `WriteGuardExtension`:
 
 ```yml
 SilverStripe\CMS\Model\SiteTree:
@@ -323,6 +324,11 @@ Grants record-level `canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any M
 `content_api_access`, and only for the specific verbs that declaration lists — see
 [Grant extension](04_security-model.md#grant-extension) for the full detail, including why the
 uninherited scoping is load-bearing and not optional.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `grant_roots` | `[]` | Ancestors whose undeclared subclasses are granted the verbs they inherit. See [Grant roots](04_security-model.md#grant-roots-opt-in) |
+| `grant_exclude` | `ErrorPage`, `RedirectorPage`, `VirtualPage`, `UserDefinedForm` | Classes (and subclasses) under a root that never get the inherited grant. Additive in YAML |
 
 ## Permission codes
 
