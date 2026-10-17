@@ -2548,7 +2548,7 @@ class BatchTest extends ContentApiTestCase
         $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($childTwo->ID)->ParentID);
     }
 
-    private function writeBody(string $html): string
+    private function writeBody(string $html, ?array &$result = null): string
     {
         $record = $this->objFromFixture(ApiTestObject::class, 'one');
 
@@ -2559,7 +2559,8 @@ class BatchTest extends ContentApiTestCase
             'fields' => ['Body' => $html],
         ]]], $this->adminToken));
 
-        $this->assertSame('updated', $body['data']['results'][0]['status'], json_encode($body));
+        $result = $body['data']['results'][0];
+        $this->assertSame('updated', $result['status'], json_encode($body));
 
         return (string) ApiTestObject::get()->byID($record->ID)->getField('Body');
     }
@@ -2588,5 +2589,53 @@ class BatchTest extends ContentApiTestCase
         Config::modify()->set(HTMLEditorField::class, 'sanitise_server_side', false);
 
         $this->assertStringContainsString('<script>', $this->writeBody('<script>alert(1)</script><p>ok</p>'));
+    }
+
+    public function testSanitisingReportsWhatItRemoved(): void
+    {
+        $this->writeBody('<p onclick="steal()">a</p><script>alert(1)</script>', $result);
+
+        $this->assertSame('VALUE_SANITISED', $result['warnings'][0]['code']);
+        $this->assertSame('Body', $result['warnings'][0]['field']);
+    }
+
+    public function testAllowedMarkupIsNotReportedOrChanged(): void
+    {
+        $html = '<p class="lead">Hello <a href="[sitetree_link,id=1]">home</a></p>';
+        $stored = $this->writeBody($html, $result);
+
+        $this->assertSame([], array_column($result['warnings'] ?? [], 'code'));
+        $this->assertStringContainsString('[sitetree_link,id=1]', $stored);
+    }
+
+    public function testEventHandlerAttributesAreStripped(): void
+    {
+        $stored = $this->writeBody('<p onclick="steal()">a</p>');
+
+        $this->assertStringNotContainsString('onclick', $stored);
+        $this->assertStringContainsString('<p>a</p>', $stored);
+    }
+
+    /**
+     * An editor config with no element rules would sanitise nothing (SS5)
+     * or everything (SS6); the write is refused instead.
+     */
+    public function testAMisconfiguredEditorConfigRefusesTheWrite(): void
+    {
+        Config::modify()->set(WriteApplicator::class, 'html_editor_config', 'no-such-editor-config');
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => (int) $record->ID,
+            'fields' => ['Body' => '<script>alert(1)</script>'],
+        ]]], $this->adminToken));
+
+        $this->assertSame('SERVER_ERROR', $body['data']['results'][0]['error']['code']);
+        $this->assertStringNotContainsString(
+            '<script',
+            (string) ApiTestObject::get()->byID($record->ID)->getField('Body')
+        );
     }
 }

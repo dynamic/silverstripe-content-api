@@ -320,7 +320,30 @@ class WriteApplicator
             $value = $this->transformValue($record, $name, $value);
 
             if ($relationName === null) {
-                $value = $this->sanitiseHtml($record, $columnName, $value);
+                $sanitised = $this->sanitiseHtml($record, $columnName, $value);
+
+                // A CMS save strips markup silently; an API caller (usually
+                // an agent) is told, so a write that lost content doesn't
+                // read as a clean success. Compared against the input after
+                // the same HTML parse, so a pure serialisation change
+                // (attribute quoting, <br/> vs <br>) isn't reported.
+                if (
+                    $sanitised !== $value
+                    && is_string($value)
+                    && $sanitised !== HTMLValue::create($value)->getContent()
+                ) {
+                    $this->warnings[] = [
+                        'code' => ErrorCode::VALUE_SANITISED->value,
+                        'message' => sprintf(
+                            'Field "%s" contained markup the "%s" editor config does not allow; it was removed.',
+                            $name,
+                            static::config()->get('html_editor_config')
+                        ),
+                        'field' => $name,
+                    ];
+                }
+
+                $value = $sanitised;
             }
 
             if ($relationName !== null) {
@@ -933,12 +956,55 @@ class WriteApplicator
             return $value;
         }
 
+        $sanitiser = $this->htmlSanitiser();
         $html = HTMLValue::create($value);
-        HTMLEditorSanitiser::create(HTMLEditorConfig::get((string) static::config()->get('html_editor_config')))
-            ->sanitise($html);
+        $sanitiser->sanitise($html);
 
         return $html->getContent();
     }
+
+    /**
+     * The sanitiser for `html_editor_config`, refused if that config can't
+     * do the job. An unknown or emptied identifier fails silently in the
+     * framework, in opposite directions: SS5 creates an empty config whose
+     * sanitiser strips nothing (script stored raw), SS6 one that unwraps
+     * every element (content lost). A probe through the sanitiser catches
+     * both, so a misconfiguration refuses the write instead.
+     *
+     * @throws ApiError SERVER_ERROR
+     */
+    protected function htmlSanitiser(): HTMLEditorSanitiser
+    {
+        $identifier = (string) static::config()->get('html_editor_config');
+        $sanitiser = HTMLEditorSanitiser::create(HTMLEditorConfig::get($identifier));
+
+        if (!isset($this->sanitiserVerified[$identifier])) {
+            $probe = HTMLValue::create('<p>probe</p><script>probe()</script>');
+            $sanitiser->sanitise($probe);
+            $result = $probe->getContent();
+
+            if (str_contains($result, '<script') || !str_contains($result, '<p>')) {
+                throw new ApiError(
+                    ErrorCode::SERVER_ERROR,
+                    sprintf(
+                        'HTML sanitising is on, but editor config "%s" has no usable element rules, so the '
+                            . 'write was refused. Set WriteApplicator.html_editor_config to a configured editor '
+                            . '(usually "cms"), or turn sanitise_html off.',
+                        $identifier
+                    )
+                );
+            }
+
+            $this->sanitiserVerified[$identifier] = true;
+        }
+
+        return $sanitiser;
+    }
+
+    /**
+     * @var array<string, true> editor config identifiers already probed
+     */
+    private array $sanitiserVerified = [];
 
     protected function transformValue(DataObject $record, string $fieldName, mixed $value): mixed
     {
