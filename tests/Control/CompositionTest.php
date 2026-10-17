@@ -15,8 +15,10 @@ use DNADesign\Elemental\Models\BaseElement;
 use DNADesign\Elemental\Models\ElementContent;
 use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Assets\Dev\TestAssetStore;
+use SilverStripe\Assets\File;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Versioned\Versioned;
 
 class CompositionTest extends ContentApiTestCase
 {
@@ -34,6 +36,8 @@ class CompositionTest extends ContentApiTestCase
         $this->adminToken = $this->mintTokenFor('adminUser');
 
         Config::modify()->set(SiteTree::class, 'api_access', 'read,update');
+        // assets[] entries are authorized like POST assets (#229).
+        Config::modify()->set(File::class, 'api_access', 'read,create,update,action');
 
         // See tearDown() — reset on both sides of the test so a prior
         // test's leftover cache entry (this cache is keyed only by page
@@ -1359,5 +1363,166 @@ class CompositionTest extends ContentApiTestCase
             'Edited after disallow',
             ApiTestElement::get()->filter('FixtureIdentifier', 'edit-after-disallow')->first()->Title
         );
+    }
+
+    /**
+     * #227: prune archives elements, so each candidate needs `delete` on its
+     * class. A refusal archives nothing.
+     */
+    public function testPruneRequiresTheDeleteVerbOnEachElement(): void
+    {
+        $page = $this->blockPage();
+        $this->apiPost('compositions/page', $this->payload($page), $this->adminToken);
+        Config::modify()->set(ApiTestElement::class, 'api_access', 'read,create,update,action');
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'prune' => ['enabled' => true, 'scope' => 'all'],
+            'elements' => [],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertNotNull(ApiTestElement::get()->filter('FixtureIdentifier', 'comp-e2')->first());
+        $this->assertNotNull(ElementContent::get()->filter('FixtureIdentifier', 'comp-e1')->first());
+    }
+
+    /**
+     * #235: a match-only composition (no page.fields) still writes the page
+     * and its elements, so it needs the page class `update` verb.
+     */
+    public function testMatchOnlyCompositionRequiresThePageUpdateVerb(): void
+    {
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read');
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [['class' => 'ElementContent', 'externalId' => 'mo-e1', 'fields' => ['Title' => 'x']]],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertNull(ElementContent::get()->filter('FixtureIdentifier', 'mo-e1')->first());
+    }
+
+    public function testCreateIfMissingRequiresTheCreateVerb(): void
+    {
+        Config::modify()->set(ApiTestBlockPage::class, 'api_access', 'read,update');
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => [
+                'match' => ['urlSegment' => 'no-create-verb'],
+                'createIfMissing' => ['title' => 'Nope', 'className' => 'BlockPageStub'],
+            ],
+            'elements' => [],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertNull(SiteTree::get()->filter('URLSegment', 'no-create-verb')->first());
+    }
+
+    /**
+     * #235: a named parent must exist, and reaches canCreate() as `Parent`.
+     */
+    public function testCreateIfMissingRejectsAParentThatDoesNotExist(): void
+    {
+        $response = $this->apiPost('compositions/page', [
+            'page' => [
+                'match' => ['urlSegment' => 'orphan'],
+                'createIfMissing' => ['title' => 'Orphan', 'parentId' => 999999, 'className' => 'BlockPageStub'],
+            ],
+            'elements' => [],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'NOT_FOUND', 404);
+        $this->assertNull(SiteTree::get()->filter('URLSegment', 'orphan')->first());
+    }
+
+    public function testCreateIfMissingUnderAnExistingParent(): void
+    {
+        $parent = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => [
+                'match' => ['urlSegment' => 'child-of-about'],
+                'createIfMissing' => [
+                    'title' => 'Child',
+                    'parentId' => (int) $parent->ID,
+                    'className' => 'BlockPageStub',
+                ],
+            ],
+            'elements' => [],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(
+            (int) $parent->ID,
+            (int) SiteTree::get()->filter('URLSegment', 'child-of-about')->first()->ParentID
+        );
+    }
+
+    /**
+     * #229: composition assets[] are authorized like POST assets.
+     */
+    public function testCompositionAssetRequiresTheFileCreateVerb(): void
+    {
+        Config::modify()->set(File::class, 'api_access', 'read');
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'assets' => [['filename' => 'gated.png', 'folder' => 'comp', 'base64' => CompositionTest::PNG_BASE64]],
+            'elements' => [],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertNull(File::get()->filter('FileFilename', 'comp/gated.png')->first());
+    }
+
+    /**
+     * #235: with `publish: "none"`, an asset that does not set its own
+     * `publish` stays draft-only.
+     */
+    public function testCompositionAssetFollowsAPublishNoneComposition(): void
+    {
+        $page = $this->blockPage();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'none',
+            'assets' => [['filename' => 'draft.png', 'folder' => 'comp', 'base64' => CompositionTest::PNG_BASE64]],
+            'elements' => [],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $id = (int) $this->decode($response)['data']['assets'][0]['id'];
+        $this->assertNull(Versioned::get_by_stage(File::class, Versioned::LIVE)->byID($id));
+    }
+
+    /**
+     * #241: a recursive composition publishes the page's whole $owns tree,
+     * including drafts it did not write, and says so in `published`.
+     */
+    public function testRecursiveCompositionReportsEverythingItPublished(): void
+    {
+        $page = $this->blockPage();
+        $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [['class' => 'ElementContent', 'externalId' => 'pub-e1', 'fields' => ['Title' => 'x']]],
+        ], $this->adminToken);
+
+        $area = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea();
+        $editorDraft = ElementContent::create(['Title' => 'Editor draft', 'ParentID' => $area->ID]);
+        $editorDraft->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'publish' => 'recursive',
+            'elements' => [['class' => 'ElementContent', 'externalId' => 'pub-e1', 'fields' => ['Title' => 'y']]],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $published = $this->decode($response)['data']['published'];
+        $this->assertContains((int) $editorDraft->ID, array_column($published, 'id'));
+        $this->assertSame((int) $page->ID, (int) end($published)['id']);
     }
 }

@@ -38,6 +38,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPolyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestSideEffectLog;
 use Dynamic\ContentApi\Tests\Stub\ApiTestSideEffectObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestStageGatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTemplateModel;
 use Dynamic\ContentApi\Tests\Stub\ApiTestThroughJoin;
@@ -98,6 +99,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         ApiTestDuplicateUnversionedObject::class,
         ApiTestSideEffectObject::class,
         ApiTestSideEffectLog::class,
+        ApiTestStageGatedObject::class,
     ];
 
     /**
@@ -142,6 +144,7 @@ abstract class ContentApiTestCase extends FunctionalTest
             'ApiTestChild' => ApiTestChildObject::class,
             'ApiTestTag' => ApiTestTag::class,
             'ApiTestVersioned' => ApiTestVersionedObject::class,
+            'ApiTestStageGated' => ApiTestStageGatedObject::class,
             'ApiTestPage' => ApiTestPage::class,
             'ApiTestForceUnpublishPage' => ApiTestForceUnpublishPage::class,
             'BlockPageStub' => ApiTestBlockPage::class,
@@ -195,7 +198,7 @@ abstract class ContentApiTestCase extends FunctionalTest
         // doesn't) — a real class, unlike the ApiTest* stubs above, so a host
         // project's grant leaks in and silently decides asset-permission
         // assertions instead of the test. Pin both real asset classes here so
-        // AssetHandler::governingAssetClass()'s ancestry walk starts from a
+        // AssetService::governingAssetClass()'s ancestry walk starts from a
         // known state against a host's own `api_access` specifically —
         // Config::modify() always overrides a host's YAML at runtime,
         // regardless of load order. This does NOT neutralize a host that

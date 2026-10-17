@@ -129,12 +129,11 @@ class PublishOrchestrator
 
     /**
      * Apply a publish mode to a freshly written record. No-op for `none` and
-     * for unversioned classes. `$member` gates `subtree`'s and `owns`'s
-     * per-descendant authorization (see {@see publishSubtree()},
-     * {@see publishOwnedTree()}) — unused by the other modes, whose target
-     * record the caller has already checked before calling here, but
-     * required uniformly so every call site states who's publishing rather
-     * than only the ones that currently need it.
+     * for unversioned classes. `$member` gates the root's record-level
+     * publish check (canPublish(), every mode) and the per-descendant
+     * authorization of `subtree`, `owns` and `recursive` (see
+     * {@see publishSubtree()}, {@see publishOwnedTree()}); the root's class
+     * `action` verb is the caller's check.
      *
      * `$dryRun` applies to `subtree` and `owns`; ignored for the other
      * modes, where it'd be meaningless (a mode that publishes exactly the
@@ -149,7 +148,8 @@ class PublishOrchestrator
      *   entry per record touched (or, under `dryRun`, would be touched)
      *   when `$mode` is `subtree` or `owns`; `null` for every other mode
      * @throws ApiError FORBIDDEN_CLASS | FORBIDDEN_RECORD if `$member` may
-     *   not act on a descendant `subtree`/`owns` would otherwise publish
+     *   not publish the root, or a record `subtree`/`owns`/`recursive` would
+     *   otherwise publish
      */
     public function publish(
         DataObject $record,
@@ -164,6 +164,11 @@ class PublishOrchestrator
             return null;
         }
 
+        // The caller has checked the root's class `action` verb; the
+        // record-level publish check (canPublish(), #235) runs here for
+        // every mode so no call site can skip it.
+        $this->policy->checkStageAccess($record, 'publish', $member);
+
         if ($mode === 'subtree') {
             return $this->publishSubtree($record, $member, $liveOnly, $dryRun);
         }
@@ -173,6 +178,24 @@ class PublishOrchestrator
         }
 
         if ($mode === 'recursive') {
+            // publishRecursive() publishes every $owns-reachable draft, so
+            // each of those records needs the same class `action` verb and
+            // record check an `owns` publish applies (#226). All are checked
+            // before anything is published, over the same draft-stage walk
+            // `owns` uses. A record whose draft and live already match is
+            // skipped: publishRecursive() leaves it untouched, so refusing
+            // over it (a shared, already-live image, say) would block a
+            // publish for a change that never happens.
+            foreach ($this->ownedTreeWalker->walk($record) as $entry) {
+                $owned = $entry['record'];
+
+                if ($this->isSameRecord($owned, $record) || !$owned->stagesDiffer()) {
+                    continue;
+                }
+
+                $this->assertDescendantPublishable($owned, $member);
+            }
+
             $record->publishRecursive();
 
             return null;
@@ -230,8 +253,9 @@ class PublishOrchestrator
      * they can edit. That gap is closed for descendants.
      *
      * The root assumption itself holds precisely at `RecordActionsHandler`,
-     * which checks `canEdit()` (`action` verb) on the exact record before
-     * calling {@see publish()}. It used to be weaker everywhere else a
+     * which checks the `action` verb on the exact record before calling
+     * {@see publish()} (whose own canPublish() check covers the record
+     * level). It used to be weaker everywhere else a
      * root could reach `publish()` without an explicit `action` check —
      * `RecordWriter::write()` only checked `update`, and
      * `PageHandler::convert()`/`CompositionService::convertPage()` checked
@@ -301,14 +325,25 @@ class PublishOrchestrator
     }
 
     /**
+     * Class `action` verb plus the record-level stage check for a record a
+     * cascade reaches: canPublish() for `publish`, canUnpublish() for
+     * `unpublish` (both fall back to canEdit(), see
+     * PermissionPolicy::checkStageAccess()).
+     *
      * @throws ApiError FORBIDDEN_CLASS | FORBIDDEN_RECORD
      */
-    protected function assertDescendantPublishable(DataObject $record, Member $member): void
-    {
-        $className = get_class($record);
+    protected function assertDescendantPublishable(
+        DataObject $record,
+        Member $member,
+        string $operation = 'publish'
+    ): void {
+        $this->policy->checkClassAccess(get_class($record), 'action', $member);
+        $this->policy->checkStageAccess($record, $operation, $member);
+    }
 
-        $this->policy->checkClassAccess($className, 'action', $member);
-        $this->policy->checkRecordAccess($record, 'action', $member);
+    protected function isSameRecord(DataObject $a, DataObject $b): bool
+    {
+        return get_class($a) === get_class($b) && (int) $a->ID === (int) $b->ID;
     }
 
     /**
@@ -359,7 +394,7 @@ class PublishOrchestrator
      *
      * Same check-everything-before-writing-anything shape as
      * {@see publishSubtree()}: every target is authorization-checked
-     * (class `action` verb + `canEdit()`, {@see assertDescendantPublishable()})
+     * (class `action` verb + `canPublish()`, {@see assertDescendantPublishable()})
      * before any `publishSingle()` call, so a gap discovered on target #12
      * can't leave #1-11 live with no way to undo it. `$root` itself is
      * NOT checked here — same contract as {@see collectSubtreeTargets()}:
@@ -439,6 +474,10 @@ class PublishOrchestrator
         }
 
         unset($targets[get_class($root) . ':' . $root->ID]);
+
+        // The root's class verb is the caller's check; its record-level
+        // publish check runs here like every target's (#235).
+        $this->policy->checkStageAccess($root, 'publish', $member);
 
         foreach ($targets as $target) {
             $this->assertDescendantPublishable($target, $member);
@@ -595,7 +634,7 @@ class PublishOrchestrator
      * {@see publishOwnedTree()}: every non-excluded target is
      * authorization-checked AND guard-checked before any `doUnpublish()`
      * call — reusing {@see assertDescendantPublishable()} (its checks are
-     * the `action` verb + `canEdit()`, generic despite the method's name,
+     * the `action` verb + `canUnpublish()` here, generic despite the method's name,
      * and the same verb `RecordActionsHandler` already uses for a plain
      * unpublish — #80 reserves the extra `delete` verb specifically for
      * the force-bypass that reaches records the caller never named; a
@@ -624,8 +663,10 @@ class PublishOrchestrator
             $targets[get_class($record) . ':' . $record->ID] = $record;
         }
 
+        $this->policy->checkStageAccess($root, 'unpublish', $member);
+
         foreach ($targets as $target) {
-            $this->assertDescendantPublishable($target, $member);
+            $this->assertDescendantPublishable($target, $member, 'unpublish');
         }
 
         if (!$force) {

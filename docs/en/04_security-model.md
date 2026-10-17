@@ -216,7 +216,7 @@ area and its elements. Both call sites now route through
 `PublishOrchestrator::publishOwnedTree()` (the primitive the `owns` publish mode itself
 dispatches to — see [Publishing & stages](10_publishing-and-stages.md#publish-modes)) instead of
 their own hand-rolled loops: every area/element/child is now authorization-checked (class
-`action` verb + `canEdit()`) before anything is written, the whole cascade refusing on the first
+`action` verb + `canPublish()`) before anything is written, the whole cascade refusing on the first
 one the caller can't publish rather than leaving earlier ones live with no way to undo it.
 
 **Behavior change**: any class in the walked `$owns` cascade — not just elements — granting
@@ -235,14 +235,49 @@ Practical effect: adopting `unpublish`'s `owns` mode never requires the `File`/`
 grant the publish side does, and shortens the grant checklist for a project that only needs the
 unpublish half.
 
+### Composition and asset paths
+
+Every path that writes, archives or publishes a record checks the verb for what it does to that
+record, at both the class and record level (`PermissionPolicy::authorize()` pairs the two):
+
+| Path | Class verb | Record check |
+|---|---|---|
+| Composition with `page.fields` | page `update` | `canEdit()` |
+| Composition without `page.fields` (match only) | page `update` | `canEdit()` |
+| Composition `createIfMissing` | page `create` | `canCreate()`, with `parentId` (which must exist) as `Parent` |
+| Composition `prune` | `delete` on each archived element | `canDelete()` on each, all checked before any is archived |
+| `POST assets` / composition `assets[]`, new file | `create` on the class the extension maps to | `canCreate()` with the target folder as `Parent`; `Folder::canCreate()` when the folder is missing |
+| `POST assets` / composition `assets[]`, `overwrite` | `update` on the existing file's class | `canEdit()` |
+| `POST assets` / composition `assets[]`, `skip` | `read` | `canView()` (nothing is written) |
+| Asset publish (`publish` true; the default for `POST assets`) | `action` | `canPublish()` for an existing file |
+
+An asset class's verbs are read from its governing class: the nearest class in its ancestry
+(`Image` → `File`) that declares any. When an asset upload does not send `publish` and its
+class lacks `action`, the file is written draft-only and the response carries an
+`ACTION_VERB_MISSING` warning; an explicit `"publish": true` without `action` is `403
+FORBIDDEN_CLASS`. A composition `assets[]` entry without its own `publish` follows the
+composition's: draft-only under `publish: "none"`.
+
 ## Record-level gate
 
 `PermissionPolicy::checkRecordAccess()` calls the model's own permission method for the verb:
 `read`→`canView()`, `update`/`action`→`canEdit()`, `delete`→`canDelete()`. This is your model's
 existing ACL — the content API adds nothing here beyond calling it.
 
+A stage transition also asks the model's own stage method (`PermissionPolicy::checkStageAccess()`):
+every publish (any mode, the root and every record a cascade reaches) calls `canPublish()`, and
+every unpublish calls `canUnpublish()`, falling back to `canEdit()` on a model without them.
+Any delete that takes a record off Live counts as an unpublish too: batch `delete` in
+`unpublish` mode always, and `archive` (stage action or delete mode) or `hard` delete when the
+record is published, matching the CMS's `canArchive()`.
+`Versioned` and `SiteTree` consult extensions before their own `canEdit()` fallback, so a project
+extension that allows edit but denies publish is honoured the way the CMS honours it. The
+grant extension defines no `canPublish()`, so a service account it covers publishes on its
+`canEdit()` grant.
+
 The `publish`/`unpublish`/`archive` stage actions (`POST records/$Class/$ID/{action}`) are not
-all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit()`), but
+all "edit" operations: `publish` and `unpublish` use the `action` verb (`canEdit()`, plus
+`canPublish()`/`canUnpublish()` as above), but
 `archive` — a soft-delete from both Draft and Live — uses the `delete` verb (`canDelete()`), at
 **both** gates. Granting `action` in `api_access` to let a consumer publish/unpublish does
 **not** also grant archive; that requires `delete` to also be listed in the class's `api_access`

@@ -132,7 +132,7 @@ applied, of whatever relation type, versioned ones only (an unversioned child ha
 and is skipped) (#174). Note "every element on it", not "every element the template added": a
 pre-existing element's children are published too.
 
-Every one of those classes is authorization-checked (`action` verb + `canEdit()`) before anything
+Every one of those classes is authorization-checked (`action` verb + `canPublish()`) before anything
 is **published**, and the whole call — the template's draft write included — rolls back if one is
 refused. See [Publishing and stages](10_publishing-and-stages.md).
 

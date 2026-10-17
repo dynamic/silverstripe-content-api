@@ -58,7 +58,7 @@ class ClassRegistryTest extends SapphireTest
         $this->assertArrayNotHasKey('ApiTestDiscoveryRoot', $exposed);
 
         // Regression: accessVerbs() called directly on the root class (as
-        // AssetHandler::governingAssetClass()/RecordWriter::update() do via
+        // AssetService::governingAssetClass()/RecordWriter::update() do via
         // get_class($record), bypassing resolve()) must agree with
         // allExposed() that the root itself was never discovered — is_a()
         // used to match the root against itself, not just true subclasses.

@@ -20,6 +20,7 @@ use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Validation\ValidationException;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Member;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * Executes a full page composition in one atomic request: page match/create/
@@ -122,7 +123,11 @@ class CompositionService
                 $pageOperation = 'updated';
             }
         } else {
-            $this->policy->checkRecordAccess($page, 'update', $member);
+            // A composition without page.fields still writes the page (it
+            // may attach a new area) and its elements, so it needs the
+            // class `update` verb as well as canEdit() — the same pair
+            // RecordWriter::update() checks on the fields branch (#235).
+            $this->policy->authorize($page, 'update', $member);
         }
 
         // 2. Area
@@ -178,7 +183,7 @@ class CompositionService
         $assetResults = [];
 
         foreach (array_values((array) ($payload['assets'] ?? [])) as $index => $entry) {
-            $assetResults[] = $this->processAsset((array) $entry, $index);
+            $assetResults[] = $this->processAsset((array) $entry, $index, $member, $publishMode);
         }
 
         // 4. Elements (deferred-retry queue so $refs to later entries resolve)
@@ -188,13 +193,19 @@ class CompositionService
         // 5. Prune
         $pruneSpec = (array) ($payload['prune'] ?? []);
         $pruned = !empty($pruneSpec['enabled'])
-            ? $this->prune($area, $elementEntries, (string) ($pruneSpec['scope'] ?? 'managed'), $elementsRelation)
+            ? $this->prune(
+                $area,
+                $elementEntries,
+                (string) ($pruneSpec['scope'] ?? 'managed'),
+                $elementsRelation,
+                $member
+            )
             : [];
 
         // 6. Publish
-        if ($publishMode === 'recursive') {
-            $this->publishAll($page, $area, $elementResults, $member);
-        }
+        $published = $publishMode === 'recursive'
+            ? $this->publishAll($page, $area, $elementResults, $member)
+            : null;
 
         $response = [
             'page' => $this->serializer->serialize($page) + ['operation' => $pageOperation],
@@ -222,6 +233,13 @@ class CompositionService
 
         if (!empty($pruneSpec['enabled'])) {
             $response['pruned'] = $pruned;
+        }
+
+        // Everything the recursive publish made live, which can be more than
+        // what this request wrote: the page's whole $owns tree goes with it,
+        // including drafts an editor left in the area (#241).
+        if ($published !== null) {
+            $response['published'] = $published;
         }
 
         return $response;
@@ -328,12 +346,37 @@ class CompositionService
             }
         }
 
-        $this->policy->checkCreateAccess($className, $member, $create);
+        // Same two levels RecordWriter::upsert() checks for any other
+        // create (#235): the class verb first, then canCreate(). A named
+        // parent must exist (loaded in draft, so a draft-only parent
+        // counts) and reaches canCreate()'s context as `Parent` through the
+        // trusted channel, not as a client field.
+        $this->policy->checkClassAccess($className, 'create', $member);
+
+        $parentId = (int) ($create['parentId'] ?? 0);
+
+        if ($parentId > 0) {
+            $parent = Versioned::get_by_stage(SiteTree::class, Versioned::DRAFT)->byID($parentId);
+
+            if (!$parent) {
+                throw new ApiError(
+                    ErrorCode::NOT_FOUND,
+                    sprintf('createIfMissing.parentId %d does not match a page.', $parentId)
+                );
+            }
+        }
+
+        $this->policy->checkCreateAccess(
+            $className,
+            $member,
+            $create,
+            $parentId > 0 ? ['ParentID' => $parentId] : []
+        );
 
         /** @var SiteTree $page */
         $page = Injector::inst()->create($className);
         $page->Title = (string) ($create['title'] ?? 'Untitled');
-        $page->ParentID = (int) ($create['parentId'] ?? 0);
+        $page->ParentID = $parentId;
 
         if (isset($match['urlSegment'])) {
             $page->URLSegment = (string) $match['urlSegment'];
@@ -444,7 +487,13 @@ class CompositionService
         return [$area, true];
     }
 
-    protected function processAsset(array $entry, int $index): array
+    /**
+     * Ingest one `assets[]` entry under the same authorization `POST assets`
+     * applies (AssetService::authorizeIngest(), #229). An entry without its
+     * own `publish` follows the composition: draft-only for `publish: "none"`,
+     * published otherwise (#235).
+     */
+    protected function processAsset(array $entry, int $index, Member $member, string $publishMode): array
     {
         $ref = isset($entry['ref']) ? (string) $entry['ref'] : null;
 
@@ -467,6 +516,11 @@ class CompositionService
 
         unset($entry['base64'], $entry['ref']);
 
+        if (!isset($entry['publish']) && $publishMode === 'none') {
+            $entry['publish'] = false;
+        }
+
+        ['meta' => $entry, 'warnings' => $warnings] = $this->assets->authorizeIngest($entry, $member);
         $result = $this->assets->ingest($binary, $entry);
 
         if ($ref !== null) {
@@ -480,7 +534,7 @@ class CompositionService
             'externalId' => $entry['externalId'] ?? null,
             'filename' => $result['record']->getFilename(),
             'status' => $result['existed'] ? 'updated' : 'created',
-        ];
+        ] + ($warnings !== [] ? ['warnings' => $warnings] : []);
     }
 
     /**
@@ -732,12 +786,18 @@ class CompositionService
      * Archive elements in the area that the payload no longer describes.
      * `managed` (default): only elements carrying an external id are
      * candidates — hand-authored CMS content is invisible to prune.
+     *
+     * Archiving is a delete, so every candidate needs the `delete` verb on
+     * its class and `canDelete()` (#227), the same gate `RecordActionsHandler`
+     * applies to `archive`. All candidates are checked before any is
+     * archived, so a refusal leaves the area untouched.
      */
     protected function prune(
         DataObject $area,
         array $entries,
         string $scope,
-        string $elementsRelation = 'Elements'
+        string $elementsRelation,
+        Member $member
     ): array {
         if (!in_array($scope, ['managed', 'all'], true)) {
             throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'prune.scope must be "managed" or "all".');
@@ -749,7 +809,7 @@ class CompositionService
         )));
 
         $field = $this->externalIds->fieldName();
-        $pruned = [];
+        $candidates = [];
 
         foreach ($area->getComponents($elementsRelation) as $element) {
             $externalId = $element->hasField($field) ? $element->getField($field) : null;
@@ -762,6 +822,13 @@ class CompositionService
                 continue;
             }
 
+            $this->policy->authorize($element, 'delete', $member);
+            $candidates[] = [$element, $externalId];
+        }
+
+        $pruned = [];
+
+        foreach ($candidates as [$element, $externalId]) {
             $pruned[] = [
                 'id' => (int) $element->ID,
                 'externalId' => $externalId ?: null,
@@ -775,16 +842,21 @@ class CompositionService
     }
 
     /**
-     * Publish the page plus every written area/element/child — page
-     * publishRecursive does not cascade into elements, so this routes
+     * Publish the page, its whole `$owns` tree, and every written
+     * area/element/child — page publishRecursive does not cascade into
+     * elements, so this routes
      * through {@see PublishOrchestrator::publishOwnedTree()} (#119/#168)
      * instead: the area and every element/child are passed as `$additional`
      * targets (this method already knows exactly which ones it just wrote,
      * so it doesn't rely on `$owns` reaching them — `BaseElement` itself
      * declares no `$owns`, so element children aren't walk-reachable
      * without a project opting in), and every one of them is now
-     * authorization-checked (class `action` verb + `canEdit()`) before
-     * anything is written. This closes the gap #168 tracked: previously
+     * authorization-checked (class `action` verb + `canPublish()`) before
+     * anything is written. The `$owns` walk reaches beyond what this
+     * request wrote (any draft element already in an owned area goes live
+     * too), so the returned list, which compose() reports as `published`,
+     * names every record published (#241). This closes the gap #168
+     * tracked: previously
      * `publish($record, 'single', $member)` performed no authorization at
      * all for the area/element/child classes, only the page itself was
      * checked (see `compose()`, above).
@@ -793,8 +865,11 @@ class CompositionService
      * StatCounter is a plain DataObject) — `publishOwnedTree()` silently
      * drops anything unversioned from `$additional` rather than erroring,
      * so no duck-typed `hasMethod('publishSingle')` check is needed here.
+     *
+     * @return array<int, array{id: int, className: string}> every record
+     *   published, the page last
      */
-    protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): void
+    protected function publishAll(SiteTree $page, DataObject $area, array $elementResults, Member $member): array
     {
         $additional = [$area];
 
@@ -806,7 +881,7 @@ class CompositionService
             }
         }
 
-        $this->publisher->publishOwnedTree($page, $member, $additional);
+        return $this->publisher->publishOwnedTree($page, $member, $additional);
     }
 
     /**
