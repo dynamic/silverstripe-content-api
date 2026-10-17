@@ -435,12 +435,14 @@ class RecordSerializer
 
     private function stageReport(DataObject $record): array
     {
-        $live = (bool) $record->isPublished();
-
+        // Read from Versioned rather than assumed: a published record removed
+        // from draft is live-only, with no draft to edit (#239).
+        // isOnDraft()/isModifiedOnDraft() come from the Versioned extension,
+        // so they are only known at runtime.
         return [
-            'draft' => true,
-            'live' => $live,
-            'modifiedOnDraft' => $live ? (bool) $record->stagesDiffer() : true,
+            'draft' => (bool) call_user_func([$record, 'isOnDraft']),
+            'live' => (bool) $record->isPublished(),
+            'modifiedOnDraft' => (bool) call_user_func([$record, 'isModifiedOnDraft']),
         ];
     }
 }

@@ -146,6 +146,19 @@ class RecordActionsHandler
             switch ($action) {
                 case 'publish':
                     $mode = $this->publishModeFromBody($body);
+
+                    // `none` is a valid write-side `publish` value (it shares
+                    // PublishOrchestrator::MODES), but as this action's mode it
+                    // publishes nothing while answering "published" (#239).
+                    if ($mode === 'none') {
+                        throw new ApiError(
+                            ErrorCode::PAYLOAD_INVALID,
+                            sprintf(
+                                'Publish mode "none" publishes nothing — use one of: %s.',
+                                implode(', ', array_diff(PublishOrchestrator::MODES, ['none']))
+                            )
+                        );
+                    }
                     $liveOnly = !empty($body['liveOnly']);
                     $dryRun = !empty($body['dryRun']);
 

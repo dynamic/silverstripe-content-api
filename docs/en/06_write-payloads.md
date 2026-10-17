@@ -142,7 +142,10 @@ Populate-fixtures resolver, which logged and left the literal token string in pl
 
 - `mode`: `set` (clear then apply — `removeAll()` first), `add`, or `remove`.
 - `items`: each entry is an integer id, `{"id": n}`, or `{"externalId": "..."}`; `extraFields`
-  is only meaningful for many_many join-table columns.
+  sets many_many join columns: a classic many_many's declared extra fields, or a through
+  relation's join-class fields. Any other key (a typo, or any key on a has_many) follows
+  `api_unknown_fields` like `fields` does: `422 UNKNOWN_FIELD` under `strict` (detail field
+  `Relation.extraFields.Key`), a warning otherwise.
 - The relation must be listed in the class's `api_writable_relations` — this is a separate
   allowlist from `api_writable_fields` and applies under **both** write policies.
 - The far side is authorized too, before any list changes: a has_many item, and every existing

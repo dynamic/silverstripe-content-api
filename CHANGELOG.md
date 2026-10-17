@@ -160,6 +160,19 @@ All notable changes to this project are documented here. Format loosely follows
   include drafts the request did not write. The docs now say so.
 
 ### Fixed
+- **(#239)** Silent successes on stage state:
+  - `unpublish`, `archive` and batch `delete` of a record whose live row is a different class
+    from its draft (a draft-only class conversion) refuse with a new `409 STAGE_CLASS_MISMATCH`.
+    They used to answer 200 with the old-class page still live, and archive also deleted the
+    draft row.
+  - `POST records/$ClassRef/$ID/publish` with `{"mode": "none"}` is `400 PAYLOAD_INVALID`
+    instead of a no-op answering `published`.
+  - The `stage` block reads Versioned (`isOnDraft()`, `isModifiedOnDraft()`): a live-only
+    record now reports `draft: false, modifiedOnDraft: false` instead of a hardcoded draft.
+  - An unknown many_many `extraFields` key is `422 UNKNOWN_FIELD` under `strict` (a warning
+    otherwise), instead of being dropped while the op reported `updated`.
+
+  **Behavior change:** callers relying on any of those 2xx answers now get the error.
 - **(#235)** A has_one integer or `{"id": n}` must name an existing record (`404 NOT_FOUND`),
   as the `{"externalId"}` shape and has_many/many_many items already must; `0` still clears.
   A dangling foreign key used to be stored and reported as `updated`.
