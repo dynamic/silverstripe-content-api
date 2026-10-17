@@ -49,7 +49,8 @@ deterministic, path-keyed snapshot of the site's content via
   other. `violations` computes exactly that check, walking each candidate's full ancestor chain
   (not just its immediate parent), so a live related record under a live owner page whose *own*
   parent is draft-only is caught too. Duplicate entries describing the same underlying problem
-  (several related records sharing one blocked owner page) collapse to one.
+  (several related records of one class sharing one blocked owner page) collapse to one; related
+records of two classes under the same owner give one entry per class.
 - **Class- and record-level ACL apply per row**, the same as `GET records/$ClassRef` — checked
   against each row's own ACTUAL class (a `related` class is instantiated per its true persisted
   subclass, same as `pages`), not just the class configured in `related_classes`/exposed at the
@@ -66,9 +67,14 @@ deterministic, path-keyed snapshot of the site's content via
   section's row count; for `related` it also includes records this caller can see but whose owner
   couldn't be resolved (reported separately via `unresolved`), so `totals.draft` there can exceed
   `records.length`.
-- **Determinism is the whole point.** Every collection is sorted (by path, or by owner path then
-  external id for `related` rows sharing one owner); ids are excluded from `data` unless
-  `includeIds=true`.
+- **Determinism is the whole point.** Every collection is sorted: `pages` by path; `related`
+  rows by owner path, external id, class and `live` (and `id` under `includeIds`), so rows that
+  tie on owner and external id still have one order. Every row, `related` ones included,
+  reports its own class, and `externalId` comes from the configured
+  `ExternalIdResolver.external_id_field`. Ids are excluded from `data` unless `includeIds=true`
+  (`1`/`0`/`true`/`false`, any case; anything else is `400 PAYLOAD_INVALID`).
+- Visibility is decided on the draft stage, whatever the request's own stage, the same way a
+  draft `GET records` read decides it.
 
 `classes=` restricts which SECTIONS appear in the *response* (`pages`, and each `related` ref) —
 narrowing it to a `related` ref without `pages` still resolves owner paths through the same

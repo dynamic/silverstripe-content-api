@@ -172,6 +172,21 @@ All notable changes to this project are documented here. Format loosely follows
   self-reference). It used to pick the code by counting stuck entries. Both stay 422.
 
 ### Fixed
+- **(#244)** Read paths:
+  - `GET records/$ClassRef` on the draft stage primes the version-number cache, so its query
+    count no longer grows with the rows it visits.
+  - `limit` must be a positive integer and `offset` a non-negative one (`400 PAYLOAD_INVALID`
+    otherwise; `limit` is still capped at `max_limit`). An empty filter value (`Title=`) matches
+    an empty or `NULL` text field instead of being ignored; on any other field, or an unknown
+    one, it is now a 400/422 like a non-empty value. `GET fingerprint`'s `includeIds` must be
+    `1`/`0`/`true`/`false`.
+  - `GET fingerprint`: related rows and violations report the row's own class; tied related rows
+    sort on every emitted field; `externalId` comes from the configured external-id column;
+    visibility is decided on the draft stage.
+
+  **Behavior change:** `limit=0` and non-numeric or negative paging values are now a 400, and an
+  empty filter value now filters. Fingerprint output changes once for sites with related
+  subclasses, tied related rows or a custom external-id column.
 - **(#243)** Spec and docs match the code:
   - `schema/endpoints.json` (now `v1.18`): has_one guidance moves from `relations` (which rejects
     has_one names) to `fields`; `relations` describes its real `{mode, items}` contract; the
