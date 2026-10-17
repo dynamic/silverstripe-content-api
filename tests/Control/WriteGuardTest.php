@@ -451,4 +451,19 @@ class WriteGuardTest extends ContentApiTestCase
         $this->assertSame(403, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame(0, (int) ApiTestChildObject::get()->byID($child->ID)->ParentID);
     }
+
+    /**
+     * A many_many id that doesn't resolve is refused: ManyManyList::add()
+     * would otherwise insert a join row for it without any check.
+     */
+    public function testColymbaManyManyWriteRefusesAnUnknownTarget(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Tags']);
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $response = $this->colymba('PUT', "ApiTest/{$record->ID}", ['Tags' => [999999]]);
+
+        $this->assertSame(404, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(0, $record->Tags()->count());
+    }
 }

@@ -12,6 +12,7 @@ use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Security;
+use SilverStripe\Versioned\Versioned;
 
 /**
  * Field-level write guard for colymba/silverstripe-restfulapi's generic
@@ -118,7 +119,7 @@ class WriteGuardExtension extends Extension
             Injector::inst()->get(LoggerInterface::class)->notice(sprintf(
                 'WriteGuardExtension dropped non-schema payload key(s) for %s on /api: %s.',
                 get_class($this->getOwner()),
-                implode(', ', $dropped)
+                json_encode(array_map('strval', $dropped))
             ));
         }
 
@@ -226,13 +227,27 @@ class WriteGuardExtension extends Extension
                 }
 
                 foreach ($body[$relation] as $id) {
+                    // Read on the draft stage: /api requests default to Live,
+                    // which would hide a draft-only target. A target that
+                    // doesn't resolve is refused, not skipped —
+                    // ManyManyList::add() inserts a join row for any id
+                    // without looking it up.
                     $target = is_numeric($id) && $relationClass
-                        ? DataObject::get_by_id($relationClass, (int) $id)
+                        ? Versioned::withVersionedMode(function () use ($relationClass, $id) {
+                            Versioned::set_stage(Versioned::DRAFT);
+
+                            return DataObject::get_by_id($relationClass, (int) $id);
+                        })
                         : null;
 
-                    if ($target) {
-                        $policy->authorize($target, $isHasMany ? 'update' : 'read', $member);
+                    if (!$target) {
+                        throw new ApiError(
+                            ErrorCode::NOT_FOUND,
+                            sprintf('Related %s not found for relation "%s".', $relationClass, $relation)
+                        );
                     }
+
+                    $policy->authorize($target, $isHasMany ? 'update' : 'read', $member);
                 }
             }
         } catch (ApiError $error) {
