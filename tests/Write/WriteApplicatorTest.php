@@ -266,9 +266,12 @@ class WriteApplicatorTest extends SapphireTest
 
         $this->assertTrue($applicator->isFieldWritable(ApiTestElement::class, 'ParentID', 'Parent'));
 
+        $area = \DNADesign\Elemental\Models\ElementalArea::create();
+        $area->write();
+
         $element = ApiTestElement::create(['Title' => 'Attach attempt']);
-        $applicator->applyFields($element, ['Parent' => 999], []);
-        $this->assertSame(999, (int) $element->ParentID);
+        $applicator->applyFields($element, ['Parent' => (int) $area->ID], []);
+        $this->assertSame((int) $area->ID, (int) $element->ParentID);
     }
 
     /**
@@ -288,9 +291,12 @@ class WriteApplicatorTest extends SapphireTest
         $this->assertTrue($applicator->isFieldWritable(ApiTestElement::class, 'ParentID', 'Parent', true));
         $this->assertFalse($applicator->isFieldWritable(ApiTestElement::class, 'ClassName', null, true));
 
+        $area = \DNADesign\Elemental\Models\ElementalArea::create();
+        $area->write();
+
         $element = ApiTestElement::create(['Title' => 'Trusted attach']);
-        $applicator->applyFields($element, ['Title' => 'Trusted attach'], ['ParentID' => 42]);
-        $this->assertSame(42, (int) $element->ParentID);
+        $applicator->applyFields($element, ['Title' => 'Trusted attach'], ['ParentID' => (int) $area->ID]);
+        $this->assertSame((int) $area->ID, (int) $element->ParentID);
 
         try {
             $applicator->applyFields(ApiTestElement::create(), ['ParentID' => 42], []);
