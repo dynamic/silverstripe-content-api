@@ -834,6 +834,9 @@ class FingerprintTest extends ContentApiTestCase
      * math) while only $visible/$rows are filtered by caller ACL. A
      * hidden draft-only ancestor must not corrupt the PATH or the
      * blockedBy computation for a visible descendant beneath it.
+     * apiUser only sees the live child because of ContentApiGrantExtension on
+     * SiteTree (ContentApiTestCase::getRequiredExtensions()); without it
+     * SiteTree::isOrphaned() hides a live page under a draft-only parent.
      */
     public function testVisiblePageUnderHiddenDraftOnlyAncestorStillGetsCorrectPathAndBlockedBy(): void
     {
