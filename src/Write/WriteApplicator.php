@@ -544,6 +544,12 @@ class WriteApplicator
                 }
 
                 if ($isHasMany) {
+                    // Pass 1 loaded this record before `set`'s removeAll()
+                    // nulled foreign keys in the database. A stale copy still
+                    // holding the old ParentID would make add()'s write a
+                    // no-op (nothing "changed"), silently leaving a child
+                    // that was both existing and requested detached. Reload.
+                    $related = DataObject::get_by_id(get_class($related), (int) $related->ID) ?: $related;
                     $this->collectIfCleanlyPublished($related, $dirtiedPublished);
                 }
 

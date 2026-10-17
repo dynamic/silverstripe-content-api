@@ -2524,4 +2524,25 @@ class BatchTest extends ContentApiTestCase
 
         $this->assertSame('updated', $body['data']['results'][0]['status']);
     }
+
+    /**
+     * `set` with a child that is already attached keeps it attached: the
+     * two-pass resolve must not leave a stale copy that add() skips writing.
+     */
+    public function testHasManySetKeepsAChildThatIsAlreadyAttached(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $childOne = $this->objFromFixture(ApiTestChildObject::class, 'childOne');
+        $childTwo = $this->objFromFixture(ApiTestChildObject::class, 'childTwo');
+        $record->Children()->add($childOne);
+
+        $body = $this->relationOp((int) $record->ID, [
+            'Children' => ['mode' => 'set', 'items' => [(int) $childOne->ID, (int) $childTwo->ID]],
+        ]);
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($childOne->ID)->ParentID);
+        $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($childTwo->ID)->ParentID);
+    }
 }
