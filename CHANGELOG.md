@@ -130,7 +130,10 @@ All notable changes to this project are documented here. Format loosely follows
   - Every response carries `Cache-Control: no-cache, no-store, must-revalidate, private`.
 
   **Behavior change:** ancestor-ref reads and actions on explicitly denied subclass rows return
-  `403` and list totals drop; filtering or sorting on a never-emitted column returns `422`.
+  `403` and list totals drop; filtering or sorting on a never-emitted column returns `422`
+  (`ClassName`, `ID` and the external-id column stay filterable). A project that set
+  `Image: api_access: false` meaning "no opinion, use File's" must remove the key instead: an
+  explicit `false` on an asset class is now a deny.
 
 ### Changed
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.

@@ -168,4 +168,44 @@ class ReadExposureTest extends ContentApiTestCase
         $this->assertStringContainsString('no-store', (string) $denied->getHeader('Cache-Control'));
         $this->assertSame(ContentApiController::CACHE_CONTROL, $ok->getHeader('Cache-Control'));
     }
+
+    /**
+     * Each path that loads a row by the requested class checks the row's own
+     * class, independently of the read path above.
+     */
+    public function testParityOfADeniedSubclassRowIsRefused(): void
+    {
+        $row = $this->deniedRow();
+
+        $this->assertErrorCode(
+            $this->apiGet("records/ApiTestFingerprintRelated/{$row->ID}/parity", $this->adminToken),
+            'FORBIDDEN_CLASS',
+            403
+        );
+    }
+
+    public function testStageActionsOnADeniedSubclassRowAreRefused(): void
+    {
+        $row = $this->deniedRow();
+        $row->publishSingle();
+
+        foreach (['publish', 'unpublish', 'archive'] as $action) {
+            $this->assertErrorCode(
+                $this->apiPost("records/ApiTestFingerprintRelated/{$row->ID}/{$action}", [], $this->adminToken),
+                'FORBIDDEN_CLASS',
+                403
+            );
+        }
+
+        $this->assertTrue($row->isPublished());
+    }
+
+    public function testClassNameIsFilterableEvenWithApiFields(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_fields', ['Title']);
+
+        $ok = $this->apiGet('records/ApiTest?ClassName=' . urlencode(ApiTestObject::class), $this->adminToken);
+
+        $this->assertSame(200, $ok->getStatusCode(), (string) $ok->getBody());
+    }
 }

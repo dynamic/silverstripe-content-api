@@ -126,9 +126,9 @@ class RecordSerializer
      * column would leak its value through which rows match or how they
      * order. Mirrors collectFields(): `api_fields` when set, otherwise every
      * db field and has_one; `hidden_fields` removed; a has_one contributes
-     * its FK column, a polymorphic one never its Class/Relation companions.
-     * `ID` and the external-id column (emitted as `externalId`) are always
-     * included.
+     * its FK column, never its Class/Relation companions; a composite its
+     * sub-columns. `ID`, `ClassName` (emitted as `className`) and the
+     * external-id column (emitted as `externalId`) are always included.
      *
      * @return string[]
      */
@@ -152,7 +152,9 @@ class RecordSerializer
         }
 
         $wanted = is_array($apiFields) ? $apiFields : array_merge(array_keys($dbFields), array_keys($hasOne));
-        $columns = ['ID'];
+        $composites = $schema->compositeFields($className);
+        // `className` is always emitted, so ClassName is always readable.
+        $columns = ['ID', 'ClassName'];
 
         foreach ($wanted as $name) {
             if (in_array($name, $hidden, true)) {
@@ -166,6 +168,16 @@ class RecordSerializer
 
             if (isset($dbFields[$name]) && !in_array($name, $companions, true)) {
                 $columns[] = $name;
+
+                // A composite (e.g. Money) is emitted whole, so its
+                // sub-columns (PriceAmount, PriceCurrency) are readable too.
+                if (isset($composites[$name])) {
+                    foreach (array_keys($dbFields) as $column) {
+                        if ($column !== $name && str_starts_with($column, $name)) {
+                            $columns[] = $column;
+                        }
+                    }
+                }
             }
         }
 
