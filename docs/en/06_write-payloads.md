@@ -36,7 +36,7 @@ A non-polymorphic has_one accepts:
 | Shape | Meaning |
 |---|---|
 | `null` | Clear the relation |
-| integer, or numeric string | Foreign key id directly |
+| integer, or numeric string | Foreign key id; must name an existing record (`404 NOT_FOUND` otherwise), `0` clears |
 | `{"id": n}` | Same as a bare id |
 | `{"externalId": "..."}` | Resolve via [external id](#external-ids) |
 | A link payload (`{"type": ..., ...}`) | See [Link payloads](#link-payloads) |
@@ -140,6 +140,10 @@ Populate-fixtures resolver, which logged and left the literal token string in pl
   is only meaningful for many_many join-table columns.
 - The relation must be listed in the class's `api_writable_relations` — this is a separate
   allowlist from `api_writable_fields` and applies under **both** write policies.
+- The far side is authorized too, before any list changes: a has_many item, and every existing
+  child a has_many `set` will clear, needs the `update` verb on its class plus `canEdit()`
+  (its foreign key is written); a many_many item needs `read` plus `canView()` (only the join
+  row changes). One refusal fails the whole operation with nothing applied.
 - Unknown relation → `422 UNKNOWN_RELATION`; not in the allowlist → `422 READONLY_FIELD`;
   malformed `mode`/`items` → `400 PAYLOAD_INVALID`. This block is has_many/many_many only — a
   has_one name here (a natural mistake) is rejected the same way, `400 PAYLOAD_INVALID`, before

@@ -459,14 +459,22 @@ class WriteApplicator
      * in-progress draft to LIVE as a side effect of an unrelated relation
      * write, not merely restore what this operation itself disturbed.
      *
+     * `$authorize`, when given, is called as `$authorize($farSide, $verb)`
+     * for every record on the far side of a relation write, before ANY list
+     * is mutated (#235): `update` for a has_many item (its foreign key is
+     * written) and for every existing child a has_many `set` will clear,
+     * `read` for a many_many item (only the join row changes). It throws to
+     * refuse. `RecordWriter::write()` passes PermissionPolicy::authorize().
+     *
      * @param array<string, mixed> $relations
+     * @param (callable(DataObject, string): void)|null $authorize
      * @return DataObject[] Deduplicated (by class + id) — see this method's
      *   own docblock above for exactly which records qualify. The caller
      *   (`RecordWriter::write()`) authorization-checks and republishes each
      *   one to close #202.
      * @throws ApiError
      */
-    public function applyRelations(DataObject $record, array $relations): array
+    public function applyRelations(DataObject $record, array $relations, ?callable $authorize = null): array
     {
         $className = get_class($record);
         $hasOne = (array) $record->hasOne();
@@ -474,7 +482,11 @@ class WriteApplicator
         $manyMany = (array) $record->manyMany();
         $writable = (array) Config::inst()->get($className, 'api_writable_relations');
         $dirtiedPublished = [];
+        $plan = [];
 
+        // Pass 1: validate and resolve everything, and authorize every far-
+        // side record, before any list is touched — so a refusal on the last
+        // item can't leave earlier ones already attached.
         foreach ($relations as $name => $spec) {
             $name = (string) $name;
             $relationClass = $this->validateRelationSpec(
@@ -487,24 +499,41 @@ class WriteApplicator
                 $writable
             );
             $mode = (string) $spec['mode'];
-            $items = (array) ($spec['items'] ?? []);
             $isHasMany = isset($hasMany[$name]);
+            $resolved = [];
 
+            foreach ((array) ($spec['items'] ?? []) as $item) {
+                $resolved[] = $this->resolveRelationItem($relationClass, $name, $item);
+            }
+
+            $existing = $mode === 'set' && $isHasMany ? iterator_to_array($record->{$name}()) : [];
+
+            if ($authorize !== null) {
+                foreach ($existing as $child) {
+                    $authorize($child, 'update');
+                }
+
+                foreach ($resolved as [$related]) {
+                    $authorize($related, $isHasMany ? 'update' : 'read');
+                }
+            }
+
+            $plan[] = [$name, $mode, $isHasMany, $resolved, $existing];
+        }
+
+        // Pass 2: apply.
+        foreach ($plan as [$name, $mode, $isHasMany, $resolved, $existing]) {
             $list = $record->{$name}();
 
             if ($mode === 'set') {
-                if ($isHasMany) {
-                    foreach ($list as $existing) {
-                        $this->collectIfCleanlyPublished($existing, $dirtiedPublished);
-                    }
+                foreach ($existing as $child) {
+                    $this->collectIfCleanlyPublished($child, $dirtiedPublished);
                 }
 
                 $list->removeAll();
             }
 
-            foreach ($items as $item) {
-                [$related, $extraFields] = $this->resolveRelationItem($relationClass, $name, $item);
-
+            foreach ($resolved as [$related, $extraFields]) {
                 if ($mode === 'remove') {
                     if ($isHasMany) {
                         $this->collectIfCleanlyPublished($related, $dirtiedPublished);
@@ -904,6 +933,8 @@ class WriteApplicator
                 );
             }
 
+            $this->assertRelationTargetExists($relationName, $relationClass, (int) $value);
+
             return ['id' => (int) $value, 'class' => null, 'polymorphic' => false];
         }
 
@@ -913,6 +944,8 @@ class WriteApplicator
                 : $relationClass;
 
             if (isset($value['id'])) {
+                $this->assertRelationTargetExists($relationName, $targetClass, (int) $value['id']);
+
                 return [
                     'id' => (int) $value['id'],
                     'class' => $isPolymorphic ? $targetClass : null,
@@ -939,6 +972,34 @@ class WriteApplicator
                 $isPolymorphic ? ', with an explicit "class"' : ''
             )
         );
+    }
+
+    /**
+     * A has_one integer or `{"id": n}` must name a record that exists, as
+     * the `{"externalId"}` shape and has_many/many_many items already must
+     * (#235); 0 stays the "clear the relation" value. Looked up on the draft
+     * stage, where every write path in this module writes.
+     *
+     * @throws ApiError NOT_FOUND
+     */
+    protected function assertRelationTargetExists(string $relationName, string $targetClass, int $id): void
+    {
+        if ($id === 0) {
+            return;
+        }
+
+        $found = Versioned::withVersionedMode(function () use ($targetClass, $id) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            return DataObject::get_by_id($targetClass, $id);
+        });
+
+        if (!$found) {
+            throw new ApiError(
+                ErrorCode::NOT_FOUND,
+                sprintf('Related %s not found for relation "%s".', $targetClass, $relationName)
+            );
+        }
     }
 
     /**

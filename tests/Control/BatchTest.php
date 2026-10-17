@@ -2419,4 +2419,109 @@ class BatchTest extends ContentApiTestCase
             return $page->ElementalArea();
         });
     }
+
+    private function relationOp(int $id, array $relations): array
+    {
+        return $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => $id,
+            'relations' => $relations,
+        ]]], $this->adminToken));
+    }
+
+    /**
+     * #235: a has_many write sets the child's foreign key, so the child needs
+     * `update` on its class.
+     */
+    public function testHasManyAddNeedsUpdateOnTheChildClass(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+        Config::modify()->set(ApiTestChildObject::class, 'api_access', 'read');
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $child = $this->objFromFixture(ApiTestChildObject::class, 'childOne');
+
+        $body = $this->relationOp((int) $record->ID, ['Children' => ['mode' => 'add', 'items' => [(int) $child->ID]]]);
+
+        $this->assertSame('FORBIDDEN_CLASS', $body['data']['results'][0]['error']['code']);
+        $this->assertSame(0, (int) ApiTestChildObject::get()->byID($child->ID)->ParentID);
+    }
+
+    /**
+     * `set` clears every existing child's foreign key, so each of those needs
+     * `update` too, and a refusal leaves them attached.
+     */
+    public function testHasManySetNeedsUpdateOnTheChildrenItClears(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $child = $this->objFromFixture(ApiTestChildObject::class, 'childOne');
+        $record->Children()->add($child);
+        Config::modify()->set(ApiTestChildObject::class, 'api_access', 'read');
+
+        $body = $this->relationOp((int) $record->ID, ['Children' => ['mode' => 'set', 'items' => []]]);
+
+        $this->assertSame('FORBIDDEN_CLASS', $body['data']['results'][0]['error']['code']);
+        $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($child->ID)->ParentID);
+    }
+
+    public function testHasManyWriteSucceedsWithUpdateOnTheChildClass(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Children']);
+        Config::modify()->set(ApiTestChildObject::class, 'api_access', 'read,update');
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $child = $this->objFromFixture(ApiTestChildObject::class, 'childOne');
+
+        $body = $this->relationOp((int) $record->ID, ['Children' => ['mode' => 'add', 'items' => [(int) $child->ID]]]);
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame((int) $record->ID, (int) ApiTestChildObject::get()->byID($child->ID)->ParentID);
+    }
+
+    /**
+     * A many_many write only changes the join row, so the item needs `read`.
+     */
+    public function testManyManyAddNeedsReadOnTheItemClass(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['Tags']);
+        Config::modify()->set(ApiTestTag::class, 'api_access', false);
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $tag = $this->objFromFixture(ApiTestTag::class, 'tagOne');
+
+        $body = $this->relationOp((int) $record->ID, ['Tags' => ['mode' => 'add', 'items' => [(int) $tag->ID]]]);
+
+        $this->assertSame('FORBIDDEN_CLASS', $body['data']['results'][0]['error']['code']);
+        $this->assertSame(0, $record->Tags()->count());
+    }
+
+    /**
+     * #235: a has_one integer or {"id"} must name an existing record, like
+     * the {"externalId"} shape; 0 still clears.
+     */
+    public function testHasOneIdMustNameAnExistingRecord(): void
+    {
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        foreach ([999999, ['id' => 888888]] as $value) {
+            $body = $this->decode($this->apiPost('batch', ['operations' => [[
+                'op' => 'update',
+                'class' => 'ApiTest',
+                'id' => (int) $record->ID,
+                'fields' => ['Buddy' => $value],
+            ]]], $this->adminToken));
+
+            $this->assertSame('NOT_FOUND', $body['data']['results'][0]['error']['code']);
+        }
+
+        $this->assertSame(0, (int) ApiTestObject::get()->byID($record->ID)->BuddyID);
+
+        $body = $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => (int) $record->ID,
+            'fields' => ['Buddy' => 0],
+        ]]], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+    }
 }

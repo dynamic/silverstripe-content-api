@@ -82,6 +82,11 @@ All notable changes to this project are documented here. Format loosely follows
   `canView()` on the template, and the `create` verb plus `canCreate()` on every class the apply
   will create: each template element's class and every child class `duplicate()` cascades to.
   All are checked before anything is written.
+- **(#235)** Relation writes authorize the far side, before any list changes: a has_many item,
+  and every existing child a has_many `set` clears, needs the `update` verb plus `canEdit()`
+  (its foreign key is written); a many_many item needs `read` plus `canView()`. They previously
+  checked only the owning record. **Behavior change:** projects writing has_many relations need
+  `update` on the child class.
 
 ### Changed
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.
@@ -93,6 +98,9 @@ All notable changes to this project are documented here. Format loosely follows
   include drafts the request did not write. The docs now say so.
 
 ### Fixed
+- **(#235)** A has_one integer or `{"id": n}` must name an existing record (`404 NOT_FOUND`),
+  as the `{"externalId"}` shape and has_many/many_many items already must; `0` still clears.
+  A dangling foreign key used to be stored and reported as `updated`.
 - **(#246)** Asset `conflict: skip` is a true no-op, as documented. It no longer rewrites `title`
   or `externalId` on the existing record.
 - **(#233)** `POST compositions/page` can create new elements again when a project lists an

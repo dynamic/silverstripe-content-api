@@ -377,7 +377,11 @@ class RecordWriter
         try {
             DbTransaction::run(function () use ($record, $relations, $publishMode, $member) {
                 $record->write();
-                $dirtiedPublished = $this->applicator->applyRelations($record, $relations);
+                $dirtiedPublished = $this->applicator->applyRelations(
+                    $record,
+                    $relations,
+                    fn (DataObject $farSide, string $verb) => $this->policy->authorize($farSide, $verb, $member)
+                );
                 $this->publisher->publish($record, $publishMode, $member);
 
                 // #202: a has_many `add`/`set`/`remove` unconditionally

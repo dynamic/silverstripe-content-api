@@ -321,7 +321,9 @@ update) and, via `WriteGuardExtension`, colymba's own `/api` write path.
 
 - **`guarded`** (global default `policy`): all db fields and has_one relations are writable
   except the `protected_fields` denylist (global + per-class `api_protected_fields`). has_many /
-  many_many writes require the relation to be listed in `api_writable_relations` regardless of
+  many_many writes require the relation to be listed in `api_writable_relations`, and the far
+  side's own verb (`update` + `canEdit()` for has_many, `read` + `canView()` for many_many; see
+  [Write payloads](06_write-payloads.md#relations-has_many--many_many)), regardless of
   policy.
 - **`allowlist`**: only fields in `api_writable_fields` (or relations in
   `api_writable_relations`) are writable. A class enters allowlist mode either by explicit
