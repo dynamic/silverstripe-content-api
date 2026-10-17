@@ -10,6 +10,7 @@ use Dynamic\ContentApi\Write\WriteGuardExtension;
 use InvalidArgumentException;
 use ReflectionClass;
 use ReflectionException;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injectable;
@@ -290,6 +291,13 @@ class ExposureScaffolder
         // having the verb: 'action' maps to the same canEdit() check
         // 'update' already does.
         $lines[] = "  api_access: 'GET,POST,PUT,action'";
+
+        // `convert` (changing a page's class, #228) stays opt-in: a class
+        // change is structural, so the scaffold names it rather than
+        // granting it.
+        if (is_a($class, SiteTree::class, true)) {
+            $lines[] = "  # Add ',convert' above to allow pages/\$ID/convert or a composition convertTo.";
+        }
 
         if ($fields !== []) {
             $lines[] = '  api_writable_fields:';

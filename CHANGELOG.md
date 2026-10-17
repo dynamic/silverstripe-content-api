@@ -18,6 +18,7 @@ All notable changes to this project are documented here. Format loosely follows
   docs/en/14_architecture.md#request-lifecycle. Also the missing piece for
   `silverstripe-content-api-mcp#25`'s open success criterion (a server-side way to verify a real
   restructure session ran through MCP tools).
+  Landed on branch `1` first (unreleased), merged up here.
 
 ### Security
 - **(#227, #229, #235)** Composition and asset write paths now check the verb for what they do to
@@ -76,13 +77,41 @@ All notable changes to this project are documented here. Format loosely follows
   own rule now applies.
   Landed on branch `1` first (unreleased), merged up here.
 
+- **(#228)** Changing a page's class (`POST pages/$ID/convert` and a composition's
+  `page.convertTo`) needs a new bare `convert` verb in `api_access` on both the page's current
+  class and the target class, in addition to `update` (and `action` when publishing). It was
+  previously allowed between any two classes granting `update`. `api_access: true` includes
+  `convert`; a CSV list must name it (`'GET,POST,PUT,action,convert'`). **Behavior change:**
+  projects that convert pages must add `convert` to the classes involved.
+  Landed on branch `1` first (unreleased), merged up here.
+- **(#235)** `apply-template` needs the page class `update` verb (not just `canEdit()`),
+  `canView()` on the template, and the `create` verb plus `canCreate()` on every class the apply
+  will create: each template element's class and every child class `duplicate()` cascades to.
+  All are checked before anything is written.
+  Landed on branch `1` first (unreleased), merged up here.
+- **(#235)** Relation writes authorize the far side, before any list changes: a has_many item,
+  and every existing child a has_many `set` clears, needs the `update` verb plus `canEdit()`
+  (its foreign key is written); a many_many item needs `read` plus `canView()`. They previously
+  checked only the owning record. **Behavior change:** projects writing has_many relations need
+  `update` on the child class.
+  Landed on branch `1` first (unreleased), merged up here.
+
 ### Changed
+- **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.
+  A refused publish now rolls the conversion back (`(convert rolled back)` in the message)
+  instead of leaving the draft converted behind a 403. A publishing convert reports what it
+  published in `meta.published`.
+  Landed on branch `1` first (unreleased), merged up here.
 - **(#241)** A `publish: "recursive"` composition response carries `published`: every record the
   publish touched (`publishSingle()` targets, unchanged ones included), the page last. The publish covers the page's whole `$owns` tree, which can
   include drafts the request did not write. The docs now say so.
   Landed on branch `1` first (unreleased), merged up here.
 
 ### Fixed
+- **(#235)** A has_one integer or `{"id": n}` must name an existing record (`404 NOT_FOUND`),
+  as the `{"externalId"}` shape and has_many/many_many items already must; `0` still clears.
+  A dangling foreign key used to be stored and reported as `updated`.
+  Landed on branch `1` first (unreleased), merged up here.
 - **(#246)** Asset `conflict: skip` is a true no-op, as documented. It no longer rewrites `title`
   or `externalId` on the existing record.
   Landed on branch `1` first (unreleased), merged up here.

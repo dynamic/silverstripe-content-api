@@ -444,6 +444,7 @@ class CompositionTest extends ContentApiTestCase
 
     public function testConvertTo(): void
     {
+        Config::modify()->set(SiteTree::class, 'api_access', 'read,update,convert');
         $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
 
         $payload = [
@@ -1524,5 +1525,21 @@ class CompositionTest extends ContentApiTestCase
         $published = $this->decode($response)['data']['published'];
         $this->assertContains((int) $editorDraft->ID, array_column($published, 'id'));
         $this->assertSame((int) $page->ID, (int) end($published)['id']);
+    }
+
+    /**
+     * #228: convertTo needs the bare `convert` verb, like pages/$ID/convert.
+     */
+    public function testConvertToRequiresTheConvertVerb(): void
+    {
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $about->ID], 'convertTo' => 'BlockPageStub'],
+            'elements' => [],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertSame(SiteTree::class, SiteTree::get()->byID($about->ID)->ClassName);
     }
 }
