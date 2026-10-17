@@ -846,6 +846,33 @@ class WriteApplicator
     }
 
     /**
+     * Let every OwnerAwareTransformer finish its work for a record whose
+     * fields were applied: call right after the record's write(), inside
+     * the same transaction.
+     */
+    public function afterOwnerWrite(DataObject $record): void
+    {
+        foreach ($this->transformerServices() as $service) {
+            if ($service instanceof OwnerAwareTransformer) {
+                $service->afterOwnerWrite($record);
+            }
+        }
+    }
+
+    /**
+     * @return object[] the configured transformers, resolved
+     */
+    protected function transformerServices(): array
+    {
+        return array_map(
+            fn ($transformer) => is_string($transformer)
+                ? \SilverStripe\Core\Injector\Injector::inst()->get(ltrim($transformer, '%$'))
+                : $transformer,
+            (array) static::config()->get('transformers')
+        );
+    }
+
+    /**
      * The single source of truth for field writability across every write
      * surface (colymba /api, batch, compositions).
      *
@@ -1124,11 +1151,7 @@ class WriteApplicator
 
     protected function transformValue(DataObject $record, string $fieldName, mixed $value): mixed
     {
-        foreach ((array) static::config()->get('transformers') as $transformer) {
-            $service = is_string($transformer)
-                ? \SilverStripe\Core\Injector\Injector::inst()->get(ltrim($transformer, '%$'))
-                : $transformer;
-
+        foreach ($this->transformerServices() as $service) {
             if ($service instanceof ValueTransformer && $service->supports($record, $fieldName, $value)) {
                 return $service->transform($record, $fieldName, $value);
             }

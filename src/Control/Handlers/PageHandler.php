@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Control\Handlers;
 use Dynamic\ContentApi\Auth\AuthContext;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Publish\OwnedLinks;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\EnvironmentGate;
@@ -477,6 +478,7 @@ class PageHandler
                 throw ApiError::fromValidation($exception, 'Page conversion');
             }
 
+            OwnedLinks::singleton()->restampOwnerClass($converted);
             $published = $this->publisher->publish($converted, $publishMode, $context->member);
             $meta = ['operation' => 'converted'];
 

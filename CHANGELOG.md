@@ -172,6 +172,22 @@ All notable changes to this project are documented here. Format loosely follows
   self-reference). It used to pick the code by counting stuck entries. Both stay 422.
 
 ### Fixed
+- **(#242)** Link payloads are part of their owner's write:
+  - The link is written to draft only and published with its owner, by any publish of the
+    owner. A `"publish": "none"` edit to a link on a published record no longer goes live at
+    once.
+  - Links carry Owner fields (`OwnerClass`, `OwnerRelation`, `OwnerID`), so linkfield's
+    permission checks defer to the owner and non-admin CMS editors can edit them.
+  - The link write runs inside the operation's transaction, so a failed non-atomic batch op no
+    longer leaves a live orphan link. When the owner publishes, a link replaced by a type change
+    is archived.
+  - In a publish cascade an owned link is gated on its owner's class `action` verb instead of
+    the `Link` class's (checked even for an owner the cascade finds unchanged), plus its own
+    `canPublish()`. A replaced link another record still points at (a duplicated owner's copy)
+    is never archived. A page convert re-stamps its links' `OwnerClass`.
+
+  **Behavior change:** a link edit made with `"publish": "none"` waits for the owner to be
+  published.
 - **(#240, #246)** Asset uploads match, identify and report files the way SilverStripe stores them:
   - The existing-file lookup uses the stored path (folder and file name filters, or an existing
     folder's stored name), so re-uploading a name the filters rewrite finds the file instead of
