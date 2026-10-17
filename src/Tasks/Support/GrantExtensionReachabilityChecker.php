@@ -28,17 +28,19 @@ use Throwable;
  *
  * Reflection-based, not a live behavioral probe: for every concrete
  * `DataObject` subclass that both carries `ContentApiGrantExtension` and
- * declares its own (uninherited) `content_api_access`/`api_access` for a
- * verb — the exact same population {@see ContentApiGrantExtension::grant()}
- * itself checks — resolves the `can*()` method PHP will actually call
+ * is granted a verb by `ClassRegistry::grantVerbs()` (its own declaration,
+ * or an inherited one under a grant root) — the exact same population
+ * {@see ContentApiGrantExtension::grant()} itself checks — resolves the `can*()` method PHP will actually call
  * (following normal inheritance) and reads its declaring class's source
  * for a literal `extendedCan(` call, ignoring comments and string
  * literals so a mention in prose (or a real call that's been commented
- * out) can't produce a false "reachable" result.
+ * out) can't produce a false "reachable" result. A body that calls
+ * `parent::canX()` instead is followed up the chain (#245), so
+ * `ElementalArea`'s `parent::canEdit()` delegation reads as reachable.
  *
  * Necessarily a heuristic, not a proof: misses a call routed through an
  * intermediate helper method one level removed from the `can*()` method
- * itself. When the resolved method is defined on a trait rather than a
+ * itself (other than `parent::`). When the resolved method is defined on a trait rather than a
  * class, the source scan still reads the trait's real body correctly, but
  * the reported "declaring class" is the class that `use`s the trait, not
  * the trait itself — cosmetic, not a correctness gap in what gets
@@ -100,7 +102,9 @@ class GrantExtensionReachabilityChecker
                 continue;
             }
 
-            foreach ($this->registry->ownAccessVerbs($className) as $verb) {
+            // The verbs the grant actually answers for, own declaration or
+            // inherited under a grant root (#231).
+            foreach ($this->registry->grantVerbs($className) as $verb) {
                 $method = self::VERB_METHODS[$verb] ?? null;
 
                 if ($method === null || !method_exists($className, $method)) {
@@ -131,6 +135,40 @@ class GrantExtensionReachabilityChecker
         }
 
         return $findings;
+    }
+
+    /**
+     * The configured `ContentApiGrantExtension.grant_roots` and
+     * `grant_exclude`, as report lines (#231): roots widen which classes
+     * check() examines, so the report says which are in force.
+     *
+     * @return string[] empty when no grant root is configured
+     */
+    public function grantRootSummary(): array
+    {
+        $roots = (array) Config::inst()->get(ContentApiGrantExtension::class, 'grant_roots');
+
+        if ($roots === []) {
+            return [];
+        }
+
+        $exclude = (array) Config::inst()->get(ContentApiGrantExtension::class, 'grant_exclude');
+        // A typo'd exclusion silently excludes nothing, so name it.
+        $label = fn (string $class) => class_exists($class) ? $class : $class . ' (class not found)';
+
+        $lines = [
+            'Grant roots (undeclared subclasses get their inherited verbs): '
+                . implode(', ', array_map($label, $roots)),
+            'Excluded from the inherited grant: '
+                . ($exclude === [] ? '(none)' : implode(', ', array_map($label, $exclude))),
+        ];
+
+        if (in_array(DataObject::class, $roots, true)) {
+            $lines[] = 'Warning: DataObject is a grant root, so every class carrying the extension inherits '
+                . 'its ancestors\' access as a grant.';
+        }
+
+        return $lines;
     }
 
     /**
@@ -274,15 +312,64 @@ class GrantExtensionReachabilityChecker
         }
     }
 
-    protected function methodCallsExtendedCan(string $className, string $method): bool
-    {
+    protected function methodCallsExtendedCan(
+        string $className,
+        string $method,
+        array $visited = [],
+        ?string $grantClass = null
+    ): bool {
+        $grantClass ??= $className;
+
         $source = $this->methodSource($className, $method);
 
         // Couldn't read the source (unusual — e.g. a compiled/phar class)
         // — not this checker's job to guess, so don't flag a false
         // positive over a limitation of the check itself.
-        return $source === null
-            || preg_match('/extendedCan\s*\(/', $this->stripCommentsAndStrings($source)) === 1;
+        if ($source === null) {
+            return true;
+        }
+
+        $code = $this->stripCommentsAndStrings($source);
+
+        if (preg_match('/extendedCan\s*\(/', $code) === 1) {
+            return true;
+        }
+
+        // A body that delegates to `parent::canX()` reaches extendedCan()
+        // if the parent's canX() does (#245): ElementalArea::canView() and
+        // ::canEdit() both start with parent::canEdit(). Follow each called
+        // name up the chain, once per class and method. The hook that runs
+        // is extendedCan('canX'), which grants canX's verbs, so a call to a
+        // different method only counts when the class declares one of
+        // those (canView() via parent::canEdit() needs update or action).
+        $declaring = $this->declaringClass($className, $method);
+        $visited[$declaring . '::' . strtolower($method)] = true;
+        $parent = get_parent_class($declaring);
+
+        if ($parent === false || preg_match_all('/parent::(can\w+)\s*\(/i', $code, $calls) === 0) {
+            return false;
+        }
+
+        $declared = $this->registry->grantVerbs($grantClass);
+
+        foreach (array_unique($calls[1]) as $called) {
+            $answers = array_keys(array_filter(
+                self::VERB_METHODS,
+                fn (string $verbMethod) => strcasecmp($verbMethod, $called) === 0
+            ));
+
+            if (!method_exists($parent, $called) || array_intersect($answers, $declared) === []) {
+                continue;
+            }
+
+            $key = $this->declaringClass($parent, $called) . '::' . strtolower($called);
+
+            if (!isset($visited[$key]) && $this->methodCallsExtendedCan($parent, $called, $visited, $grantClass)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

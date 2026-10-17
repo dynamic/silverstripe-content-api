@@ -111,7 +111,7 @@ class GenerateContentApiExposureTask extends BuildTask
         }
 
         $output->writeln(sprintf('Wrote %s', $path));
-        $output->writeln('Review the diff, then `dev/build flush=1` before it takes effect.');
+        $output->writeln('Review the diff, then `sake db:build --flush` before it takes effect.');
 
         return Command::SUCCESS;
     }

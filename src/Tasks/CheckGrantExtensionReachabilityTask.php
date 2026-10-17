@@ -44,6 +44,10 @@ class CheckGrantExtensionReachabilityTask extends BuildTask
         $unreachable = $checker->check();
         $missing = $checker->checkMissingGrantExtension();
 
+        foreach ($checker->grantRootSummary() as $line) {
+            $output->writeln($line);
+        }
+
         if ($unreachable === [] && $missing === []) {
             $output->writeln('No unreachable grants and no classes missing ContentApiGrantExtension found.');
             $output->writeln("(Heuristic check — see GrantExtensionReachabilityChecker's docblock for its limits.)");

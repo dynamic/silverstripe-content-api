@@ -4,12 +4,11 @@ namespace Dynamic\ContentApi\Security;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
-use Psr\Log\LoggerInterface;
+use Dynamic\ContentApi\Logging\LogSink;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injectable;
-use SilverStripe\Core\Injector\Injector;
 
 /**
  * Environment gating for population-domain endpoints (batch, compositions,
@@ -54,7 +53,7 @@ class EnvironmentGate
         // adding it. Best-effort: a broken logger service must not replace
         // the ENV_FORBIDDEN response below with an unrelated 500.
         try {
-            Injector::inst()->get(LoggerInterface::class)->warning(sprintf(
+            LogSink::logger()->warning(sprintf(
                 'Content API population blocked in the "%s" environment (SS_CONTENT_API_ALLOW_POPULATE '
                     . 'not set). A clean dev/test rehearsal never exercises this gate, so passing rehearsals '
                     . 'give no warning before a real write hits it here.',

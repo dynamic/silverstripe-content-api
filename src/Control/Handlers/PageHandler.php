@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Control\Handlers;
 use Dynamic\ContentApi\Auth\AuthContext;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Publish\OwnedLinks;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\EnvironmentGate;
@@ -23,10 +24,12 @@ use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
 
 /**
- * Page-domain actions. M2 ships `POST pages/$ID/convert`
- * (`{"className": "BlockPage", "publish": "none|single|recursive"}`) — the
- * API version of AttachAmdAreasTask's Page→BlockPage `newClassInstance()`
- * conversion. Population-gated: CONTENT_API_POPULATE + environment.
+ * Page-domain actions: `POST pages/$ID/convert`
+ * (`{"className": "BlockPage", "publish": "none|single|recursive|subtree|owns"}`),
+ * the API version of a Page→BlockPage `newClassInstance()` conversion, and
+ * `POST pages/$ID/apply-template` (`{"templateId": n, "publish":
+ * "none|recursive"}`). Both population-gated: CONTENT_API_POPULATE +
+ * environment.
  *
  * Converting the site's home page is refused without `"force": true` — the
  * home page's area relation differs by type (ElementalHomePage) and a wrong
@@ -477,6 +480,7 @@ class PageHandler
                 throw ApiError::fromValidation($exception, 'Page conversion');
             }
 
+            OwnedLinks::singleton()->restampOwnerClass($converted);
             $published = $this->publisher->publish($converted, $publishMode, $context->member);
             $meta = ['operation' => 'converted'];
 

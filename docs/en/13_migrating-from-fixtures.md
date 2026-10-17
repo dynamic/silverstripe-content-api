@@ -81,7 +81,7 @@ Recommended transition:
 - **Never full-copy pages** — the API has no populate-style field-map copy; only sent
   fields change.
 - **Publishing** — elements need individual publishing; `publish: recursive` on a
-  composition does this for you. Single-record writes default to draft (`publish: none`),
+  composition does this for you. Batch operations default to draft (`publish: none`),
   so an invisible-content state is explicit, visible in every response's `stage` block.
 - **Color tokens on ORM writes** — the populate resolver only ran inside PopulateTask;
   the API resolves tokens on every write, and fails loudly when a token can't resolve.

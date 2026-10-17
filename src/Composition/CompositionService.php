@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Assets\AssetService;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
+use Dynamic\ContentApi\Publish\OwnedLinks;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
@@ -503,6 +504,7 @@ class CompositionService
         /** @var SiteTree $converted */
         $converted = $page->newClassInstance($targetClass);
         $converted->write();
+        OwnedLinks::singleton()->restampOwnerClass($converted);
 
         return $converted;
     }
@@ -816,9 +818,12 @@ class CompositionService
         }
 
         $this->applicator->applyFields($child, $fields);
+        // Read before anything else applies fields (#243).
+        $warnings = $this->applicator->getWarnings();
 
         try {
             $child->write();
+            $this->applicator->afterOwnerWrite($child);
         } catch (ValidationException $exception) {
             throw ApiError::fromValidation($exception, sprintf('Child "%s"', $externalId));
         }
@@ -831,7 +836,7 @@ class CompositionService
             'id' => (int) $child->ID,
             'status' => $operation,
             'record' => $child,
-        ];
+        ] + ($warnings !== [] ? ['warnings' => $warnings] : []);
     }
 
     /**

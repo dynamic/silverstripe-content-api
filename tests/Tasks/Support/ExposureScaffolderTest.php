@@ -8,6 +8,7 @@ use Dynamic\ContentApi\Tasks\Support\ExposureScaffolder;
 use Dynamic\ContentApi\Tests\Stub\ApiTestElement;
 use Dynamic\ContentApi\Write\WriteGuardExtension;
 use InvalidArgumentException;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Security\Member;
@@ -178,6 +179,33 @@ class ExposureScaffolderTest extends SapphireTest
         $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
 
         $this->assertStringNotContainsString('    - Password', $yaml);
+    }
+
+    /**
+     * #245: the external-id column, module-maintained fields and
+     * framework-maintained relations are never suggested as writable, and
+     * the output is deterministic.
+     */
+    public function testNeverIncludesManagedFieldsOrRelations(): void
+    {
+        // elemental's TopPage extensions aren't applied here; merge their
+        // fields so the exclusion has something to exclude.
+        Config::modify()->merge(ApiTestElement::class, 'has_one', ['TopPage' => SiteTree::class]);
+        Config::modify()->merge(ApiTestElement::class, 'db', ['TopPageLocale' => 'Varchar']);
+        $yaml = ExposureScaffolder::create()->generate([ApiTestElement::class]);
+
+        foreach (['FixtureIdentifier', 'TopPage', 'TopPageLocale'] as $field) {
+            $this->assertStringNotContainsString('    - ' . $field . "\n", $yaml);
+        }
+
+        foreach (['LinkTracking', 'FileTracking'] as $relation) {
+            $this->assertDoesNotMatchRegularExpression(
+                '/api_writable_relations: \[[^\]]*\b' . $relation . '\b/',
+                $yaml
+            );
+        }
+
+        $this->assertSame($yaml, ExposureScaffolder::create()->generate([ApiTestElement::class]));
     }
 
     /**

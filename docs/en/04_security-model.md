@@ -11,7 +11,7 @@ then (for writes) **field-level**. A request that passes all three still has to 
 | `CONTENT_API_ACCESS` | Every content API endpoint | Record-level `canView`/`canEdit`/`canDelete`/`canCreate` still applies on top |
 | `CONTENT_API_POPULATE` | Batch, compositions, asset uploads, page actions | Population-domain endpoints only |
 | `CONTENT_API_SCHEMA` | Schema introspection | Implicitly granted to anyone with `CONTENT_API_ACCESS` |
-| `VIEW_DRAFT_CONTENT` | Reading a record once its draft and live stages diverge | A core `silverstripe/versioned` permission, not module-specific — see [Service account permissions](#service-account-permissions) |
+| `VIEW_DRAFT_CONTENT` | Reading a record on draft once its draft and live stages diverge, or (for a page) once an ancestor's do | A core `silverstripe/versioned` permission, not module-specific — see [Service account permissions](#service-account-permissions) |
 
 ## Service account permissions
 
@@ -32,6 +32,13 @@ account that just wrote it** — `GET records/$Class/$ID` (draft is the default 
 `FORBIDDEN_RECORD` immediately after. A `_stage=live` read is unaffected — it bypasses this
 check entirely rather than passing it, since a live-stage read never invokes the non-live
 fallback in the first place.
+
+The veto also reaches a page through its ancestors. A `SiteTree` record with the default
+`CanViewType` of Inherit answers `canView()` with its parent's `canView()`, so once a parent has
+unpublished changes, a child whose own stages match is unreadable on draft too, and so is every
+page below it. The exception is a page whose own class the grant extension answers for (one that
+declares its own `api_access`/`content_api_access` including `read`): the extension's answer
+comes before the inherited check. An account that reads the draft stage of a page tree needs `VIEW_DRAFT_CONTENT`.
 
 **Grant `VIEW_DRAFT_CONTENT` alongside `CONTENT_API_ACCESS`** to any service account that reads
 back a `publish: "none"` write before publishing — the natural "write draft, read back to
@@ -85,13 +92,14 @@ holds.
 
 Two caveats worth knowing:
 
-- **The grant is per concrete class, not inherited via the record-level check either.** A project
+- **Without a [grant root](#grant-roots-opt-in), the grant is per concrete class, not inherited via
+  the record-level check either.** A project
   following the documented "`Image` inherits `File`'s `api_access`" convention gets `canCreate()`
   on an uploaded `Image` (checked against `File` itself), but a later `canEdit()`/`canDelete()` on
   that record checks `Image`'s own uninherited declaration — empty, if `Image` never declares its
   own — and falls through to `FILE_EDIT_ALL`, which a `CONTENT_API_ACCESS`-only account doesn't
   hold. Declare access on every concrete class a service account needs to write, not just the
-  ancestor it inherits HTTP exposure from.
+  ancestor it inherits HTTP exposure from, or name the ancestor in `grant_roots`.
 - **The uninherited check doesn't require the class to be registered in `ClassRegistry`'s exposure
   map.** `content_api_access` is module-specific, so only a project sets it deliberately; the
   legacy `api_access` key is one third-party code can self-declare for unrelated reasons, so a
@@ -108,7 +116,8 @@ other member and extension too, sitewide — including real CMS editors.
 **A draft-read 403 after applying this extension is not a missing grant** — see
 [Service account permissions](#service-account-permissions) above. `canView()` alone does not
 make a draft-only record readable: `Versioned::canViewVersioned()` independently vetoes once
-draft and live diverge, and that veto participates in the same `extendedCan()` minimum. `VIEW_DRAFT_CONTENT`
+draft and live diverge (on the record, or for a page of a class this extension doesn't answer
+for, on an ancestor), and that veto participates in the same `extendedCan()` minimum. `VIEW_DRAFT_CONTENT`
 is what satisfies it, and `SetupContentApiServiceAccount` already grants it alongside
 `CONTENT_API_ACCESS`. Don't widen this extension to work around that 403; check the account
 holds `VIEW_DRAFT_CONTENT` instead.
@@ -124,6 +133,36 @@ against a real SS5.2 install running `2.4.x-dev`: `Versioned` has no `canDelete(
 all there — only a deprecated `canArchive()` whose own docblock says to use `canDelete()` instead
 on the version branch `1` depends on). A class declaring only `delete` on branch `1` can archive
 both a draft-only record and an already-published one.
+
+### Grant roots (opt-in)
+
+Declaring `api_access` once on `SiteTree` or `BaseElement` exposes every subclass at the class
+gate but grants none of them at record level, because the extension reads each class's own
+declaration. A project that wants the record-level grant to follow the same inheritance can name
+the ancestors as grant roots:
+
+```yml
+Dynamic\ContentApi\Security\ContentApiGrantExtension:
+  grant_roots:
+    - SilverStripe\CMS\Model\SiteTree
+    - DNADesign\Elemental\Models\BaseElement
+  grant_exclude:
+    - App\Model\CheckoutPage
+```
+
+A class under a grant root that declares nothing itself is granted exactly the nearest
+ancestor's own declaration, unless it or an ancestor is in `grant_exclude`. A class's own
+declaration always wins, an explicit deny (`api_access: false`) included, and a deny on an
+intermediate ancestor stops the inheritance. Each level is read without extra config sources, so
+`api_access` contributed by an extension, and discovery's read-only default, never become a
+grant. With no roots (the default) nothing changes.
+
+`grant_exclude` ships with `ErrorPage`, `RedirectorPage`, `VirtualPage` and `UserDefinedForm`:
+the classes the original blanket grant leaked write and archive access to. Add commerce pages,
+forms and any other class that must not be service-account writable. Config arrays merge
+additively, so a project can add exclusions in YAML but can only remove a shipped one with
+`Config::modify()->set()` in `_config.php`. `CheckGrantExtensionReachability` lists the roots and
+exclusions in force and checks the inherited grants too.
 
 ### The `extendedCan()` contract this extension depends on
 
@@ -151,7 +190,9 @@ never be in the loop either way.
 visible `extendedCan()` call in its source. It's a reflection-based heuristic (reads the
 resolved method's source text for the literal string, doesn't execute anything) — see
 `Tasks\Support\GrantExtensionReachabilityChecker`'s own docblock for exactly what that can and
-can't catch (a call routed through an intermediate helper method won't be found, for instance).
+can't catch (a call routed through an intermediate helper method won't be found, for instance;
+a `parent::canX()` delegation, like `ElementalArea`'s, is followed up the chain when the class
+declares a verb `canX()` grants).
 Run it after applying `ContentApiGrantExtension` to a new class, and again after upgrading a
 third-party module that might have changed a `can*()` override.
 
@@ -322,8 +363,7 @@ exist yet as a real record. Hydration:
 ## Field-level gate: write policies
 
 `WriteApplicator::isFieldWritable()` is the single source of truth for field writability on
-**every** write surface — the module's native pipeline (batch, compositions, single-record
-update) and, via `WriteGuardExtension`, colymba's own `/api` write path.
+**every** write surface — the module's native pipeline (batch and compositions) and, via `WriteGuardExtension`, colymba's own `/api` write path.
 
 - **`guarded`** (global default `policy`): all db fields and has_one relations are writable
   except the `protected_fields` denylist (global + per-class `api_protected_fields`). has_many /
@@ -381,7 +421,7 @@ compositions when correctness matters more than colymba API compatibility:
   unlisted relations are stripped — the request still returns `200`. This matches the reference
   `ApiFieldGuardExtension` pattern and is a hook-layer constraint (colymba's deserializer has
   already applied the field by the time the guard can act).
-- **This module's own write pipeline** (batch/compositions/single-record writes): a disallowed
+- **This module's own write pipeline** (batch and compositions): a disallowed
   field **rejects the entire payload** with a structured `READONLY_FIELD`/`UNKNOWN_FIELD` error
   — nothing is applied. See [Write payloads](06_write-payloads.md).
 

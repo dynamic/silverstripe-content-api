@@ -297,6 +297,7 @@ class CompositionTest extends ContentApiTestCase
         $warnings = $body['data']['page']['warnings'] ?? [];
         $this->assertNotEmpty($warnings, 'the conflict must be surfaced, not resolved silently');
         $this->assertSame('areaRelation', $warnings[0]['field']);
+        $this->assertSame('PAYLOAD_INVALID', $warnings[0]['code']);
     }
 
     public function testCompositionIsIdempotent(): void
@@ -1541,6 +1542,29 @@ class CompositionTest extends ContentApiTestCase
 
         $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
         $this->assertSame(SiteTree::class, SiteTree::get()->byID($about->ID)->ClassName);
+    }
+
+    /**
+     * #243: a child write's warnings reach the response, like an element's.
+     */
+    public function testAChildWritesWarningsAreReported(): void
+    {
+        Config::modify()->set(ApiTestElementItem::class, 'api_unknown_fields', 'lenient');
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $this->blockPage()->ID]],
+            'elements' => [[
+                'class' => 'ApiTestElement',
+                'externalId' => 'warned',
+                'fields' => ['Title' => 'Warned'],
+                'children' => ['Items' => [['externalId' => 'w1', 'fields' => ['Title' => 'w1', 'Subtitel' => 'x']]]],
+            ]],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $child = $this->decode($response)['data']['elements'][0]['children'][0];
+        $this->assertSame('UNKNOWN_FIELD', $child['warnings'][0]['code']);
+        $this->assertSame('Subtitel', $child['warnings'][0]['field']);
     }
 
     /**

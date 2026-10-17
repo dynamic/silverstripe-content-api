@@ -23,7 +23,7 @@ SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit vendor/dynamic/silverstripe-content-api/te
 ```
 
 `SS_PHPUNIT_FLUSH=1` matters — PHPUnit's class manifest (`classmanifest_tests`) is a separate
-cache bucket from the one `dev/build flush=1` clears, and goes stale independently whenever a
+cache bucket from the one `sake db:build --flush` clears, and goes stale independently whenever a
 `TestOnly` stub class is added or changed. A `references nonexistent X in 'extensions'` failure
 for a stub class that loads fine elsewhere is almost always this, not a real autoload gap — run
 once with the flush and subsequent runs pass without it.

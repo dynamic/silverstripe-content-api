@@ -42,13 +42,13 @@ cd "$(dirname "$0")/.." || exit 1
 # they're deliberately left out — a broader `silverstripe/[a-z-]+": *"\^5`
 # pattern false-positives on `silverstripe/linkfield": "^5"`, which is
 # correct on this branch.
-matches=$(grep -rniE 'SilverStripe.{0,8}\^5|PHP.{0,8}\^8\.1|"php": *"\^8\.1|"silverstripe/(framework|cms)": *"\^5|"silverstripe/(versioned|asset-admin)": *"\^2|"colymba/silverstripe-restfulapi": *"\^5|dynamic/silverstripe-restfulapi|sake dev/tasks/' \
+matches=$(grep -rniE 'SilverStripe.{0,8}\^5|PHP.{0,8}\^8\.1|"php": *"\^8\.1|"silverstripe/(framework|cms)": *"\^5|"silverstripe/(versioned|asset-admin)": *"\^2|"colymba/silverstripe-restfulapi": *"\^5|dynamic/silverstripe-restfulapi|sake dev/tasks/|dev/build flush=1|sake dev/build' \
     README.md docs/ src/ tests/ composer.json phpstan.neon.dist)
 status=$?
 
 if [ "$status" -eq 0 ]; then
     echo "$matches" >&2
-    echo "doc-drift: found SS5-era requirement text or sake dev/tasks/ syntax on branch 2" >&2
+    echo "doc-drift: found SS5-era requirement text or sake dev/tasks/ / dev/build syntax on branch 2 (use sake tasks:... / sake db:build --flush)" >&2
     exit 1
 elif [ "$status" -ne 1 ]; then
     echo "doc-drift: grep itself failed (exit $status) — treating as a check failure, not a clean result" >&2

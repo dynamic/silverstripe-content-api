@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Registry;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Security\ContentApiGrantExtension;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
@@ -572,6 +573,58 @@ class ClassRegistry
         $own = $config->get($className, 'api_access', $flags);
 
         return $own === null ? [] : $this->parseAccess($own);
+    }
+
+    /**
+     * The verbs ContentApiGrantExtension grants a class at record level (#231).
+     *
+     * - A class with its own `content_api_access`/`api_access` value gets
+     *   exactly that (ownAccessVerbs()), an explicit falsy deny included.
+     * - Otherwise, a class under one of the extension's `grant_roots` and
+     *   under none of its `grant_exclude` classes gets the nearest
+     *   ancestor's own value: each level read uninherited and without extra
+     *   sources, as ownAccessVerbs() reads it, so access contributed by an
+     *   extension never grants, a deny on an intermediate ancestor stops the
+     *   walk, and discovery's read-only default (accessVerbs()'s fallback)
+     *   is never a grant.
+     * - Anything else gets nothing.
+     *
+     * @return string[]
+     */
+    public function grantVerbs(string $className): array
+    {
+        if ($this->hasOwnAccessValue($className)) {
+            return $this->ownAccessVerbs($className);
+        }
+
+        $under = fn (string $key) => array_filter(
+            (array) Config::inst()->get(ContentApiGrantExtension::class, $key),
+            fn ($root) => is_string($root) && is_a($className, $root, true)
+        ) !== [];
+
+        if (!$under('grant_roots') || $under('grant_exclude')) {
+            return [];
+        }
+
+        for ($ancestor = get_parent_class($className); $ancestor; $ancestor = get_parent_class($ancestor)) {
+            if ($this->hasOwnAccessValue($ancestor)) {
+                return $this->ownAccessVerbs($ancestor);
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Whether the class's own config (uninherited, without extra sources)
+     * sets either access key, a falsy deny included.
+     */
+    protected function hasOwnAccessValue(string $className): bool
+    {
+        $flags = Config::UNINHERITED | Config::EXCLUDE_EXTRA_SOURCES;
+
+        return Config::inst()->get($className, 'content_api_access', $flags) !== null
+            || Config::inst()->get($className, 'api_access', $flags) !== null;
     }
 
     /**

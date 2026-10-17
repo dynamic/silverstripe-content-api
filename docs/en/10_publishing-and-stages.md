@@ -19,7 +19,9 @@ collide with framework behavior outside this module's control.
 For unversioned classes, `_stage` is a no-op (`RecordsHandler::withStage()` short-circuits).
 
 **Reading the default draft stage once it diverges from live requires `VIEW_DRAFT_CONTENT`** —
-a core `silverstripe/versioned` permission this module doesn't grant on its own. A service
+a core `silverstripe/versioned` permission this module doesn't grant on its own. For a page,
+an ancestor diverging is enough (its `canView()` is inherited) unless the grant extension
+answers for the page's own class (one declaring its own `read` access). A service
 account with only `CONTENT_API_ACCESS` can write a draft-only record but then can't read it
 back until that permission is also granted. See
 [Security model](04_security-model.md#service-account-permissions).
@@ -34,7 +36,7 @@ there as "the canonical step after any go-live publish").
 
 Two independent checks, both against the same draft read:
 
-- **Root fields** — a configurable set (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/
+- **Root fields** — a configurable set (`ParityHandler.default_fields`, see [Configuration](02_configuration.md#parityhandler)) (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/
   `URLSegment`/`Sort` by default, filtered to whichever the class actually declares), compared
   draft vs live. The record not existing on live at all is reported as `liveExists: false` — a
   legitimate state (a placeholder, or a page never published), never treated as a failure by
@@ -205,6 +207,12 @@ way during a real IA restructure — see #71):
    published and publish it explicitly — this module has no generic mechanism for it, by design
    (a generic "publish every relation" pass could not distinguish an intentionally-draft related
    record from an accidentally-orphaned one).
+
+   The one exception is a has_one link (silverstripe/linkfield): the API writes it as part of
+   its owner, with Owner fields naming the owner, and every publish of the owner publishes the
+   links it owns and archives the ones a type change replaced. In a cascade an owned link answers
+   to its owner's class verb, not the `Link` class's. See
+   [Link payloads](06_write-payloads.md#link-payloads).
 
 ## `publishRecursive()` does not cascade to elements
 

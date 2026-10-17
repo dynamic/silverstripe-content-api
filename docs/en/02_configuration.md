@@ -34,7 +34,7 @@ surface only.
 | `models` | `[]` | Content-api-only short-ref → FQCN map. Merged **over** colymba's `DefaultQueryHandler.models` (this module's entries win per key on conflict) |
 | `discovery_roots` | `[]` | FQCNs (e.g. `BaseElement::class`, `SiteTree::class`) to auto-map every concrete subclass of, without a hand-written `models:` entry per class. Off by default — entirely opt-in |
 | `discovery_exclude` | `[]` | Additional FQCNs (and their subclasses) to skip during discovery, on top of the mandatory denylist (`Member`, `Group`, `Permission`, etc. — not configurable, can't be relaxed away) |
-| `discovery_write_policy` | `'off'\|'read'` | `'off'` | Verbs granted to a class reached **only** via discovery, carrying no `api_access` of its own. `'read'` grants read-only. There is no write-granting value — a discovered class's writable fields would have to be inferred, the same mistake `api_writable_fields` hoisting already caused once (#27); writes always require an explicit `api_writable_fields` on the class |
+| `discovery_write_policy` | `'off'` (or `'read'`) | Verbs granted to a class reached **only** via discovery, carrying no `api_access` of its own. `'read'` grants read-only. There is no write-granting value — a discovered class's writable fields would have to be inferred, the same mistake `api_writable_fields` hoisting already caused once (#27); writes always require an explicit `api_writable_fields` on the class |
 
 `ClassRegistry::VERBS` (not configurable, informational): `read`, `create`, `update`, `delete`,
 `action`. Colymba-style `api_access: 'GET,POST'` values are mapped `GET→read`, `POST→create`,
@@ -75,7 +75,7 @@ Set directly on each DataObject class you expose — not on the module. These ar
 | `api_writable_fields` | `string[]` | `[]` | Allowlist of client-writable db field / has_one relation names. **A non-empty array here puts the class into allowlist mode even under the `guarded` global policy** — declaring the allowlist is itself the opt-in, with no configuration that sets it and has it silently ignored |
 | `api_protected_fields` | `string[]` | `[]` | Per-class denylist, merged with the global `WriteApplicator.protected_fields`. Always wins over the allowlist. Restricts client-supplied fields only: the trusted internal-fields channel (a composition element's `ParentID`, and its default `Sort`) is not blocked by it, so listing `ParentID` here keeps it off every client surface without breaking compositions |
 | `api_writable_relations` | `string[]` | `[]` | Allowlist of writable has_many/many_many relation names (a separate gate from `api_writable_fields`, which only covers db fields and has_one) |
-| `api_unknown_fields` | `'strict'\|'lenient'` | unset (falls back to `WriteApplicator.unknown_fields`) | Per-class override: `strict` rejects an unrecognized payload key with `UNKNOWN_FIELD`; `lenient` warns and continues |
+| `api_unknown_fields` | `'strict'\|'lenient'` | unset (falls back to `WriteApplicator.unknown_fields`) | Per-class override: `strict` rejects an unrecognized payload key with `UNKNOWN_FIELD`; `lenient` ignores the key and adds an `UNKNOWN_FIELD` warning |
 | `api_fields` | `string[]` | unset (all fields serialized) | `RecordSerializer` output whitelist. Entries may be db fields, relation names, **or `getFoo()` getter-backed properties** (getters are only honored when `api_fields` is explicitly set) |
 | `api_computed_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields recomputed by the model itself (e.g. an `onBeforeWrite` trap) — a write lands, then the model overwrites it in the same request. Surfaced as `computed: true` (+ optional `note`) in `SchemaService::classSchema()`. **Advisory only** — does not affect `writable`; pair with `api_protected_fields` to also reject the write |
 | `api_import_owned_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields owned by an external import/feed that will overwrite a client's write on its next sync. Surfaced as `importOwned: true` (+ optional `note`). Same advisory-only caveat as `api_computed_fields` |
@@ -102,7 +102,7 @@ only fires outside `population_enabled_environments` — so a clean, repeated lo
 no signal whatsoever that a real target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. The gate
 also logs a warning server-side (not just the `403 ENV_FORBIDDEN` response) the moment it blocks
 a call, specifically so this is visible in a deploy/ops log even when nothing is watching the API
-response itself. The response itself also carries structured `details` (`environment`, `envVar`,
+response itself, once a log handler is attached (see [Logging](#logging)). The response itself also carries structured `details` (`environment`, `envVar`,
 `populationEnabledEnvironments`) so a caller that isn't a human reading the message text — an
 agent driving this API on someone's behalf — can tell this apart from an ACL failure without
 being able to read the site's own `.env` (#126).
@@ -119,6 +119,33 @@ module default, use `Config::modify()->set(EnvironmentGate::class, 'population_e
 in `_config.php` — a hard set, not a YAML merge. Applies to any array-typed config knob this module
 exposes for security-relevant gating, not just this one.
 
+## Logging
+
+The population-gate warning and the request log go to `Psr\Log\LoggerInterface`. The framework
+registers that as a Monolog logger with **no handler**, which drops every record, so nothing is
+written until a project attaches one. Attach a handler at `info` level (the request log is
+`info`; the gate warning is `warning`):
+
+```yaml
+---
+Name: app-logging
+---
+SilverStripe\Core\Injector\Injector:
+  Psr\Log\LoggerInterface:
+    calls:
+      ContentApiLogHandler: [ pushHandler, [ '%$ContentApiLogHandler' ] ]
+  ContentApiLogHandler:
+    class: Monolog\Handler\StreamHandler
+    constructor:
+      - '/var/log/silverstripe/content-api.log'
+      - 'info'
+```
+
+Use an absolute, writable path: a relative one resolves against the current directory, which
+differs between web requests (`public/`) and `sake`.
+
+When the logger has no handler, the module says so once per process through PHP's `error_log()`.
+
 ## RequestLogger
 
 `Dynamic\ContentApi\Logging\RequestLogger`
@@ -128,7 +155,8 @@ exposes for security-relevant gating, not just this one.
 | `enabled_environments` | `[]` | Environments where an opt-in structured server-side request log is emitted (#207) |
 
 Off everywhere by default — this is a write-heavy content API on client sites, and logging every
-request isn't a tax any project asked for. One `info`-level entry per `content-api/v1` request
+request isn't a tax any project asked for. Needs a log handler (see [Logging](#logging)). One
+`info`-level entry per `content-api/v1` request
 (both success and error responses), covering the endpoint, HTTP method, `ClassRef`/action route
 params, HTTP status, machine-readable error code (if any), duration, response byte size, and the
 authenticated member's ID (never email — see [Security model](04_security-model.md)).
@@ -204,6 +232,49 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 |---|---|---|
 | `field_tokens` | `[]` | Field-name → token-DSL hint surfaced in `GET schema/$ClassRef` (the essentials integration sets `BackgroundColor: palette`, `ButtonColor: button` — see below) |
 
+## AssetService
+
+`Dynamic\ContentApi\Assets\AssetService`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `verify_content_type` | `false` | When on, an upload whose extension maps to `Image` must sniff as `image/*`, or it is `422 VALIDATION_FAILED`. Does nothing when PHP's `fileinfo` extension (`finfo_buffer()`) is missing. See [Assets](09_assets.md) |
+
+## FingerprintService
+
+`Dynamic\ContentApi\Verify\FingerprintService`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `related_classes` | `[]` | Non-`SiteTree` classes to fingerprint alongside pages, each keyed to its owning page's direct FK column, e.g. `HeroSlide: PageID`. The only source of `GET fingerprint`'s `related` sections. See [Verification](16_verification.md#fingerprint) |
+| `max_path_depth` | `50` | Cycle guard on the `ParentID` walk that builds each page's path |
+
+## OwnedTreeWalker
+
+`Dynamic\ContentApi\Verify\OwnedTreeWalker`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `max_depth` | `25` | Default depth bound on the owned-tree walks: the `$owns` walk (`owns` publish/unpublish, `recursive` checks) and the duplicate walks apply-template uses. Parity's `depth` defaults to it; an explicit `?depth=N` is used as given. Separate from the cycle guard |
+
+## ParityHandler
+
+`Dynamic\ContentApi\Control\Handlers\ParityHandler`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `default_fields` | `['Title', 'ParentID', 'ClassName', 'ShowInMenus', 'URLSegment', 'Sort']` | The fields `GET records/$ClassRef/$ID/parity` compares, filtered per class to the ones it declares |
+
+## ExposureScaffolder
+
+`Dynamic\ContentApi\Tasks\Support\ExposureScaffolder`, behind the `GenerateContentApiExposure`
+task.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `excluded_fields` | `HasBrokenFile`, `HasBrokenLink`, `ReportClass`, `TopPage`, `TopPageLocale` | Fields and has_ones never suggested in `api_writable_fields`, on top of `WriteApplicator.protected_fields` and the external-id column (`ExternalIdResolver.external_id_field`), which is set through `externalId` |
+| `excluded_relations` | `BackLinks`, `EditorGroups`, `EditorMembers`, `FileTracking`, `LinkTracking`, `ViewerGroups`, `ViewerMembers`, `VirtualPages` | Framework-maintained relations never suggested in `api_writable_relations` |
+
 ## ColorTokenTransformer
 
 `Dynamic\ContentApi\Write\Transformers\ColorTokenTransformer`
@@ -214,6 +285,10 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 
 Registered only when `dynamic/silverstripe-essentials-tools`'s
 `ColorConfigurationProvider` class exists (`_config/essentials.yml`, `Only: classexists`).
+
+`color_token_resolver_class` here, and `PageHandler.template_class` and
+`template_applicator_class`, are internal test hooks naming the integration classes, not
+extension points.
 
 ## LinkTransformer
 
@@ -233,9 +308,10 @@ the two merge to one column on a site using both.
 
 ## ContentApiGrantExtension
 
-`Dynamic\ContentApi\Security\ContentApiGrantExtension`. Not configurable — its opt-in is the
-class's own `api_access`/`content_api_access` declaration, not a separate config key. Apply it
-per class, like `ExternalIdentifierExtension` and `WriteGuardExtension`:
+`Dynamic\ContentApi\Security\ContentApiGrantExtension`. Its opt-in is the class's own
+`api_access`/`content_api_access` declaration, or, for a class that declares none, a
+`grant_roots` entry above it. Apply it per class, like
+`ExternalIdentifierExtension` and `WriteGuardExtension`:
 
 ```yml
 SilverStripe\CMS\Model\SiteTree:
@@ -248,6 +324,11 @@ Grants record-level `canView()`/`canEdit()`/`canCreate()`/`canDelete()` to any M
 `content_api_access`, and only for the specific verbs that declaration lists — see
 [Grant extension](04_security-model.md#grant-extension) for the full detail, including why the
 uninherited scoping is load-bearing and not optional.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `grant_roots` | `[]` | Ancestors whose undeclared subclasses are granted the verbs they inherit. See [Grant roots](04_security-model.md#grant-roots-opt-in) |
+| `grant_exclude` | `ErrorPage`, `RedirectorPage`, `VirtualPage`, `UserDefinedForm` | Classes (and subclasses) under a root that never get the inherited grant. Additive in YAML |
 
 ## Permission codes
 

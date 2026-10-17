@@ -2,17 +2,24 @@
 
 namespace Dynamic\ContentApi\Tests\Tasks\Support;
 
+use Dynamic\ContentApi\Security\ContentApiGrantExtension;
 use Dynamic\ContentApi\Tasks\Support\GrantExtensionReachabilityChecker;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantAbstractObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantCrossDelegatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantExtraSourceObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionReadOnlyObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionSubObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantMissingExtensionWritableFieldsOnlyObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantParentDelegatingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantReachableObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableInheritingObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableObject;
+use Dynamic\ContentApi\Tests\Stub\ApiTestGrantUnreachableSubObject;
 use ReflectionMethod;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
+use SilverStripe\ORM\DataObject;
 
 class GrantExtensionReachabilityCheckerTest extends SapphireTest
 {
@@ -24,6 +31,9 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
         ApiTestGrantMissingExtensionReadOnlyObject::class,
         ApiTestGrantMissingExtensionWritableFieldsOnlyObject::class,
         ApiTestGrantMissingExtensionSubObject::class,
+        ApiTestGrantParentDelegatingObject::class,
+        ApiTestGrantCrossDelegatingObject::class,
+        ApiTestGrantUnreachableSubObject::class,
     ];
 
     public function testFlagsAClassWhoseCanEditOverrideNeverCallsExtendedCan(): void
@@ -44,6 +54,59 @@ class GrantExtensionReachabilityCheckerTest extends SapphireTest
 
         $finding = reset($matches);
         $this->assertSame(ApiTestGrantUnreachableObject::class, $finding['declaringClass']);
+    }
+
+    /**
+     * #245: a can*() that delegates to parent::can*() reaches extendedCan()
+     * when the parent's does (DataObject's), as ElementalArea's do; one whose
+     * parent never does is still flagged.
+     */
+    public function testFollowsParentDelegation(): void
+    {
+        $flagged = array_column(GrantExtensionReachabilityChecker::create()->check(), 'class');
+
+        $this->assertNotContains(ApiTestGrantParentDelegatingObject::class, $flagged);
+        $this->assertContains(ApiTestGrantUnreachableSubObject::class, $flagged);
+        $this->assertContains(ApiTestGrantUnreachableObject::class, $flagged);
+        $this->assertContains(
+            ApiTestGrantCrossDelegatingObject::class,
+            $flagged,
+            'canView() via parent::canEdit() never consults a read-only grant'
+        );
+    }
+
+    /**
+     * #231: the report names configured grant roots and exclusions, and
+     * says nothing about them when none is configured.
+     */
+    public function testReportsGrantRootsAndExclusions(): void
+    {
+        $checker = GrantExtensionReachabilityChecker::create();
+        $this->assertSame([], $checker->grantRootSummary());
+
+        Config::modify()->set(ContentApiGrantExtension::class, 'grant_roots', [DataObject::class]);
+        $summary = implode("\n", $checker->grantRootSummary());
+
+        $this->assertStringContainsString(DataObject::class, $summary);
+        $this->assertStringContainsString('ErrorPage', $summary);
+        $this->assertStringContainsString('Warning: DataObject is a grant root', $summary);
+    }
+
+    /**
+     * #231: under a grant root, check() examines an undeclared subclass the
+     * root grants, so its unreachable inherited canEdit() is reported.
+     */
+    public function testChecksInheritedGrantsUnderARoot(): void
+    {
+        $flagged = fn () => array_column(GrantExtensionReachabilityChecker::create()->check(), 'class');
+        $this->assertNotContains(ApiTestGrantUnreachableInheritingObject::class, $flagged());
+
+        Config::modify()->set(
+            ContentApiGrantExtension::class,
+            'grant_roots',
+            [ApiTestGrantUnreachableObject::class]
+        );
+        $this->assertContains(ApiTestGrantUnreachableInheritingObject::class, $flagged());
     }
 
     /**

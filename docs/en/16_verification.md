@@ -31,7 +31,8 @@ deterministic, path-keyed snapshot of the site's content via
   the whole design is "enumerate the full draft superset, then mark each row live-or-not"
   separately, so a query that silently narrowed to Live-only rows would make every draft-only page
   vanish from the snapshot entirely, not just report it as not-live.
-- **`related`** sections are project-configured (`FingerprintService.related_classes`, e.g.
+- **`related`** sections are project-configured (`FingerprintService.related_classes`, see
+  [Configuration](02_configuration.md#fingerprintservice), e.g.
   `'HeroSlide' => 'PageID'` for a hero-image relation keyed by its owning page's direct FK column)
   — a single direct-FK hop, not a multi-level relation walk. A related record whose owner id
   doesn't resolve to a known page is counted in `unresolved`, never individually identified by a
@@ -48,14 +49,15 @@ deterministic, path-keyed snapshot of the site's content via
   other. `violations` computes exactly that check, walking each candidate's full ancestor chain
   (not just its immediate parent), so a live related record under a live owner page whose *own*
   parent is draft-only is caught too. Duplicate entries describing the same underlying problem
-  (several related records sharing one blocked owner page) collapse to one.
+  (several related records of one class sharing one blocked owner page) collapse to one; related
+records of two classes under the same owner give one entry per class.
 - **Class- and record-level ACL apply per row**, the same as `GET records/$ClassRef` — checked
   against each row's own ACTUAL class (a `related` class is instantiated per its true persisted
   subclass, same as `pages`), not just the class configured in `related_classes`/exposed at the
   ref level — an explicit per-subclass deny is never overridden by a broader ancestor's exposure.
   A class not exposed to the content API at all (site config) is reported in `meta.skipped`; a
-  class that IS exposed but a *specific row* this caller can't view (a draft-only page without
-  `VIEW_DRAFT_CONTENT`, for instance) is simply absent from `pages`/`related`/`violations`, the
+  class that IS exposed but a *specific row* this caller can't view (a draft-only page, or one
+  under a draft-changed parent, without `VIEW_DRAFT_CONTENT`, for instance) is simply absent from `pages`/`related`/`violations`, the
   same way `RecordsHandler::readList()` filters a list. `skipped` itself is not per-caller — it
   names classes unreadable by anyone, not by "this token specifically" — the row-level omissions
   are where per-caller variation actually shows up. A related record's `ownerPath` is not itself
@@ -65,9 +67,14 @@ deterministic, path-keyed snapshot of the site's content via
   section's row count; for `related` it also includes records this caller can see but whose owner
   couldn't be resolved (reported separately via `unresolved`), so `totals.draft` there can exceed
   `records.length`.
-- **Determinism is the whole point.** Every collection is sorted (by path, or by owner path then
-  external id for `related` rows sharing one owner); ids are excluded from `data` unless
-  `includeIds=true`.
+- **Determinism is the whole point.** Every collection is sorted: `pages` by path; `related`
+  rows by owner path, external id, class and `live` (and `id` under `includeIds`), so rows that
+  tie on owner and external id still have one order. Every row, `related` ones included,
+  reports its own class, and `externalId` comes from the configured
+  `ExternalIdResolver.external_id_field`. Ids are excluded from `data` unless `includeIds=true`
+  (`1`/`0`/`true`/`false`, any case; anything else is `400 PAYLOAD_INVALID`).
+- Visibility is decided on the draft stage, whatever the request's own stage, the same way a
+  draft `GET records` read decides it.
 
 `classes=` restricts which SECTIONS appear in the *response* (`pages`, and each `related` ref) —
 narrowing it to a `related` ref without `pages` still resolves owner paths through the same

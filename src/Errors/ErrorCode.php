@@ -33,6 +33,9 @@ enum ErrorCode: string
     case TOKEN_RESOLUTION_FAILED = 'TOKEN_RESOLUTION_FAILED';
     case EXTERNAL_ID_UNSUPPORTED = 'EXTERNAL_ID_UNSUPPORTED';
     case FEATURE_UNAVAILABLE = 'FEATURE_UNAVAILABLE';
+    // Reserved, never raised: a wrong verb gets a non-JSON 404 (the site's
+    // error page) outside the envelope (#243). Kept so project code
+    // referencing it doesn't break.
     case METHOD_NOT_ALLOWED = 'METHOD_NOT_ALLOWED';
     case SERVER_ERROR = 'SERVER_ERROR';
     case ROLLBACK_UNVERIFIED = 'ROLLBACK_UNVERIFIED';
