@@ -759,7 +759,10 @@ class PublishOrchestrator
             return DataObject::get_by_id($record->baseClass(), (int) $record->ID);
         });
 
-        if ($live && $live->ClassName !== $record->ClassName) {
+        // Versioned re-reads the live row through the draft row's class and
+        // its subclasses, so only a live row outside that tree is missed
+        // (a draft converted to an ancestor still unpublishes correctly).
+        if ($live && !is_a($live, get_class($record))) {
             throw new ApiError(
                 ErrorCode::STAGE_CLASS_MISMATCH,
                 sprintf(

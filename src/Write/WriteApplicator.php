@@ -570,7 +570,7 @@ class WriteApplicator
                 $resolved[] = $this->resolveRelationItem($relationClass, $name, $item);
             }
 
-            $this->assertExtraFieldsKnown($className, $name, $isHasMany, $resolved);
+            $resolved = $this->assertExtraFieldsKnown($className, $name, $isHasMany, $resolved);
 
             $existing = $mode === 'set' && $isHasMany ? iterator_to_array($record->{$name}()) : [];
 
@@ -634,11 +634,19 @@ class WriteApplicator
      * has_many stores none. Follows `api_unknown_fields` like `fields`:
      * strict rejects with UNKNOWN_FIELD, otherwise a warning.
      *
+     * Returns `$resolved` with unknown keys removed (lenient mode warns and
+     * then drops them, so they never reach the list's add()).
+     *
      * @param array<int, array{0: DataObject, 1: array<string, mixed>}> $resolved
+     * @return array<int, array{0: DataObject, 1: array<string, mixed>}>
      * @throws ApiError UNKNOWN_FIELD
      */
-    private function assertExtraFieldsKnown(string $className, string $relation, bool $isHasMany, array $resolved): void
-    {
+    private function assertExtraFieldsKnown(
+        string $className,
+        string $relation,
+        bool $isHasMany,
+        array $resolved
+    ): array {
         $known = [];
 
         if (!$isHasMany) {
@@ -647,7 +655,7 @@ class WriteApplicator
             $through = $component['join'] ?? null;
 
             $known = $through && class_exists($through) && is_subclass_of($through, DataObject::class)
-                ? array_keys($schema->databaseFields($through))
+                ? $this->throughExtraColumns($through)
                 : array_keys((array) $schema->manyManyExtraFieldsForComponent($className, $relation));
         }
 
@@ -666,7 +674,7 @@ class WriteApplicator
         }
 
         if ($problems === []) {
-            return;
+            return $resolved;
         }
 
         if ($this->unknownFieldMode($className) === 'strict') {
@@ -678,6 +686,32 @@ class WriteApplicator
         }
 
         array_push($this->warnings, ...$problems);
+
+        return array_map(
+            fn (array $entry) => [$entry[0], array_intersect_key($entry[1], array_flip($known))],
+            $resolved
+        );
+    }
+
+    /**
+     * The columns a through relation's `extraFields` may set: the join
+     * class's own db fields, minus its identity and bookkeeping columns and
+     * every has_one column (#239). Allowing the join's foreign keys or ID
+     * would let a client re-point a join row at a record it was never
+     * authorized against.
+     *
+     * @return string[]
+     */
+    private function throughExtraColumns(string $joinClass): array
+    {
+        $schema = DataObject::getSchema();
+        $excluded = ['ID', 'ClassName', 'Created', 'LastEdited', 'Version'];
+
+        foreach (array_keys((array) DataObject::singleton($joinClass)->hasOne()) as $relation) {
+            array_push($excluded, $relation . 'ID', $relation . 'Class', $relation . 'Relation');
+        }
+
+        return array_values(array_diff(array_keys($schema->databaseFields($joinClass)), $excluded));
     }
 
     /**

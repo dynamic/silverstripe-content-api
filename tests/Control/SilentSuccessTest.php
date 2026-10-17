@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
@@ -162,5 +163,51 @@ class SilentSuccessTest extends ContentApiTestCase
         $result = $body['data']['results'][0];
         $this->assertSame('updated', $result['status']);
         $this->assertSame('Tags.extraFields.SortOrdr', $result['warnings'][0]['field']);
+    }
+
+    /**
+     * A through relation's extraFields can't set the join row's own keys:
+     * that would re-point the join at another record.
+     */
+    public function testAThroughJoinsForeignKeysAreNotExtraFields(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_writable_relations', ['ThroughTags']);
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+        $other = $this->objFromFixture(ApiTestObject::class, 'two');
+        $tag = $this->objFromFixture(ApiTestTag::class, 'tagOne');
+
+        foreach (['OwnerID', 'TagID', 'ID'] as $key) {
+            $body = $this->decode($this->apiPost('batch', ['operations' => [[
+                'op' => 'update',
+                'class' => 'ApiTest',
+                'id' => (int) $record->ID,
+                'relations' => ['ThroughTags' => ['mode' => 'add', 'items' => [
+                    ['id' => (int) $tag->ID, 'extraFields' => [$key => (int) $other->ID]],
+                ]]],
+            ]]], $this->adminToken));
+
+            $this->assertSame('UNKNOWN_FIELD', $body['data']['results'][0]['error']['code'], $key);
+        }
+
+        $this->assertSame(0, $other->ThroughTags()->count());
+    }
+
+    /**
+     * A draft converted to an ANCESTOR class still unpublishes: Versioned
+     * finds the live row through the ancestor's subclass tree.
+     */
+    public function testUnpublishingADraftConvertedToAnAncestorWorks(): void
+    {
+        $page = ApiTestPage::create(['Title' => 'Converted to ancestor']);
+        $page->write();
+        $page->publishSingle();
+
+        Config::modify()->merge(ClassRegistry::class, 'models', ['SiteTreeRef' => SiteTree::class]);
+        $response = $this->apiPost("pages/{$page->ID}/convert", ['className' => 'SiteTreeRef'], $this->adminToken);
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $response = $this->apiPost("records/SiteTreeRef/{$page->ID}/unpublish", [], $this->adminToken);
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertNull($this->liveRow((int) $page->ID));
     }
 }
