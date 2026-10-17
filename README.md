@@ -43,11 +43,13 @@ FEATURE_UNAVAILABLE` when absent): `dnadesign/silverstripe-elemental` (compositi
 The colymba dependency is consumed from `dynamic/silverstripe-restfulapi`'s tagged `5.0.0` release
 (a package name unchanged from upstream, so it satisfies the same `colymba/silverstripe-restfulapi`
 constraint everywhere), so your **project root** composer.json must add the VCS entry (composer
-ignores a dependency's own `repositories`):
+ignores a dependency's own `repositories`). The module itself is not on Packagist, so it needs one
+too:
 
 ```json
 "repositories": [
-    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-restfulapi" }
+    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-restfulapi" },
+    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-content-api" }
 ]
 ```
 

@@ -26,11 +26,13 @@ Optional integrations are feature-gated at runtime: an endpoint that needs one a
 The colymba dependency is consumed from `dynamic/silverstripe-restfulapi`'s tagged `5.0.0` release
 (same package name as upstream, so it satisfies the `colymba/silverstripe-restfulapi` constraint
 everywhere), so your **project root** `composer.json` must add the VCS entry (Composer does not
-inherit a dependency's own `repositories` block):
+inherit a dependency's own `repositories` block). The module itself is not on Packagist, so it
+needs a VCS entry too:
 
 ```json
 "repositories": [
-    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-restfulapi" }
+    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-restfulapi" },
+    { "type": "vcs", "url": "https://github.com/dynamic/silverstripe-content-api" }
 ]
 ```
 

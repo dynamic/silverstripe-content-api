@@ -102,7 +102,7 @@ only fires outside `population_enabled_environments` — so a clean, repeated lo
 no signal whatsoever that a real target will need `SS_CONTENT_API_ALLOW_POPULATE=1`. The gate
 also logs a warning server-side (not just the `403 ENV_FORBIDDEN` response) the moment it blocks
 a call, specifically so this is visible in a deploy/ops log even when nothing is watching the API
-response itself. The response itself also carries structured `details` (`environment`, `envVar`,
+response itself, once a log handler is attached (see [Logging](#logging)). The response itself also carries structured `details` (`environment`, `envVar`,
 `populationEnabledEnvironments`) so a caller that isn't a human reading the message text — an
 agent driving this API on someone's behalf — can tell this apart from an ACL failure without
 being able to read the site's own `.env` (#126).
@@ -119,6 +119,33 @@ module default, use `Config::modify()->set(EnvironmentGate::class, 'population_e
 in `_config.php` — a hard set, not a YAML merge. Applies to any array-typed config knob this module
 exposes for security-relevant gating, not just this one.
 
+## Logging
+
+The population-gate warning and the request log go to `Psr\Log\LoggerInterface`. The framework
+registers that as a Monolog logger with **no handler**, which drops every record, so nothing is
+written until a project attaches one. Attach a handler at `info` level (the request log is
+`info`; the gate warning is `warning`):
+
+```yaml
+---
+Name: app-logging
+---
+SilverStripe\Core\Injector\Injector:
+  Psr\Log\LoggerInterface:
+    calls:
+      ContentApiLogHandler: [ pushHandler, [ '%$ContentApiLogHandler' ] ]
+  ContentApiLogHandler:
+    class: Monolog\Handler\StreamHandler
+    constructor:
+      - '/var/log/silverstripe/content-api.log'
+      - 'info'
+```
+
+Use an absolute, writable path: a relative one resolves against the current directory, which
+differs between web requests (`public/`) and `sake`.
+
+When the logger has no handler, the module says so once per process through PHP's `error_log()`.
+
 ## RequestLogger
 
 `Dynamic\ContentApi\Logging\RequestLogger`
@@ -128,7 +155,8 @@ exposes for security-relevant gating, not just this one.
 | `enabled_environments` | `[]` | Environments where an opt-in structured server-side request log is emitted (#207) |
 
 Off everywhere by default — this is a write-heavy content API on client sites, and logging every
-request isn't a tax any project asked for. One `info`-level entry per `content-api/v1` request
+request isn't a tax any project asked for. Needs a log handler (see [Logging](#logging)). One
+`info`-level entry per `content-api/v1` request
 (both success and error responses), covering the endpoint, HTTP method, `ClassRef`/action route
 params, HTTP status, machine-readable error code (if any), duration, response byte size, and the
 authenticated member's ID (never email — see [Security model](04_security-model.md)).
@@ -236,6 +264,16 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 | Key | Default | Purpose |
 |---|---|---|
 | `default_fields` | `['Title', 'ParentID', 'ClassName', 'ShowInMenus', 'URLSegment', 'Sort']` | The fields `GET records/$ClassRef/$ID/parity` compares, filtered per class to the ones it declares |
+
+## ExposureScaffolder
+
+`Dynamic\ContentApi\Tasks\Support\ExposureScaffolder`, behind the `GenerateContentApiExposure`
+task.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `excluded_fields` | `HasBrokenFile`, `HasBrokenLink`, `ReportClass`, `TopPage`, `TopPageLocale` | Fields and has_ones never suggested in `api_writable_fields`, on top of `WriteApplicator.protected_fields` and the external-id column (`ExternalIdResolver.external_id_field`), which is set through `externalId` |
+| `excluded_relations` | `BackLinks`, `EditorGroups`, `EditorMembers`, `FileTracking`, `LinkTracking`, `ViewerGroups`, `ViewerMembers`, `VirtualPages` | Framework-maintained relations never suggested in `api_writable_relations` |
 
 ## ColorTokenTransformer
 
