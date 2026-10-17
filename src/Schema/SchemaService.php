@@ -2,6 +2,8 @@
 
 namespace Dynamic\ContentApi\Schema;
 
+use Dynamic\ContentApi\Errors\ApiError;
+use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\EnvironmentGate;
@@ -114,6 +116,15 @@ class SchemaService
     public function classSchema(string $classRef): array
     {
         $className = $this->registry->resolve($classRef);
+
+        // A mapped class with no verbs is refused here like on the records
+        // routes, rather than its whole field inventory being served (#236).
+        if ($this->registry->accessVerbs($className) === []) {
+            throw new ApiError(
+                ErrorCode::FORBIDDEN_CLASS,
+                sprintf('Class "%s" is not exposed via the content API.', $className)
+            );
+        }
         $singleton = DataObject::singleton($className);
         $schema = DataObject::getSchema();
         $tokens = (array) static::config()->get('field_tokens');

@@ -965,11 +965,11 @@ class WriteApplicator
 
     /**
      * The sanitiser for `html_editor_config`, refused if that config can't
-     * do the job. An unknown or emptied identifier fails silently in the
-     * framework, in opposite directions: SS5 creates an empty config whose
-     * sanitiser strips nothing (script stored raw), SS6 one that unwraps
-     * every element (content lost). A probe through the sanitiser catches
-     * both, so a misconfiguration refuses the write instead.
+     * do the job. A config with no element rules fails silently in the
+     * framework: on SS5 an unknown identifier gets an empty config whose
+     * sanitiser strips nothing (script stored raw), and an emptied rule set
+     * can unwrap every element (content lost). A probe through the sanitiser
+     * catches both, so a misconfiguration refuses the write instead.
      *
      * @throws ApiError SERVER_ERROR
      */

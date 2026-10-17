@@ -94,6 +94,10 @@ class ParityHandler
 
         $draftRecord = $this->withStage($className, 'draft', function () use ($className, $idParam, $context) {
             $record = $this->reader->fetchRecord($className, $idParam);
+            // The URL's class gate inherits, and the row loads polymorphically,
+            // so a subclass that explicitly denies (or narrows) its ancestor's
+            // verbs is checked against its own class too (#236).
+            $this->policy->checkClassAccess(get_class($record), 'read', $context->member);
             $this->policy->checkRecordAccess($record, 'read', $context->member);
 
             return $record;

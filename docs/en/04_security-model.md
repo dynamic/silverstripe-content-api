@@ -167,13 +167,17 @@ Two things about this gate are easy to assume and both are wrong:
   Declaring `content_api_access: 'GET,POST,PUT,DELETE,action'` on `Page` exposes every `Page`
   subclass in the project — `ErrorPage`, `RedirectorPage`, `UserDefinedForm`, commerce page
   types — to that same verb list, whether or not any of them appear in `content-api.yml`.
-- **It is not checked against "the record's concrete class" in the sense of narrowing to it.**
-  `RecordsHandler::fetchRecord()` resolves a record via `DataObject::get_by_id($resolvedClass,
-  $id)`, which returns whatever concrete class that row's `ClassName` actually is — so a
-  subclass is reachable under any mapped *ancestor* ref (`records/Page/$id`, not just
-  `records/ErrorPage/$id`). The class gate is evaluated against that concrete class, which is
-  accurate, but because the gate inherits (previous point), it doesn't narrow anything for an
-  undeclared subclass — it just answers the question the same way its declaring ancestor would.
+- **It only narrows a subclass that declares its own verbs.** `RecordsHandler::fetchRecord()`
+  resolves a record via `DataObject::get_by_id($resolvedClass, $id)`, which returns whatever
+  concrete class that row's `ClassName` actually is — so a subclass is reachable under any
+  mapped *ancestor* ref (`records/Page/$id`, not just `records/ErrorPage/$id`). Every read, list
+  row, stage action, parity check and upsert-to-existing checks that concrete class too, so a
+  subclass that explicitly denies (`content_api_access: false`) or narrows its ancestor's verbs
+  stays denied through the ancestor's ref, and is left out of the ancestor's list and its
+  `meta.total`. An undeclared subclass inherits (previous point), so the check answers the same
+  way its declaring ancestor would. Asset endpoints resolve the same way: the nearest class in
+  the asset's ancestry that declares access (an explicitly denied `Image` stays denied even
+  when `File` is granted).
 
 The practical consequence: the class-level gate alone never narrows a write to only the classes
 a project listed. The record-level `can*()` answer — your model's own permission logic, or the

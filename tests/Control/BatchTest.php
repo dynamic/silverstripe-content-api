@@ -2617,10 +2617,12 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
-     * An editor config with no element rules would sanitise nothing (SS5)
-     * or everything (SS6); the write is refused instead.
+     * An editor config with no usable element rules must never let script
+     * through. SS5 builds an empty config for an unknown identifier (so the
+     * write is refused); SS6 builds one with the default rules (so the value
+     * is sanitised). Either way nothing raw lands.
      */
-    public function testAMisconfiguredEditorConfigRefusesTheWrite(): void
+    public function testAnUnknownEditorConfigNeverStoresScript(): void
     {
         Config::modify()->set(WriteApplicator::class, 'html_editor_config', 'no-such-editor-config');
         $record = $this->objFromFixture(ApiTestObject::class, 'one');
@@ -2629,10 +2631,15 @@ class BatchTest extends ContentApiTestCase
             'op' => 'update',
             'class' => 'ApiTest',
             'id' => (int) $record->ID,
-            'fields' => ['Body' => '<script>alert(1)</script>'],
+            'fields' => ['Body' => '<script>alert(1)</script><p>ok</p>'],
         ]]], $this->adminToken));
 
-        $this->assertSame('SERVER_ERROR', $body['data']['results'][0]['error']['code']);
+        $result = $body['data']['results'][0];
+
+        if ($result['status'] === 'error') {
+            $this->assertSame('SERVER_ERROR', $result['error']['code']);
+        }
+
         $this->assertStringNotContainsString(
             '<script',
             (string) ApiTestObject::get()->byID($record->ID)->getField('Body')

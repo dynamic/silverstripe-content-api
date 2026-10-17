@@ -87,6 +87,10 @@ class RecordsHandler
 
         return $this->withStage($className, $stage, function () use ($className, $idParam, $context, $stage) {
             $record = $this->fetchRecord($className, $idParam);
+            // The URL's class gate inherits, and the row loads polymorphically,
+            // so a subclass that explicitly denies (or narrows) its ancestor's
+            // verbs is checked against its own class too (#236).
+            $this->policy->checkClassAccess(get_class($record), 'read', $context->member);
             $this->policy->checkRecordAccess($record, 'read', $context->member);
 
             return [
@@ -134,8 +138,16 @@ class RecordsHandler
             $total = 0;
             $data = [];
 
+            $readableClasses = [];
+
             foreach ($list as $record) {
-                if (!$this->policy->canViewRecord($record, $context->member)) {
+                // A row whose own class doesn't grant `read` (an explicitly
+                // denied subclass under an exposed ancestor ref) is hidden,
+                // counted out of meta.total like a canView() refusal (#236).
+                $rowClass = get_class($record);
+                $readableClasses[$rowClass] ??= in_array('read', $this->registry->accessVerbs($rowClass), true);
+
+                if (!$readableClasses[$rowClass] || !$this->policy->canViewRecord($record, $context->member)) {
                     continue;
                 }
 
@@ -216,7 +228,6 @@ class RecordsHandler
     {
         $reserved = (array) static::config()->get('reserved_query_params');
         $modifiers = (array) static::config()->get('allowed_filter_modifiers');
-        $schema = DataObject::getSchema();
 
         foreach ($request->getVars() as $key => $value) {
             if (in_array($key, $reserved, true) || $value === null || $value === '') {
@@ -237,7 +248,10 @@ class RecordsHandler
                 }
             }
 
-            if ($field !== 'ID' && !$schema->fieldSpec($className, $field)) {
+            // Only columns a response can show are filterable: filtering on
+            // a withheld column (hidden_fields, or outside api_fields) would
+            // leak its value through which rows match (#236).
+            if (!in_array($field, $this->serializer->readableColumns($className), true)) {
                 throw new ApiError(
                     ErrorCode::UNKNOWN_FIELD,
                     sprintf('Cannot filter on unknown field "%s".', $field)
@@ -261,7 +275,6 @@ class RecordsHandler
             return $list;
         }
 
-        $schema = DataObject::getSchema();
         $sort = [];
 
         foreach (explode(',', $sortParam) as $clause) {
@@ -278,7 +291,9 @@ class RecordsHandler
                 $clause = substr($clause, 1);
             }
 
-            if ($clause !== 'ID' && !$schema->fieldSpec($className, $clause)) {
+            // Same readable-column rule as filters: a sort leaks a withheld
+            // column's ordering (#236).
+            if (!in_array($clause, $this->serializer->readableColumns($className), true)) {
                 throw new ApiError(
                     ErrorCode::UNKNOWN_FIELD,
                     sprintf('Cannot sort on unknown field "%s".', $clause)
