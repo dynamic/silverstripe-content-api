@@ -112,7 +112,9 @@ use SilverStripe\Security\Security;
  * `canView()` alone does NOT make a draft-only record readable:
  * `Versioned::canViewVersioned()` answers `false` once draft and live
  * diverge, and that `false` participates in the same `extendedCan()`
- * minimum, overriding this extension's `true`. `VIEW_DRAFT_CONTENT` is what
+ * minimum, overriding this extension's `true`. For a page of a class this
+ * extension doesn't answer for, an ancestor diverging is enough: SiteTree's
+ * inherited canView() asks the parent (#243). `VIEW_DRAFT_CONTENT` is what
  * satisfies Versioned's check — `SetupContentApiServiceAccount` already
  * grants it alongside `CONTENT_API_ACCESS`. Don't "fix" a draft-read 403 by
  * widening this extension; check the account holds `VIEW_DRAFT_CONTENT`

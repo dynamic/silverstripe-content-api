@@ -297,6 +297,7 @@ class CompositionTest extends ContentApiTestCase
         $warnings = $body['data']['page']['warnings'] ?? [];
         $this->assertNotEmpty($warnings, 'the conflict must be surfaced, not resolved silently');
         $this->assertSame('areaRelation', $warnings[0]['field']);
+        $this->assertSame('PAYLOAD_INVALID', $warnings[0]['code']);
     }
 
     public function testCompositionIsIdempotent(): void

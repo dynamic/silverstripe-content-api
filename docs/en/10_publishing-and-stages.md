@@ -19,7 +19,9 @@ collide with framework behavior outside this module's control.
 For unversioned classes, `_stage` is a no-op (`RecordsHandler::withStage()` short-circuits).
 
 **Reading the default draft stage once it diverges from live requires `VIEW_DRAFT_CONTENT`** —
-a core `silverstripe/versioned` permission this module doesn't grant on its own. A service
+a core `silverstripe/versioned` permission this module doesn't grant on its own. For a page,
+an ancestor diverging is enough (its `canView()` is inherited) unless the grant extension
+answers for the page's own class. A service
 account with only `CONTENT_API_ACCESS` can write a draft-only record but then can't read it
 back until that permission is also granted. See
 [Security model](04_security-model.md#service-account-permissions).
@@ -34,7 +36,7 @@ there as "the canonical step after any go-live publish").
 
 Two independent checks, both against the same draft read:
 
-- **Root fields** — a configurable set (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/
+- **Root fields** — a configurable set (`ParityHandler.default_fields`, see [Configuration](02_configuration.md#parityhandler)) (`Title`/`ParentID`/`ClassName`/`ShowInMenus`/
   `URLSegment`/`Sort` by default, filtered to whichever the class actually declares), compared
   draft vs live. The record not existing on live at all is reported as `liveExists: false` — a
   legitimate state (a placeholder, or a page never published), never treated as a failure by

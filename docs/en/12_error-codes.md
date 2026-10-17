@@ -17,13 +17,13 @@ otherwise.
 |---|---|---|
 | `UNAUTHENTICATED` | 401 | No token header, or `getOwner()` couldn't resolve a member from it |
 | `TOKEN_EXPIRED` | 401 | Token past its strict `ApiTokenExpire` |
-| `FORBIDDEN` | 403 | Member lacks `CONTENT_API_ACCESS` or `CONTENT_API_POPULATE` |
+| `FORBIDDEN` | 403 | Member lacks `CONTENT_API_ACCESS` or `CONTENT_API_POPULATE`, or (on `schema`) holds neither `CONTENT_API_ACCESS` nor `CONTENT_API_SCHEMA` |
 | `FORBIDDEN_CLASS` | 403 | Class doesn't expose the requested verb via `api_access`/`content_api_access` |
 | `FORBIDDEN_RECORD` | 403 | The model's own `canView`/`canEdit`/`canDelete`/`canCreate` denies |
 | `ENV_FORBIDDEN` | 403 | Population endpoint called outside `population_enabled_environments` without the override. `details[0]` carries `environment`, `envVar`, and `populationEnabledEnvironments` so a caller can distinguish this from an ACL failure and act on it programmatically (#126) |
 | `UNKNOWN_CLASS` | 404 | Class ref not in the merged models map, or its mapped FQCN doesn't exist. `details[0].code` distinguishes `CLASS_NOT_MAPPED` (a real, registerable class exists with that name but has no `models:` entry — `details[0].message` names the FQCN), `CLASS_ALREADY_MAPPED` (that class is already registered, under a different ref — `details[0].message` names the existing ref, use that instead of adding a duplicate), and `CLASS_NOT_FOUND` (a `models:` entry exists but the FQCN it points at doesn't autoload), when the module can tell which. Never suggests a class the module hardcodes as never-exposable (`Member`/`Group`/`Permission`/etc.) regardless of project config |
-| `NOT_FOUND` | 404 | Record / external id / related record not found |
-| `METHOD_NOT_ALLOWED` | 405 | Wrong HTTP verb for the route |
+| `NOT_FOUND` | 404 | Record / external id / related record not found, or an unknown `{action}` segment on `records/$ClassRef/$ID/{action}` or `pages/$ID/{action}` |
+| `METHOD_NOT_ALLOWED` | — | Reserved, never raised. A wrong HTTP verb or an unknown path gets SilverStripe's own `text/plain` 404, outside the envelope and with no `error.code` |
 | `MULTIPLE_MATCHES` | 409 | An external id (or a `urlSegment` page match) resolves to more than one record |
 | `ALREADY_EXISTS` | 409 | A create conflicts with an existing record |
 | `ASSET_CONFLICT` | 409 | An upload's `externalId` is held by a file at a different path, or the file at the path already carries a different `externalId` (#240) — the API won't create a second file with the key or re-key the existing one |
@@ -40,8 +40,9 @@ otherwise.
 | `EXTERNAL_ID_UNSUPPORTED` | 422 | Class lacks the external-id column (`ExternalIdentifierExtension` not applied) |
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
 | `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
-| `ACTION_VERB_MISSING` | 422 | Warning code, never thrown — see below |
-| `VALUE_SANITISED` | 422 | Warning code, never thrown — see below |
+| `ACTION_VERB_MISSING` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
+| `VALUE_SANITISED` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
+| `URLSEGMENT_COLLISION` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
 | `PAYLOAD_TOO_LARGE` | 413 | A multipart upload exceeds the server's `upload_max_filesize` or `post_max_size` (the message names the limit) |
 | `PAYLOAD_INVALID` | 400 | Malformed payload shape: bad relation value, missing polymorphic `class` hint, `..` in a folder path, bad `conflict`/`mode` value, missing `filename`, invalid `_stage`, unsupported filter modifier, missing `page.match`, etc. |
 | `HOMEPAGE_CONVERSION_FORBIDDEN` | 403 | Converting the site home page's class without `force: true` |
@@ -50,34 +51,30 @@ otherwise.
 | `SERVER_ERROR` | 500 | Uncaught exception. Dev/test environments get `ClassName: message`; production gets an opaque `"Internal server error."` |
 | `ROLLBACK_UNVERIFIED` | 500 | An atomic batch (`docs/en/07_batch-operations.md`) failed and the transaction rollback path ran, but re-checking every `created` result — and every `deleted` result whose mode could have reached the draft row (`archive`, or any mode on an unversioned class) — by id afterward found at least one in a state that contradicts the claimed rollback (or the check itself failed to complete, which also fails toward this code rather than a false `rolledBack: true`). `error.details` carries the same full results array as a normal rollback failure — it does not narrow down which record(s) are affected — so re-check every `created`/`deleted` result in it directly before retrying (#70, #75) |
 
-## `URLSEGMENT_COLLISION`: a warning code, not a thrown error
+## Warning codes (200 responses)
 
-`ErrorCode::URLSEGMENT_COLLISION` exists in the enum (mapped to `409`) but is never raised as an
-`ApiError` — it's used exclusively as a `code` inside a successful (`200`) response's
-`warnings[]` array, when a write's requested `URLSegment` collided and SilverStripe silently
-auto-suffixed it (`RecordWriter::write()`). A green response never hides that rewrite: check
-`warnings` on any write that sets `URLSegment`, don't assume the segment you sent is the one that
-was saved.
+A successful write can carry `warnings`: a list of `{code, message, field?}` objects naming
+something the request asked for that didn't land exactly as sent. A green response never hides
+these, so read `warnings` on every write. They appear at:
 
-## `ACTION_VERB_MISSING`: a warning code, not a thrown error
+| Response | Location |
+|---|---|
+| `POST batch` | `data.results[].warnings` (only on a result that has any) |
+| `POST compositions/page` | `data.page.warnings` (the page write's own warnings, plus the `areaRelation` mismatch), `data.elements[].warnings`, `data.assets[].warnings` |
+| `POST assets` | `data.warnings` |
 
-Same shape as `URLSEGMENT_COLLISION` above: `ErrorCode::ACTION_VERB_MISSING` is never raised as an
-`ApiError`, only appended to a successful write's `warnings[]` array (`RecordWriter::write()`).
-`api_access: 'GET,POST,PUT'` reads as full CRUD but has no way to ever publish — `action`
-(publish/unpublish/archive) has no HTTP method of its own and must be listed as a bare `action`
-token (see [Configuration](02_configuration.md#classregistry)). Every write to a class with write
-access but no `action` was, before this warning existed, permanently draft-only with nothing in
-the response saying so (#198). Fires once per write to a `Versioned` class whose `api_access`/
-`content_api_access` grants `create` or `update` but not `action` — check `warnings` on any write
-to a class you expect to publish through the payload's `publish` key or the stage-action endpoints.
+| Code | Emitted when |
+|---|---|
+| `URLSEGMENT_COLLISION` | A write's requested `URLSegment` was taken and SilverStripe saved a suffixed one (`RecordWriter::write()`). Never thrown as an error. |
+| `ACTION_VERB_MISSING` | A write to a `Versioned` class whose `api_access`/`content_api_access` grants `create` or `update` but not `action`, so nothing can ever publish it (#198); also an asset upload that falls back to draft-only for the same reason. `action` has no HTTP method of its own and must be listed as a bare token (see [Configuration](02_configuration.md#classregistry)). Never thrown as an error. |
+| `VALUE_SANITISED` | HTML sanitising removed markup from an HTML-typed field that the `html_editor_config` editor config does not allow (see [Configuration](02_configuration.md#writeapplicator)). The write lands minus that markup; a pure serialisation change is not reported. colymba's `/api` sanitises the same way but has no warnings channel. Never thrown as an error. |
+| `UNKNOWN_FIELD` | Under `api_unknown_fields: lenient`, a payload key (or a relation `extraFields` key) that matches nothing was ignored. Under `strict` the same key is a `422`. |
+| `FEATURE_UNAVAILABLE` | A multirelational polymorphic has_one was set without its `{Name}Relation` column, which this API can't set. Unrelated to the `501` meaning in the table above. |
+| `PAYLOAD_INVALID` | A composition gave different top-level `areaRelation` and `page.areaRelation` values; `page.areaRelation` was used. |
+| `SERVER_ERROR` | A composition asset was saved but its post-commit publish failed (the asset is left out of `published`). |
 
-## `VALUE_SANITISED`: a warning code, not a thrown error
-
-Appended to a successful write's `warnings[]` (with the field name) when HTML sanitising removed
-markup from an HTML-typed field: elements or attributes the `html_editor_config` editor config
-does not allow (see [Configuration](02_configuration.md#writeapplicator)). The write still lands,
-minus that markup. A pure serialisation change (attribute quoting, `<br/>` vs `<br>`) is not
-reported. colymba's `/api` sanitises the same way but has no warnings channel.
+The 409/422 statuses the enum maps `URLSEGMENT_COLLISION`, `ACTION_VERB_MISSING` and
+`VALUE_SANITISED` to are never sent.
 
 ## Guarantees worth knowing
 

@@ -163,6 +163,30 @@ class SilentSuccessTest extends ContentApiTestCase
         $result = $body['data']['results'][0];
         $this->assertSame('updated', $result['status']);
         $this->assertSame('Tags.extraFields.SortOrdr', $result['warnings'][0]['field']);
+        $this->assertSame('UNKNOWN_FIELD', $result['warnings'][0]['code']);
+    }
+
+    /**
+     * #243: under lenient mode an unknown field key is ignored with an
+     * UNKNOWN_FIELD warning, not a 422.
+     */
+    public function testAnUnknownFieldIsAWarningWhenLenient(): void
+    {
+        Config::modify()->set(ApiTestObject::class, 'api_unknown_fields', 'lenient');
+        $record = $this->objFromFixture(ApiTestObject::class, 'one');
+
+        $body = $this->decode($this->apiPost('batch', ['operations' => [[
+            'op' => 'update',
+            'class' => 'ApiTest',
+            'id' => (int) $record->ID,
+            'fields' => ['Title' => 'Renamed', 'Subtitel' => 'typo'],
+        ]]], $this->adminToken));
+
+        $result = $body['data']['results'][0];
+        $this->assertSame('updated', $result['status']);
+        $this->assertSame('UNKNOWN_FIELD', $result['warnings'][0]['code']);
+        $this->assertSame('Subtitel', $result['warnings'][0]['field']);
+        $this->assertSame('Renamed', ApiTestObject::get()->byID($record->ID)->Title);
     }
 
     /**

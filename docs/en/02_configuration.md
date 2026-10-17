@@ -34,7 +34,7 @@ surface only.
 | `models` | `[]` | Content-api-only short-ref → FQCN map. Merged **over** colymba's `DefaultQueryHandler.models` (this module's entries win per key on conflict) |
 | `discovery_roots` | `[]` | FQCNs (e.g. `BaseElement::class`, `SiteTree::class`) to auto-map every concrete subclass of, without a hand-written `models:` entry per class. Off by default — entirely opt-in |
 | `discovery_exclude` | `[]` | Additional FQCNs (and their subclasses) to skip during discovery, on top of the mandatory denylist (`Member`, `Group`, `Permission`, etc. — not configurable, can't be relaxed away) |
-| `discovery_write_policy` | `'off'\|'read'` | `'off'` | Verbs granted to a class reached **only** via discovery, carrying no `api_access` of its own. `'read'` grants read-only. There is no write-granting value — a discovered class's writable fields would have to be inferred, the same mistake `api_writable_fields` hoisting already caused once (#27); writes always require an explicit `api_writable_fields` on the class |
+| `discovery_write_policy` | `'off'` (or `'read'`) | Verbs granted to a class reached **only** via discovery, carrying no `api_access` of its own. `'read'` grants read-only. There is no write-granting value — a discovered class's writable fields would have to be inferred, the same mistake `api_writable_fields` hoisting already caused once (#27); writes always require an explicit `api_writable_fields` on the class |
 
 `ClassRegistry::VERBS` (not configurable, informational): `read`, `create`, `update`, `delete`,
 `action`. Colymba-style `api_access: 'GET,POST'` values are mapped `GET→read`, `POST→create`,
@@ -75,7 +75,7 @@ Set directly on each DataObject class you expose — not on the module. These ar
 | `api_writable_fields` | `string[]` | `[]` | Allowlist of client-writable db field / has_one relation names. **A non-empty array here puts the class into allowlist mode even under the `guarded` global policy** — declaring the allowlist is itself the opt-in, with no configuration that sets it and has it silently ignored |
 | `api_protected_fields` | `string[]` | `[]` | Per-class denylist, merged with the global `WriteApplicator.protected_fields`. Always wins over the allowlist. Restricts client-supplied fields only: the trusted internal-fields channel (a composition element's `ParentID`, and its default `Sort`) is not blocked by it, so listing `ParentID` here keeps it off every client surface without breaking compositions |
 | `api_writable_relations` | `string[]` | `[]` | Allowlist of writable has_many/many_many relation names (a separate gate from `api_writable_fields`, which only covers db fields and has_one) |
-| `api_unknown_fields` | `'strict'\|'lenient'` | unset (falls back to `WriteApplicator.unknown_fields`) | Per-class override: `strict` rejects an unrecognized payload key with `UNKNOWN_FIELD`; `lenient` warns and continues |
+| `api_unknown_fields` | `'strict'\|'lenient'` | unset (falls back to `WriteApplicator.unknown_fields`) | Per-class override: `strict` rejects an unrecognized payload key with `UNKNOWN_FIELD`; `lenient` ignores the key and adds an `UNKNOWN_FIELD` warning |
 | `api_fields` | `string[]` | unset (all fields serialized) | `RecordSerializer` output whitelist. Entries may be db fields, relation names, **or `getFoo()` getter-backed properties** (getters are only honored when `api_fields` is explicitly set) |
 | `api_computed_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields recomputed by the model itself (e.g. an `onBeforeWrite` trap) — a write lands, then the model overwrites it in the same request. Surfaced as `computed: true` (+ optional `note`) in `SchemaService::classSchema()`. **Advisory only** — does not affect `writable`; pair with `api_protected_fields` to also reject the write |
 | `api_import_owned_fields` | `string[]\|array<string,?string>` | `[]` | Schema-only honesty flag: fields owned by an external import/feed that will overwrite a client's write on its next sync. Surfaced as `importOwned: true` (+ optional `note`). Same advisory-only caveat as `api_computed_fields` |
@@ -204,6 +204,39 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 |---|---|---|
 | `field_tokens` | `[]` | Field-name → token-DSL hint surfaced in `GET schema/$ClassRef` (the essentials integration sets `BackgroundColor: palette`, `ButtonColor: button` — see below) |
 
+## AssetService
+
+`Dynamic\ContentApi\Assets\AssetService`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `verify_content_type` | `false` | When on, an upload whose extension maps to `Image` must sniff as `image/*`, or it is `422 VALIDATION_FAILED`. See [Assets](09_assets.md) |
+
+## FingerprintService
+
+`Dynamic\ContentApi\Verify\FingerprintService`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `related_classes` | `[]` | Non-`SiteTree` classes to fingerprint alongside pages, each keyed to its owning page's direct FK column, e.g. `HeroSlide: PageID`. The only source of `GET fingerprint`'s `related` sections. See [Verification](16_verification.md#fingerprint) |
+| `max_path_depth` | `50` | Cycle guard on the `ParentID` walk that builds each page's path |
+
+## OwnedTreeWalker
+
+`Dynamic\ContentApi\Verify\OwnedTreeWalker`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `max_depth` | `25` | Depth bound on the `$owns` walk (`owns` publish/unpublish, `recursive` checks, parity `depth`'s default). Separate from the cycle guard |
+
+## ParityHandler
+
+`Dynamic\ContentApi\Control\Handlers\ParityHandler`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `default_fields` | `['Title', 'ParentID', 'ClassName', 'ShowInMenus', 'URLSegment', 'Sort']` | Fields `GET records/$ClassRef/$ID/parity` compares when the request names none, filtered per class to the ones it declares |
+
 ## ColorTokenTransformer
 
 `Dynamic\ContentApi\Write\Transformers\ColorTokenTransformer`
@@ -214,6 +247,10 @@ module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` wr
 
 Registered only when `dynamic/silverstripe-essentials-tools`'s
 `ColorConfigurationProvider` class exists (`_config/essentials.yml`, `Only: classexists`).
+
+`color_token_resolver_class` here, and `PageHandler.template_class` and
+`template_applicator_class`, are internal test hooks naming the integration classes, not
+extension points.
 
 ## LinkTransformer
 
