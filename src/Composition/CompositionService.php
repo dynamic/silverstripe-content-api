@@ -24,6 +24,7 @@ use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\ValidationException;
 use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
+use SilverStripe\View\Parsers\URLSegmentFilter;
 use Throwable;
 
 /**
@@ -312,7 +313,10 @@ class CompositionService
         }
 
         if (isset($match['urlSegment'])) {
-            $pages = SiteTree::get()->filter('URLSegment', (string) $match['urlSegment'])->limit(2)->toArray();
+            $pages = SiteTree::get()
+                ->filter('URLSegment', $this->normalisedSegment((string) $match['urlSegment']))
+                ->limit(2)
+                ->toArray();
 
             if (count($pages) > 1) {
                 throw new ApiError(
@@ -389,8 +393,12 @@ class CompositionService
         $page->Title = (string) ($create['title'] ?? 'Untitled');
         $page->ParentID = $parentId;
 
-        if (isset($match['urlSegment'])) {
-            $page->URLSegment = (string) $match['urlSegment'];
+        $requestedSegment = isset($match['urlSegment'])
+            ? $this->normalisedSegment((string) $match['urlSegment'])
+            : null;
+
+        if ($requestedSegment !== null) {
+            $page->URLSegment = $requestedSegment;
         }
 
         if (isset($match['externalId'])) {
@@ -404,7 +412,32 @@ class CompositionService
             throw ApiError::fromValidation($exception);
         }
 
+        // SiteTree rewrites a segment it can't use (taken, or reserved like
+        // "admin") to segment-2. The page could then never be matched by the
+        // same request again, and every re-run would create another (#240).
+        if ($requestedSegment !== null && $page->URLSegment !== $requestedSegment) {
+            throw new ApiError(
+                ErrorCode::URLSEGMENT_COLLISION,
+                sprintf(
+                    'URLSegment "%s" is not available (SiteTree would store "%s"), so this page could not be '
+                        . 'matched again by it. Match by "externalId" instead, or choose another segment.',
+                    $requestedSegment,
+                    $page->URLSegment
+                )
+            );
+        }
+
         return $page;
+    }
+
+    /**
+     * The segment SiteTree would store for a requested one (lowercased,
+     * spaces to dashes, ...), so a `match.urlSegment` like "About Us" finds
+     * the "about-us" page it created last run (#240).
+     */
+    protected function normalisedSegment(string $segment): string
+    {
+        return URLSegmentFilter::create()->filter($segment);
     }
 
     protected function convertPage(

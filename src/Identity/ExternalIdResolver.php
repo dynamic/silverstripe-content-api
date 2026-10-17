@@ -104,6 +104,63 @@ class ExternalIdResolver
     }
 
     /**
+     * Refuse to give `$record` an external id that can't identify it (#240):
+     *
+     * - a key no `ext:` path could address (`/`, `?`, `#`, control
+     *   characters), so a client can't create a record it can't read back;
+     * - a key another record already holds anywhere in the class tree that
+     *   carries the column (the highest such ancestor, not just
+     *   `$record`'s own class), so a subclass can't take a parent-class
+     *   row's key and an element can't be re-created under a new class
+     *   beside the one already holding its id. Every later `ext:` lookup
+     *   would otherwise answer 409 MULTIPLE_MATCHES for both.
+     *
+     * Re-sending a record's own key is fine.
+     *
+     * @throws ApiError PAYLOAD_INVALID | ALREADY_EXISTS
+     */
+    public function assertAssignable(DataObject $record, string $externalId): void
+    {
+        if ($externalId === '' || preg_match('#[/?\#\x00-\x1F\x7F]#', $externalId)) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf(
+                    'External id "%s" must be non-empty and contain no "/", "?", "#" or control characters, '
+                        . 'or it could not be addressed as ext:<id>.',
+                    $externalId
+                )
+            );
+        }
+
+        $scope = get_class($record);
+
+        while (($parent = get_parent_class($scope)) && $parent !== DataObject::class && $this->supports($parent)) {
+            $scope = $parent;
+        }
+
+        $holders = DataObject::get($scope)->filter($this->fieldName(), $externalId);
+
+        if ($record->isInDB()) {
+            $holders = $holders->exclude('ID', (int) $record->ID);
+        }
+
+        $holder = $holders->first();
+
+        if ($holder) {
+            throw new ApiError(
+                ErrorCode::ALREADY_EXISTS,
+                sprintf(
+                    'External id "%s" is already held by %s #%d. An external id identifies one record; '
+                        . 'to change a record\'s class keep it on that record (convert it), otherwise use a new id.',
+                    $externalId,
+                    $holder->ClassName,
+                    $holder->ID
+                )
+            );
+        }
+    }
+
+    /**
      * @throws ApiError EXTERNAL_ID_UNSUPPORTED
      */
     public function assertSupported(string $className): void

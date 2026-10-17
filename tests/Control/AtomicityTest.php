@@ -214,9 +214,10 @@ class AtomicityTest extends ContentApiTestCase
             $assetId = (int) $data['assets'][0]['id'];
             $this->assertTrue($this->isLive(File::class, $assetId));
 
-            $published = array_column($data['published'], 'id');
-            $this->assertContains($assetId, $published);
-            $this->assertLessThan(count($published) - 1, array_search($assetId, $published, true));
+            $keys = array_map(fn (array $entry) => $entry['className'] . ':' . $entry['id'], $data['published']);
+            $assetKey = File::class . ':' . $assetId;
+            $this->assertContains($assetKey, $keys);
+            $this->assertLessThan(count($keys) - 1, array_search($assetKey, $keys, true));
         } finally {
             TestAssetStore::reset();
         }
@@ -239,7 +240,11 @@ class AtomicityTest extends ContentApiTestCase
             $data = $this->decode($response)['data'];
             $assetId = (int) $data['assets'][0]['id'];
             $this->assertSame('SERVER_ERROR', $data['assets'][0]['warnings'][0]['code']);
-            $this->assertNotContains($assetId, array_column($data['published'], 'id'));
+            $publishedAssets = array_filter(
+                $data['published'],
+                fn (array $entry) => is_a($entry['className'], File::class, true)
+            );
+            $this->assertNotContains($assetId, array_column($publishedAssets, 'id'));
             $this->assertFalse($this->isLive(File::class, $assetId));
         } finally {
             TestAssetStore::reset();

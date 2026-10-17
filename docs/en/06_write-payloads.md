@@ -213,4 +213,13 @@ match is a hit, more than one is `409 MULTIPLE_MATCHES` — the API never guesse
 external ids work on it (`422 EXTERNAL_ID_UNSUPPORTED` otherwise).
 
 `ext:<external-id>` is also accepted as the `$ID` path segment on read/action endpoints, e.g.
-`GET records/ElementCard/ext:home-hero`.
+`GET records/ElementCard/ext:home-hero`. The id after `ext:` is percent-decoded, so
+`ext:home%20page` finds `home page`.
+
+**An external id identifies exactly one record.** Every write that assigns one (a create's or
+update's `externalId`, or `fields.FixtureIdentifier`, the backfill path) refuses a key another
+record already holds anywhere in the class tree that carries the column, with `409
+ALREADY_EXISTS` naming the holder. Re-sending a record's own key is fine. A key containing `/`,
+`?`, `#` or a control character is `400 PAYLOAD_INVALID`, since no `ext:` path could address
+it. Composition children are the exception: their lookup is scoped to the owning element, so the
+same child key may be used under different elements.
