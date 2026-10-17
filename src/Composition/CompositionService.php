@@ -24,6 +24,7 @@ use SilverStripe\Core\Validation\ValidationException;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
+use SilverStripe\View\Parsers\URLSegmentFilter;
 use Throwable;
 
 /**
@@ -36,9 +37,11 @@ use Throwable;
  * pipeline. Design invariants carried over from that workflow's scar tissue:
  * - the page is only ever sparsely updated (no populate-style field-map copy)
  * - elements upsert globally by external id (FixtureIdentifier semantics)
- * - array order dictates Sort unless a fields.Sort is explicit
+ * - element array order dictates Sort unless a fields.Sort is explicit
+ *   (children get no ordering default)
  * - prune only ever touches externally-identified ("managed") records unless
- *   scope "all" is explicitly requested
+ *   scope "all" is explicitly requested, and reaches an element's children
+ *   only under a relation the payload names
  * - publish is explicit per request and publishes each written record
  *   individually (a page publishRecursive does NOT cascade to elements)
  */
@@ -204,12 +207,20 @@ class CompositionService
         // 5. Prune
         $pruneSpec = (array) ($payload['prune'] ?? []);
         $pruned = !empty($pruneSpec['enabled'])
-            ? $this->prune(
-                $area,
-                $elementEntries,
-                (string) ($pruneSpec['scope'] ?? 'managed'),
-                $elementsRelation,
-                $member
+            ? array_merge(
+                $this->prune(
+                    $area,
+                    $elementEntries,
+                    (string) ($pruneSpec['scope'] ?? 'managed'),
+                    $elementsRelation,
+                    $member
+                ),
+                $this->pruneChildren(
+                    $elementResults,
+                    $elementEntries,
+                    (string) ($pruneSpec['scope'] ?? 'managed'),
+                    $member
+                )
             )
             : [];
 
@@ -312,7 +323,10 @@ class CompositionService
         }
 
         if (isset($match['urlSegment'])) {
-            $pages = SiteTree::get()->filter('URLSegment', (string) $match['urlSegment'])->limit(2)->toArray();
+            $pages = SiteTree::get()
+                ->filter('URLSegment', $this->normalisedSegment((string) $match['urlSegment']))
+                ->limit(2)
+                ->toArray();
 
             if (count($pages) > 1) {
                 throw new ApiError(
@@ -389,7 +403,14 @@ class CompositionService
         $page->Title = (string) ($create['title'] ?? 'Untitled');
         $page->ParentID = $parentId;
 
-        if (isset($match['urlSegment'])) {
+        $requestedSegment = isset($match['urlSegment'])
+            ? $this->normalisedSegment((string) $match['urlSegment'])
+            : null;
+
+        // Assigned raw: SiteTree filters a changed segment itself, and
+        // filtering an already-filtered multibyte segment again would
+        // double-encode it (caf%C3%A9 → caf%25c3%25a9).
+        if ($requestedSegment !== null) {
             $page->URLSegment = (string) $match['urlSegment'];
         }
 
@@ -404,7 +425,32 @@ class CompositionService
             throw ApiError::fromValidation($exception);
         }
 
+        // SiteTree rewrites a segment it can't use (taken, or reserved like
+        // "admin") to segment-2. The page could then never be matched by the
+        // same request again, and every re-run would create another (#240).
+        if ($requestedSegment !== null && $page->URLSegment !== $requestedSegment) {
+            throw new ApiError(
+                ErrorCode::URLSEGMENT_COLLISION,
+                sprintf(
+                    'URLSegment "%s" is not available (SiteTree would store "%s"), so this page could not be '
+                        . 'matched again by it. Match by "externalId" instead, or choose another segment.',
+                    $requestedSegment,
+                    $page->URLSegment
+                )
+            );
+        }
+
         return $page;
+    }
+
+    /**
+     * The segment SiteTree would store for a requested one (lowercased,
+     * spaces to dashes, ...), so a `match.urlSegment` like "About Us" finds
+     * the "about-us" page it created last run (#240).
+     */
+    protected function normalisedSegment(string $segment): string
+    {
+        return URLSegmentFilter::create()->filter($segment);
     }
 
     protected function convertPage(
@@ -568,8 +614,8 @@ class CompositionService
     /**
      * Ordered element upserts with a deferred-retry queue: an element whose
      * `$ref` targets aren't resolved yet is retried after the others; refs
-     * that never resolve are UNRESOLVED_REF (or CIRCULAR_REF when deferred
-     * elements only reference each other).
+     * that never resolve are UNRESOLVED_REF, or CIRCULAR_REF when every one
+     * of them is declared by a stuck element (#241).
      */
     protected function processElements(array $entries, DataObject $area, Member $member): array
     {
@@ -602,10 +648,24 @@ class CompositionService
                 ));
                 $unresolvable = array_values(array_diff($refs, array_keys($this->refs)));
 
-                throw new ApiError(
-                    count($deferred) > 1 ? ErrorCode::CIRCULAR_REF : ErrorCode::UNRESOLVED_REF,
-                    sprintf('Unresolvable $ref(s): %s.', implode(', ', $unresolvable))
-                );
+                // A cycle means every alias still wanted is declared by one of
+                // the stuck entries themselves; any alias nobody declares is
+                // simply unresolved (#241), however many entries want it.
+                $declared = array_values(array_filter(array_map(
+                    fn ($item) => isset($item['entry']['ref']) ? (string) $item['entry']['ref'] : null,
+                    $deferred
+                )));
+                $undeclared = array_values(array_diff($unresolvable, $declared));
+
+                throw $undeclared !== []
+                    ? new ApiError(
+                        ErrorCode::UNRESOLVED_REF,
+                        sprintf('Unresolvable $ref(s): %s.', implode(', ', $undeclared))
+                    )
+                    : new ApiError(
+                        ErrorCode::CIRCULAR_REF,
+                        sprintf('Circular $ref(s): %s.', implode(', ', $unresolvable))
+                    );
             }
 
             $remaining = $deferred;
@@ -667,6 +727,10 @@ class CompositionService
         $children = [];
 
         foreach ((array) ($entry['children'] ?? []) as $relationName => $items) {
+            // Checked even for an empty list: under prune, an empty list
+            // means "remove every child", so the name must be a has_many.
+            $this->assertChildRelation($element, (string) $relationName);
+
             foreach (array_values((array) $items) as $childIndex => $childEntry) {
                 $children[] = $this->processChild(
                     $element,
@@ -707,16 +771,7 @@ class CompositionService
         int $index,
         Member $member
     ): array {
-        $childClass = DataObject::getSchema()->hasManyComponent(get_class($element), $relationName);
-
-        if (!$childClass) {
-            throw new ApiError(
-                ErrorCode::UNKNOWN_RELATION,
-                sprintf('Element %s has no has_many "%s".', get_class($element), $relationName)
-            );
-        }
-
-        $childClass = strtok($childClass, '.');
+        $childClass = $this->assertChildRelation($element, $relationName);
 
         if (!empty($entry['class'])) {
             $override = $this->registry->resolve((string) $entry['class']);
@@ -777,6 +832,25 @@ class CompositionService
             'status' => $operation,
             'record' => $child,
         ];
+    }
+
+    /**
+     * The child class of an element's has_many relation.
+     *
+     * @throws ApiError UNKNOWN_RELATION when the name is not a has_many
+     */
+    protected function assertChildRelation(DataObject $element, string $relationName): string
+    {
+        $childClass = DataObject::getSchema()->hasManyComponent(get_class($element), $relationName);
+
+        if (!$childClass) {
+            throw new ApiError(
+                ErrorCode::UNKNOWN_RELATION,
+                sprintf('Element %s has no has_many "%s".', get_class($element), $relationName)
+            );
+        }
+
+        return (string) strtok($childClass, '.');
     }
 
     /**
@@ -866,6 +940,82 @@ class CompositionService
             ];
 
             $element->doArchive();
+        }
+
+        return $pruned;
+    }
+
+    /**
+     * Prune each element's children the same way prune() prunes the area
+     * (#241): for every child relation an element's payload names, children
+     * not in that list are removed (versioned ones archived, others deleted),
+     * by the same `managed`/`all` scope. A relation the payload doesn't name
+     * is left alone, so an element sent without `children` keeps its own.
+     * Each candidate needs `delete` on its class plus canDelete(); all are
+     * checked before any is removed.
+     *
+     * @param array<int, array<string, mixed>> $elementResults processElements() output
+     * @param array<int, mixed> $elementEntries the payload's elements, by index
+     * @return array<int, array<string, mixed>>
+     */
+    protected function pruneChildren(array $elementResults, array $elementEntries, string $scope, Member $member): array
+    {
+        if (!in_array($scope, ['managed', 'all'], true)) {
+            throw new ApiError(ErrorCode::PAYLOAD_INVALID, 'prune.scope must be "managed" or "all".');
+        }
+
+        // Keep exactly the children this request wrote under each named
+        // relation, by id (processChild() matches by external id within a
+        // class tree, so a same-id sibling of another subclass is not one of
+        // them). Keyed by element id, so two entries upserting the same
+        // element keep each other's children.
+        $elements = [];
+        $keep = [];
+
+        foreach ($elementResults as $result) {
+            $entry = (array) ($elementEntries[$result['index']] ?? []);
+            $elementId = (int) $result['record']->ID;
+            $elements[$elementId] = $result['record'];
+
+            foreach (array_keys((array) ($entry['children'] ?? [])) as $relationName) {
+                $keep[$elementId][(string) $relationName] ??= [];
+            }
+
+            foreach ($result['children'] as $child) {
+                $keep[$elementId][$child['relation']][] = $child['id'];
+            }
+        }
+
+        $field = $this->externalIds->fieldName();
+        $candidates = [];
+
+        foreach ($keep as $elementId => $relations) {
+            foreach ($relations as $relationName => $keepIds) {
+                foreach ($elements[$elementId]->getComponents($relationName) as $child) {
+                    $externalId = $child->hasField($field) ? (string) $child->getField($field) : '';
+
+                    if (($scope === 'managed' && $externalId === '') || in_array((int) $child->ID, $keepIds, true)) {
+                        continue;
+                    }
+
+                    $this->policy->authorize($child, 'delete', $member);
+                    $candidates[] = [$child, $externalId, (string) $relationName, (int) $elementId];
+                }
+            }
+        }
+
+        $pruned = [];
+
+        foreach ($candidates as [$child, $externalId, $relationName, $elementId]) {
+            $pruned[] = [
+                'id' => (int) $child->ID,
+                'externalId' => $externalId !== '' ? $externalId : null,
+                'className' => $child->ClassName,
+                'relation' => $relationName,
+                'element' => $elementId,
+            ];
+
+            $child->hasExtension(Versioned::class) ? $child->doArchive() : $child->delete();
         }
 
         return $pruned;

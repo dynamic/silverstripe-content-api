@@ -316,6 +316,15 @@ class WriteApplicator
             );
         }
 
+        // The external-id column is writable as a plain field (the documented
+        // backfill path), so it gets the same uniqueness rule as a payload's
+        // `externalId` (#240). Checked before anything is applied.
+        foreach ($plan as [, $columnName, $relationName, $value]) {
+            if ($relationName === null && $columnName === $this->externalIds->fieldName() && is_scalar($value)) {
+                $this->externalIds->assertAssignable($record, (string) $value);
+            }
+        }
+
         foreach ($plan as [$name, $columnName, $relationName, $value]) {
             $value = $this->transformValue($record, $name, $value);
 

@@ -129,6 +129,9 @@ class RecordWriter
         $record = Injector::inst()->create($className);
 
         if ($externalId !== null) {
+            // No record of $className holds it (checked above), but one of
+            // another class in the same tree may (#240).
+            $this->externalIds->assertAssignable($record, $externalId);
             $record->setField($this->externalIds->fieldName(), $externalId);
         }
 
@@ -152,6 +155,7 @@ class RecordWriter
 
         if (isset($payload['externalId'])) {
             $this->externalIds->assertSupported($className);
+            $this->externalIds->assertAssignable($record, (string) $payload['externalId']);
             $record->setField($this->externalIds->fieldName(), (string) $payload['externalId']);
         }
 

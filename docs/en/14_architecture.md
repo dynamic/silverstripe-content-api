@@ -133,5 +133,7 @@ diverge from the answer every other publish action already gives.
 Composition elements are processed in a loop: any entry whose `fields`/`relations`/`children`
 contain an unresolved `{"$ref": ...}` is deferred to the next pass. This lets `$ref` order
 within a request be arbitrary. Termination: if a pass makes no progress and entries remain, the
-unresolved ref names are collected — `422 CIRCULAR_REF` when more than one entry is stuck
-(mutual dependency), `422 UNRESOLVED_REF` for a single stuck entry (a genuinely missing alias).
+unresolved ref names are collected and compared with the `ref` aliases the stuck entries
+declare. Any wanted alias that no stuck entry declares is `422 UNRESOLVED_REF` (a genuinely
+missing alias, however many entries want it); when every wanted alias is declared by a stuck
+entry the entries wait on each other, which is `422 CIRCULAR_REF`.
