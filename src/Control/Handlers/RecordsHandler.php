@@ -178,7 +178,9 @@ class RecordsHandler
     public function fetchRecord(string $className, string $idParam): DataObject
     {
         if (str_starts_with($idParam, 'ext:')) {
-            return $this->externalIds->find($className, substr($idParam, 4));
+            // The request path is never percent-decoded by the framework, so
+            // `ext:home%20page` would otherwise look up the literal "%20" (#240).
+            return $this->externalIds->find($className, rawurldecode(substr($idParam, 4)));
         }
 
         if (!ctype_digit($idParam)) {
