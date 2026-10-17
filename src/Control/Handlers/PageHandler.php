@@ -335,7 +335,7 @@ class PageHandler
         foreach ($sourceArea->Elements() as $element) {
             $records = [[$element, $elementContext]];
 
-            foreach ($this->ownedTreeWalker->walkDuplicates($element) as $entry) {
+            foreach ($this->ownedTreeWalker->walkAllDuplicates($element) as $entry) {
                 $records[] = [$entry['record'], []];
             }
 

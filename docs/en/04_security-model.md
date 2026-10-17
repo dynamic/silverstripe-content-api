@@ -196,6 +196,8 @@ be published has nothing here for `action` to gate). `PageHandler::convert()` an
 `CompositionService::convertPage()` have the analogous gap closed the same way: both now check
 the *target* class's `update` verb unconditionally, plus `action` whenever the request's publish
 mode isn't `none` — previously only the *pre-conversion* record's `update` verb was ever checked.
+Both also need the bare `convert` verb on the page's current class and on the target class
+(#228); see [`POST pages/$ID/convert`](05_endpoint-reference.md#post-pagesidconvert).
 
 `CompositionService::compose()` has a third, non-conversion path to the same gap:
 `publishAll()` calls `$page->publishRecursive()` directly (not via `RecordWriter` or

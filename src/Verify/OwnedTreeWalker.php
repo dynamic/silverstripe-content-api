@@ -69,6 +69,13 @@ class OwnedTreeWalker
     protected const MODE_DUPLICATES = 'duplicates';
 
     /**
+     * {@see MODE_DUPLICATES}' traversal, emitting unversioned records too —
+     * for a create-authorization pass, which must see every record
+     * `duplicate()` creates, not only the ones a publish can reach.
+     */
+    protected const MODE_DUPLICATES_ALL = 'duplicates-all';
+
+    /**
      * Independent of the cycle guard — bounds a very deep (but acyclic)
      * owned tree. High enough that no real project's `$owns` nesting
      * should ever hit it in practice.
@@ -105,6 +112,20 @@ class OwnedTreeWalker
     public function walkDuplicates(DataObject $root, ?int $maxDepth = null): array
     {
         return $this->walkRelations($root, $maxDepth, self::MODE_DUPLICATES);
+    }
+
+    /**
+     * Same walk as {@see walkDuplicates()}, but every record is emitted,
+     * Versioned or not: everything a `duplicate()` of `$root` creates. Used
+     * to authorize the creates before they happen (#235), where an
+     * unversioned child (e.g. a stat counter's stats) is as much a write as
+     * a versioned one.
+     *
+     * @return array<int, array{record: DataObject, depth: int}>
+     */
+    public function walkAllDuplicates(DataObject $root, ?int $maxDepth = null): array
+    {
+        return $this->walkRelations($root, $maxDepth, self::MODE_DUPLICATES_ALL);
     }
 
     /**
@@ -286,7 +307,7 @@ class OwnedTreeWalker
 
         $isVersioned = $record->hasExtension(Versioned::class);
 
-        if ($isVersioned && $depth > 0) {
+        if (($isVersioned || $mode === self::MODE_DUPLICATES_ALL) && $depth > 0) {
             // A re-visit at a shallower depth than before replaces the
             // earlier (deeper, now-stale) entry rather than appending a
             // duplicate.
@@ -307,7 +328,7 @@ class OwnedTreeWalker
             return;
         }
 
-        $relations = $mode === self::MODE_DUPLICATES
+        $relations = $mode === self::MODE_DUPLICATES || $mode === self::MODE_DUPLICATES_ALL
             ? $this->duplicatedRelations($record)
             : (array) $record->config()->get('owns');
 
@@ -322,7 +343,7 @@ class OwnedTreeWalker
                     '%s declares "%s" in $%s, but has no such method — that branch cannot be walked.',
                     get_class($record),
                     $relationName,
-                    $mode === self::MODE_DUPLICATES ? 'cascade_duplicates' : 'owns'
+                    $mode === self::MODE_OWNS ? 'owns' : 'cascade_duplicates'
                 ));
 
                 continue;

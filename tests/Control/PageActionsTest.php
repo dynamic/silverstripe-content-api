@@ -683,7 +683,48 @@ class PageActionsTest extends ContentApiTestCase
             'publish' => 'none',
         ], $this->adminToken);
 
-        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString('"update"', $body['error']['message']);
+        $this->assertCount(0, ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements());
+    }
+
+    /**
+     * The create gate covers an unversioned child duplicate() creates, not
+     * only the versioned ones a publish reaches.
+     */
+    public function testApplyTemplateRequiresCreateOnAnUnversionedChildClass(): void
+    {
+        $this->useTemplateStubs();
+        Config::modify()->set(ApiTestPlainChildObject::class, 'api_access', 'read');
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'none',
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString(ApiTestPlainChildObject::class, $body['error']['message']);
+        $this->assertCount(0, ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements());
+    }
+
+    public function testApplyTemplateRequiresCreateOnTheElementClass(): void
+    {
+        $this->useTemplateStubs();
+        Config::modify()->set(ApiTestElement::class, 'api_access', 'read,update,action');
+
+        $page = $this->blockPage();
+        $template = $this->templateWithChildBearingElement();
+
+        $response = $this->apiPost("pages/{$page->ID}/apply-template", [
+            'templateId' => (int) $template->ID,
+            'publish' => 'none',
+        ], $this->adminToken);
+
+        $body = $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertStringContainsString(ApiTestElement::class, $body['error']['message']);
         $this->assertCount(0, ApiTestBlockPage::get()->byID($page->ID)->ElementalArea()->Elements());
     }
 }
