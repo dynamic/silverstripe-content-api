@@ -356,6 +356,10 @@ class PublishOrchestratorTest extends ContentApiTestCase
         $this->assertTrue($this->isLiveHierarchyObject($child->ID));
     }
 
+    /**
+     * Publishes as apiUser, so it depends on ContentApiGrantExtension on SiteTree
+     * (applied in ContentApiTestCase::getRequiredExtensions()).
+     */
     public function testSubtreeModePublishesEveryDraftDescendant(): void
     {
         $root = ApiTestPage::create(['Title' => 'Subtree Root']);
@@ -483,6 +487,8 @@ class PublishOrchestratorTest extends ContentApiTestCase
      * not resurrected just because a live ancestor is going through
      * `subtree` — and its own children (which liveOnly never even visits)
      * must be left alone too.
+     * Runs as apiUser, so it depends on ContentApiGrantExtension on SiteTree
+     * (applied in ContentApiTestCase::getRequiredExtensions()).
      */
     public function testLiveOnlySkipsAnUnpublishedDescendantBranchEntirely(): void
     {
@@ -524,6 +530,8 @@ class PublishOrchestratorTest extends ContentApiTestCase
     /**
      * #102: dryRun must authorization-check exactly as a real run would
      * (so the same error surfaces up front) but never call publishSingle().
+     * Runs as apiUser, so it depends on ContentApiGrantExtension on SiteTree
+     * (applied in ContentApiTestCase::getRequiredExtensions()).
      */
     public function testDryRunReturnsTheWouldPublishSetWithoutWriting(): void
     {
