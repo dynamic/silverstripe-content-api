@@ -197,6 +197,14 @@ the log the way it does on the wire.
 This is the single source of truth for field writability on **every** write surface — the
 module's native pipeline and, via `WriteGuardExtension`, colymba's own `/api` write path.
 
+## RecordUpdateHandler
+
+`Dynamic\ContentApi\Control\Handlers\RecordUpdateHandler`, behind `PATCH records/$ClassRef/$ID`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `disabled_environments` | `[]` | Environment types (`dev`, `test`, `live`) where single-record updates are refused with `403 ENV_FORBIDDEN`. Open everywhere by default; YAML can add an environment, not remove one |
+
 ## RecordsHandler
 
 `Dynamic\ContentApi\Control\Handlers\RecordsHandler`

@@ -20,7 +20,7 @@ otherwise.
 | `FORBIDDEN` | 403 | Member lacks `CONTENT_API_ACCESS` or `CONTENT_API_POPULATE`, or (on `schema`) holds neither `CONTENT_API_ACCESS` nor `CONTENT_API_SCHEMA` |
 | `FORBIDDEN_CLASS` | 403 | Class doesn't expose the requested verb via `api_access`/`content_api_access` |
 | `FORBIDDEN_RECORD` | 403 | The model's own `canView`/`canEdit`/`canDelete`/`canCreate` denies |
-| `ENV_FORBIDDEN` | 403 | Population endpoint called outside `population_enabled_environments` without the override. `details[0]` carries `environment`, `envVar`, and `populationEnabledEnvironments` so a caller can distinguish this from an ACL failure and act on it programmatically (#126) |
+| `ENV_FORBIDDEN` | 403 | Population endpoint called outside `population_enabled_environments` without the override, or `PATCH records/$ClassRef/$ID` in an environment listed in `RecordUpdateHandler.disabled_environments` (then `details[0]` carries `environment` and `config` instead). `details[0]` carries `environment`, `envVar`, and `populationEnabledEnvironments` so a caller can distinguish this from an ACL failure and act on it programmatically (#126) |
 | `UNKNOWN_CLASS` | 404 | Class ref not in the merged models map, or its mapped FQCN doesn't exist. `details[0].code` distinguishes `CLASS_NOT_MAPPED` (a real, registerable class exists with that name but has no `models:` entry — `details[0].message` names the FQCN), `CLASS_ALREADY_MAPPED` (that class is already registered, under a different ref — `details[0].message` names the existing ref, use that instead of adding a duplicate), and `CLASS_NOT_FOUND` (a `models:` entry exists but the FQCN it points at doesn't autoload), when the module can tell which. Never suggests a class the module hardcodes as never-exposable (`Member`/`Group`/`Permission`/etc.) regardless of project config |
 | `NOT_FOUND` | 404 | Record / external id / related record not found, or an unknown `{action}` segment on `records/$ClassRef/$ID/{action}` or `pages/$ID/{action}` |
 | `METHOD_NOT_ALLOWED` | — | Reserved, never raised. A wrong HTTP verb or an unknown path gets a non-JSON 404 outside the envelope, with no `error.code`: the site's error page, or `text/plain` on an AJAX request |
@@ -62,6 +62,7 @@ these, so read `warnings` on every write. They appear at:
 | `POST batch` | `data.results[].warnings` (only on a result that has any) |
 | `POST compositions/page` | `data.page.warnings` (the page write's own warnings, plus the `areaRelation` mismatch), `data.elements[].warnings`, `data.elements[].children[].warnings`, `data.assets[].warnings` |
 | `POST assets` | `data.warnings` |
+| `PATCH records/$ClassRef/$ID` | `meta.warnings` |
 
 | Code | Emitted when |
 |---|---|

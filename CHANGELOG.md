@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#232)** `PATCH records/$ClassRef/$ID` with `{"fields": {...}, "publish": "none|single"}`:
+  a single-record field update that needs `CONTENT_API_ACCESS` only and is not behind the
+  population gate, so it works on a live site. Same checks as a batch `update` op (class verb on
+  the record's own class, `canEdit()`, write policy and allowlist, `action` for `publish:
+  single`); no creates or relations. It is **open on live by default**:
+  `RecordUpdateHandler.disabled_environments` closes it per environment (`403 ENV_FORBIDDEN`,
+  `details[0].config` names the key), and `GET schema/site` reports `recordUpdateEnabled`. See
+  docs/en/04_security-model.md#live-writes-patch-recordsclassrefid for what it can reach. New
+  `content_records_update` tool in `schema/endpoints.json`.
 - **(#231)** Opt-in grant roots for `ContentApiGrantExtension`: `grant_roots` names ancestors
   (e.g. `SiteTree`, `BaseElement`) whose undeclared subclasses are granted the verbs they inherit;
   `grant_exclude` (shipping with `ErrorPage`, `RedirectorPage`, `VirtualPage`, `UserDefinedForm`)

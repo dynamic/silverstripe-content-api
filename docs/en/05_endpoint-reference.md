@@ -27,6 +27,7 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 | `GET` | `auth/session` | Token introspection: member, held permission codes, expiry |
 | `GET` | `records/$ClassRef` | List records, with filtering/sorting/pagination/stage |
 | `GET` | `records/$ClassRef/$ID` | Read one record — numeric id or `ext:<external-id>` |
+| `PATCH` | `records/$ClassRef/$ID` | Update one record's fields (live-safe, not population-gated) |
 | `GET` | `records/$ClassRef/$ID/parity` | Draft/live field diff for a record and its owned tree |
 | `GET` | `fingerprint` | Deterministic, path-keyed content snapshot + reachability check |
 | `POST` | `records/$ClassRef/$ID/publish\|unpublish\|archive` | Stage actions (`{"mode": "..."}` on publish and unpublish) |
@@ -40,9 +41,9 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 | `GET` | `schema/$ClassRef` | Per-class payload contract |
 | `GET` | `` (index) | `{"name": "silverstripe-content-api", "version": "v1"}` |
 
-> There is no `PUT`/`PATCH` route on this surface. Single-record field updates go through
-> `POST batch` (`op: "update"`) or a composition's sparse element upsert — see
-> [Batch operations](07_batch-operations.md).
+> `PATCH records/$ClassRef/$ID` updates one record's fields; there is no `PUT`, single-record
+> create or delete on this surface. Creates, relations and multi-record work go through
+> `POST batch` or a composition — see [Batch operations](07_batch-operations.md).
 
 ## `GET records/$ClassRef`
 
@@ -105,6 +106,33 @@ class not exposed to the content API at all appears in `meta.skipped`; a specifi
 can't view (e.g. a draft-only page, or one under a draft-changed parent, without
 `VIEW_DRAFT_CONTENT`) is simply absent from the
 response. Full reference: [Verification](16_verification.md#fingerprint).
+
+## `PATCH records/$ClassRef/$ID`
+
+Updates one existing record (numeric id or `ext:<external-id>`). Body:
+
+```json
+{ "fields": { "Title": "Fixed typo" }, "publish": "none" }
+```
+
+`fields` (required, non-empty) takes the same shapes as a batch op's `fields` (see
+[Write payloads](06_write-payloads.md)); `publish` is `none` (default, the change stays on draft)
+or `single`. Any other key, relations included, is `400 PAYLOAD_INVALID`: use `POST batch` for
+creates, relations and multi-record changes.
+
+It runs the batch `update` checks: the `update` verb on the record's own class plus `canEdit()`,
+the field write policy and allowlist (`422 READONLY_FIELD`/`UNKNOWN_FIELD`), and the `action`
+verb when `publish` is `single` (`403 FORBIDDEN_CLASS`, nothing written). It needs
+`CONTENT_API_ACCESS` only, not `CONTENT_API_POPULATE`, and is **not** behind the population
+environment gate, so it is the write that works on a live site. A project can close it per
+environment type with `RecordUpdateHandler.disabled_environments` (`403 ENV_FORBIDDEN`; see
+[Configuration](02_configuration.md#recordupdatehandler)); `GET schema/site` reports
+`recordUpdateEnabled`. Which fields it can reach is the class's write policy, and `publish:
+"single"` publishes the record's whole draft, pending editor changes included: see
+[Live writes](04_security-model.md#live-writes-patch-recordsclassrefid).
+
+Response: `data` is the updated record (with its `stage`), `meta.operation` is `updated`, and
+`meta.warnings` is present when the write raised any (e.g. `ACTION_VERB_MISSING`).
 
 ## `POST records/$ClassRef/$ID/{action}`
 
