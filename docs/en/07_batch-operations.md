@@ -41,7 +41,13 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
 ## Atomicity
 
 - **Non-atomic (default, `"atomic": false`)**: an operation that fails reports an `error` result
-  for that index and the rest continue independently.
+  for that index and the rest continue independently. That holds for any failure, not only an API
+  error: a value the field type can't take (an unparseable date, an array on a scalar column) is
+  that op's `422 INVALID_VALUE`, and an unexpected exception is that op's `SERVER_ERROR`, never a
+  500 that loses the other results. Each op's own writes, including a `delete` op's archive or
+  unpublish, run in their own transaction, so a write that fails leaves nothing half applied. (A
+  `SERVER_ERROR` raised after an op's write committed, while building its result, is rare but
+  means the write landed: re-read before retrying that index.)
 - **`"atomic": true`**: the whole batch runs inside one DB transaction. The first failing
   operation rolls everything back; the response reports `422 VALIDATION_FAILED` with the
   partial results (`rolledBack: true`) attached as `error.details`. Before `rolledBack: true`

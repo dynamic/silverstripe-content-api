@@ -12,15 +12,19 @@ use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
 use Dynamic\ContentApi\Write\RecordWriter;
 use Dynamic\ContentApi\Write\WriteApplicator;
+use Psr\Log\LoggerInterface;
+use SilverStripe\Assets\File;
 use SilverStripe\CMS\Controllers\RootURLController;
 use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Control\Director;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
-use SilverStripe\ORM\ValidationException;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\ValidationException;
 use SilverStripe\Security\Member;
 use SilverStripe\Versioned\Versioned;
+use Throwable;
 
 /**
  * Executes a full page composition in one atomic request: page match/create/
@@ -74,9 +78,16 @@ class CompositionService
      */
     protected array $refs = [];
 
+    /**
+     * @var File[] assets this run ingested that should go live; published by
+     *   publishDeferredAssets() once the composition's transaction commits
+     */
+    protected array $deferredAssetPublishes = [];
+
     public function compose(array $payload, Member $member): array
     {
         $this->refs = [];
+        $this->deferredAssetPublishes = [];
 
         $pageSpec = (array) ($payload['page'] ?? []);
         $publishMode = (string) ($payload['publish'] ?? 'none');
@@ -526,7 +537,19 @@ class CompositionService
         }
 
         ['meta' => $entry, 'warnings' => $warnings] = $this->assets->authorizeIngest($entry, $member);
+
+        // Written draft-only inside the composition's transaction and
+        // published after it commits (#238): publishing an overwritten file
+        // deletes its previously published bytes from the asset store, which
+        // a rollback of a later failure can't bring back.
+        $publish = (bool) $entry['publish'];
+        $entry['publish'] = false;
         $result = $this->assets->ingest($binary, $entry);
+
+        if ($publish) {
+            // Keyed by id: the same file named twice is published once.
+            $this->deferredAssetPublishes[(int) $result['record']->ID] = $result['record'];
+        }
 
         if ($ref !== null) {
             $this->refs[$ref] = $result['record'];
@@ -888,7 +911,57 @@ class CompositionService
             }
         }
 
-        return $this->publisher->publishOwnedTree($page, $member, $additional);
+        // Assets this run ingested are published after commit instead (see
+        // processAsset()), so the cascade leaves them alone even when the
+        // page's $owns tree reaches them; they still count as published.
+        $published = $this->publisher->publishOwnedTree(
+            $page,
+            $member,
+            $additional,
+            false,
+            $this->deferredAssetPublishes
+        );
+
+        foreach ($this->deferredAssetPublishes as $asset) {
+            array_splice($published, -1, 0, [['id' => (int) $asset->ID, 'className' => get_class($asset)]]);
+        }
+
+        return $published;
+    }
+
+    /**
+     * Publish the assets this run's compose() ingested for publishing. The
+     * caller runs this after the composition's transaction has committed,
+     * so a failure can only be reported: each one is logged and returned
+     * instead of thrown, and the remaining assets are still published.
+     *
+     * @return array<int, string> failed asset id => reason
+     */
+    public function publishDeferredAssets(): array
+    {
+        $failed = [];
+
+        foreach ($this->deferredAssetPublishes as $asset) {
+            try {
+                $asset->publishSingle();
+            } catch (Throwable $exception) {
+                Injector::inst()->get(LoggerInterface::class)->error(
+                    sprintf(
+                        'Composition asset #%d was saved but not published: %s',
+                        $asset->ID,
+                        $exception->getMessage()
+                    ),
+                    ['exception' => $exception]
+                );
+                $failed[(int) $asset->ID] = Director::isDev() || Director::isTest()
+                    ? $exception->getMessage()
+                    : 'publishing failed.';
+            }
+        }
+
+        $this->deferredAssetPublishes = [];
+
+        return $failed;
     }
 
     /**
