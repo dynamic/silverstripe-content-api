@@ -291,8 +291,9 @@ update) and, via `WriteGuardExtension`, colymba's own `/api` write path.
   `api_write_policy: allowlist`, **or implicitly the moment it declares a non-empty
   `api_writable_fields`** — even under the `guarded` global policy. There is no configuration
   where `api_writable_fields` is set but silently has no effect.
-- The protected-field denylist is an absolute floor: it applies under both policies, and — see
-  below — even to the trusted internal-fields channel.
+- The protected-field denylist applies under both policies. The global `protected_fields` part
+  is an absolute floor that also applies to the trusted internal-fields channel; a class's
+  `api_protected_fields` restricts client-supplied fields only (see below).
 
 A polymorphic has_one's FK and companion `{Name}Class` column are gated **as a pair** — both
 must independently pass `isFieldWritable()` (`isPolymorphicRelationWritable()`), never one
@@ -301,14 +302,16 @@ implicitly riding on the other's writability.
 ## The trusted internal-fields channel
 
 A small set of server-derived structural fields — currently a composition element's `ParentID`
-(the ElementalArea FK) — are written by in-process population machinery
+(the ElementalArea FK) and `Sort` — are written by in-process population machinery
 (`CompositionService::processElement()`) through a separate, trusted parameter
 (`WriteApplicator::applyFields()`'s `$internalFields` argument), never through the client's
 `fields` payload.
 
 - Bypasses the `api_writable_fields` allowlist check.
-- **Never** bypasses the `protected_fields`/`api_protected_fields` denylist — that floor is
-  absolute.
+- Bypasses the class's `api_protected_fields`, which restricts what clients may write. A project
+  can list `ParentID` there to keep it off the colymba PUT surface and batch payloads, and
+  compositions still attach elements.
+- **Never** bypasses the global `protected_fields` denylist — that floor is absolute.
 - Always wins over a same-named key in the untrusted `fields` payload, so a client can't smuggle
   its own value for a structural field under that name.
 - Only in-process module code populates it. Request-derived values must never flow into this

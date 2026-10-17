@@ -11,6 +11,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestLink;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Write\Transformers\LinkTransformer;
+use DNADesign\Elemental\Models\BaseElement;
 use DNADesign\Elemental\Models\ElementContent;
 use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\CMS\Model\SiteTree;
@@ -781,6 +782,44 @@ class CompositionTest extends ContentApiTestCase
 
         $area = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea();
         $element = ElementContent::get()->filter('FixtureIdentifier', 'parentid-e1')->first();
+
+        $this->assertNotNull($element);
+        $this->assertSame((int) $area->ID, (int) $element->ParentID);
+    }
+
+    /**
+     * #233: the guarded-policy setup lists an element's parent link in
+     * `api_protected_fields` to keep it off the client surfaces. A
+     * composition must still create and attach a new element under that
+     * config, because its `ParentID` is server-derived (trusted channel).
+     */
+    public function testNewElementAttachesWhenParentIdIsInApiProtectedFields(): void
+    {
+        Config::modify()->set(BaseElement::class, 'api_protected_fields', [
+            'ParentID',
+            'Parent',
+            'TopPage',
+            'TopPageID',
+        ]);
+
+        $page = $this->blockPage();
+        $payload = [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [
+                [
+                    'class' => 'ElementContent',
+                    'externalId' => 'protected-parent-e1',
+                    'fields' => ['Title' => 'Probe'],
+                ],
+            ],
+        ];
+
+        $response = $this->apiPost('compositions/page', $payload, $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $area = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea();
+        $element = ElementContent::get()->filter('FixtureIdentifier', 'protected-parent-e1')->first();
 
         $this->assertNotNull($element);
         $this->assertSame((int) $area->ID, (int) $element->ParentID);

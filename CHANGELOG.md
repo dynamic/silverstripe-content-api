@@ -20,6 +20,14 @@ All notable changes to this project are documented here. Format loosely follows
   restructure session ran through MCP tools).
 
 ### Fixed
+- **(#233)** `POST compositions/page` can create new elements again when a project lists an
+  element's parent link in `api_protected_fields` (`ParentID`/`Parent`, as the guarded-policy
+  setup does to keep it off the client surfaces). Previously every new element failed with
+  `READONLY_FIELD: Field "ParentID" is not writable`. A class's `api_protected_fields` now
+  restricts client-supplied fields only. The trusted internal-fields channel (a composition
+  element's server-derived `ParentID`/`Sort`) is not blocked by it. The global
+  `WriteApplicator.protected_fields` floor still applies to trusted writes. Client writes of a
+  field listed in `api_protected_fields` are still rejected on every surface.
 - **(#234)** The test suite now passes in a standalone module checkout, not only inside a host
   project. `ContentApiTestCase::getRequiredExtensions()` applies the extensions 22 tests relied on
   a host's exposure YAML for (`ExternalIdentifierExtension` on `File`/`BaseElement`,

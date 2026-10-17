@@ -70,7 +70,7 @@ Set directly on each DataObject class you expose — not on the module. These ar
 | `content_api_access` | `bool\|string` | unset | Same shape as `api_access`; **wins** when both are set. Lets a class have different colymba-vs-content-api exposure. Also inherited — see above |
 | `api_write_policy` | `'guarded'\|'allowlist'` | unset (falls back to `WriteApplicator.policy`) | Per-class override of the global write policy |
 | `api_writable_fields` | `string[]` | `[]` | Allowlist of client-writable db field / has_one relation names. **A non-empty array here puts the class into allowlist mode even under the `guarded` global policy** — declaring the allowlist is itself the opt-in, with no configuration that sets it and has it silently ignored |
-| `api_protected_fields` | `string[]` | `[]` | Per-class denylist, merged with the global `WriteApplicator.protected_fields`. Always wins over the allowlist, and still applies to the trusted internal-fields write channel |
+| `api_protected_fields` | `string[]` | `[]` | Per-class denylist, merged with the global `WriteApplicator.protected_fields`. Always wins over the allowlist. Restricts client-supplied fields only: the trusted internal-fields channel (a composition element's `ParentID`/`Sort`) is not blocked by it, so listing `ParentID` here keeps it off every client surface without breaking compositions |
 | `api_writable_relations` | `string[]` | `[]` | Allowlist of writable has_many/many_many relation names (a separate gate from `api_writable_fields`, which only covers db fields and has_one) |
 | `api_unknown_fields` | `'strict'\|'lenient'` | unset (falls back to `WriteApplicator.unknown_fields`) | Per-class override: `strict` rejects an unrecognized payload key with `UNKNOWN_FIELD`; `lenient` warns and continues |
 | `api_fields` | `string[]` | unset (all fields serialized) | `RecordSerializer` output whitelist. Entries may be db fields, relation names, **or `getFoo()` getter-backed properties** (getters are only honored when `api_fields` is explicitly set) |
@@ -157,7 +157,7 @@ the log the way it does on the wire.
 | Key | Default | Purpose |
 |---|---|---|
 | `policy` | `'guarded'` | Global write policy: `guarded` (protected-field denylist, everything else writable) or `allowlist` (only `api_writable_fields` entries writable) |
-| `protected_fields` | `ID, ClassName, Created, LastEdited, Version, Password, Salt, PasswordEncryption, AutoLoginHash, TempIDHash, ApiToken, ApiTokenExpire` | Global denylist — never writable regardless of policy, merged with per-class `api_protected_fields`. This floor also applies to the trusted internal-fields channel |
+| `protected_fields` | `ID, ClassName, Created, LastEdited, Version, Password, Salt, PasswordEncryption, AutoLoginHash, TempIDHash, ApiToken, ApiTokenExpire` | Global denylist — never writable regardless of policy, merged with per-class `api_protected_fields`. This global floor also applies to the trusted internal-fields channel |
 | `unknown_fields` | `'strict'` | Global default for unrecognized payload keys, overridable per class via `api_unknown_fields` |
 | `transformers` | `[]` | Ordered list of `ValueTransformer` service refs, first-match-wins. The essentials/linkfield config docs (below) append to this list when their integration is installed |
 
