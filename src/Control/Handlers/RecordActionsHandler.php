@@ -121,6 +121,17 @@ class RecordActionsHandler
             $record = $this->reader->fetchRecord($className, (string) $request->param('ID'));
             $this->policy->checkRecordAccess($record, $verb, $context->member);
 
+            // A stricter canPublish()/canUnpublish() than canEdit() is
+            // honoured as the CMS honours it (#235). Publish's check runs in
+            // PublishOrchestrator::publish() for every mode; unpublish's here.
+            // Archive takes a published record off Live too, so it needs
+            // canUnpublish() as the CMS's canArchive() does.
+            $isLive = $record->hasExtension(Versioned::class) && $record->isPublished();
+
+            if ($action === 'unpublish' || ($action === 'archive' && $isLive)) {
+                $this->policy->checkStageAccess($record, 'unpublish', $context->member);
+            }
+
             if ($forceUnpublish) {
                 $this->policy->checkRecordAccess($record, 'delete', $context->member);
             }

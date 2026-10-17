@@ -424,10 +424,12 @@ class PublishOrchestratorTest extends ContentApiTestCase
         // ApiTestPage's own api_access starts as `true` (full access, set
         // in ContentApiTestCase::setUp()) — narrow it to `read` only, so
         // checkClassAccess('action', ...) refuses regardless of $member.
+        // Published as ADMIN so the root's own record-level canPublish()
+        // check (#235) passes and the refusal comes from the descendant.
         Config::modify()->set(ApiTestPage::class, 'api_access', 'read');
 
         try {
-            $this->orchestrator->publish($root, 'subtree', $this->apiMember());
+            $this->orchestrator->publish($root, 'subtree', $this->adminMember());
             $this->fail('expected an ApiError');
         } catch (ApiError $error) {
             $this->assertSame('FORBIDDEN_CLASS', $error->toArray()['code']);
@@ -1322,5 +1324,88 @@ class PublishOrchestratorTest extends ContentApiTestCase
         return (bool) Versioned::get_by_stage(ApiTestHierarchyObject::class, Versioned::LIVE)
             ->filter('ID', $id)
             ->exists();
+    }
+
+    /**
+     * #226: `recursive` publishes every $owns-reachable draft, so an owned
+     * class without `action` refuses the whole call, as `owns` does.
+     */
+    public function testRecursiveModeRefusesWhenAnOwnedClassDoesNotGrantTheActionVerb(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Recursive Gated Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Recursive Gated Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', 'read');
+
+        try {
+            $this->orchestrator->publish($parent, 'recursive', $this->adminMember());
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            $this->assertSame('FORBIDDEN_CLASS', $error->toArray()['code']);
+        }
+
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID));
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedChildObject::class, $child->ID));
+    }
+
+    public function testRecursiveModeRefusesWhenTheMemberCannotPublishAnOwnedRecord(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Recursive Record-Gated Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create([
+            'Title' => 'Recursive Record-Gated Child',
+            'ParentID' => $parent->ID,
+        ]);
+        $child->write();
+
+        try {
+            $this->orchestrator->publish($parent, 'recursive', $this->apiMember());
+            $this->fail('expected an ApiError');
+        } catch (ApiError $error) {
+            // The root's own canPublish() refuses first here; the
+            // child-level refusal is CascadeStageAccessTest's.
+            $this->assertSame('FORBIDDEN_RECORD', $error->toArray()['code']);
+        }
+
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID));
+        $this->assertFalse($this->isLiveRecord(ApiTestOwnedChildObject::class, $child->ID));
+    }
+
+    public function testRecursiveModeStillPublishesTheOwnedTreeWhenAuthorized(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Recursive Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Recursive Child', 'ParentID' => $parent->ID]);
+        $child->write();
+
+        $this->orchestrator->publish($parent, 'recursive', $this->adminMember());
+
+        $this->assertTrue($this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID));
+        $this->assertTrue($this->isLiveRecord(ApiTestOwnedChildObject::class, $child->ID));
+    }
+
+    /**
+     * An owned record whose draft and live already match is left untouched
+     * by publishRecursive(), so `recursive` does not refuse over it.
+     */
+    public function testRecursiveModeSkipsAnOwnedRecordThatIsAlreadyLiveAndUnchanged(): void
+    {
+        $parent = ApiTestOwnedParentObject::create(['Title' => 'Recursive Shared Parent']);
+        $parent->write();
+
+        $child = ApiTestOwnedChildObject::create(['Title' => 'Already live', 'ParentID' => $parent->ID]);
+        $child->write();
+        $child->publishSingle();
+
+        Config::modify()->set(ApiTestOwnedChildObject::class, 'api_access', 'read');
+
+        $this->orchestrator->publish($parent, 'recursive', $this->adminMember());
+
+        $this->assertTrue($this->isLiveRecord(ApiTestOwnedParentObject::class, $parent->ID));
     }
 }

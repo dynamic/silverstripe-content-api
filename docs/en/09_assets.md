@@ -20,7 +20,7 @@ Populate's `PopulateFileFrom` handling. Population-domain endpoint: requires
 | `title` | no | — | Sets `File.Title` |
 | `externalId` | no | — | Sets the external-id column if the resolved class supports it |
 | `conflict` | no | `overwrite` | `overwrite`, `skip`, or `rename` — see below |
-| `publish` | no | `true` | Whether to `publishSingle()` after write |
+| `publish` | no | `true` | Whether to `publishSingle()` after write. A boolean, `1`/`0`, or the strings `"true"`/`"false"`/`"1"`/`"0"` (multipart form fields included); anything else is `400 PAYLOAD_INVALID` |
 
 An empty binary is `502 ASSET_READ_FAILED`. The target class is resolved from the file
 extension (`File::get_class_for_file_extension()`), or from an existing file's class at the
@@ -37,8 +37,29 @@ When a file already exists at `folder/filename`:
 | Mode | Behavior |
 |---|---|
 | `overwrite` (default) | Replace content on the existing record. **Skipped** (no store write) when the uploaded content's SHA-1 hash matches the existing file's — same content is a no-op beyond metadata |
-| `skip` | Return the existing record untouched, ignoring the new binary entirely |
+| `skip` | Return the existing record untouched: the new binary, `title`, `externalId` and `publish` are all ignored |
 | `rename` | Store under a deduplicated filename as a **new** record — never reuses the existing one |
+
+The existing file is looked up on the draft stage, so a draft-only file at the path counts.
+
+### Authorization
+
+The verbs an upload needs depend on what it does to which record:
+
+- **New file** (nothing at the path, or `rename`): `create` on the class the extension maps to,
+  plus `canCreate()` with the target folder as `Parent`. A folder that does not exist yet also
+  needs `Folder::canCreate()`.
+- **`overwrite`**: `update` on the existing file's class plus `canEdit()`.
+- **`skip`**: `read` only.
+- **Publishing** (`publish` true; the default for `POST assets`): `action` on the class written. When `publish`
+  is not sent and the class lacks `action`, the file is written draft-only and the response's
+  `data.warnings` carries `ACTION_VERB_MISSING`. An explicit `"publish": true` without `action`
+  is `403 FORBIDDEN_CLASS`.
+
+Verbs are read from the asset's governing class: the nearest class in its ancestry (`Image` →
+`File`) that declares any. Composition `assets[]` entries use the same rules, except that an
+entry without its own `publish` follows the composition's mode (draft-only under `"none"`, the
+composition default).
 
 ### Hash-skip always returns the full record
 
