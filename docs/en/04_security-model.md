@@ -233,6 +233,29 @@ Practical effect: adopting `unpublish`'s `owns` mode never requires the `File`/`
 grant the publish side does, and shortens the grant checklist for a project that only needs the
 unpublish half.
 
+### Composition and asset paths
+
+Every path that writes, archives or publishes a record checks the verb for what it does to that
+record, at both the class and record level (`PermissionPolicy::authorize()` pairs the two):
+
+| Path | Class verb | Record check |
+|---|---|---|
+| Composition with `page.fields` | page `update` | `canEdit()` |
+| Composition without `page.fields` (match only) | page `update` | `canEdit()` |
+| Composition `createIfMissing` | page `create` | `canCreate()`, with `parentId` (which must exist) as `Parent` |
+| Composition `prune` | `delete` on each archived element | `canDelete()` on each, all checked before any is archived |
+| `POST assets` / composition `assets[]`, new file | `create` on the class the extension maps to | `canCreate()` with the target folder as `Parent`; `Folder::canCreate()` when the folder is missing |
+| `POST assets` / composition `assets[]`, `overwrite` | `update` on the existing file's class | `canEdit()` |
+| `POST assets` / composition `assets[]`, `skip` | `read` | `canView()` (nothing is written) |
+| Asset publish (`publish` true, the default) | `action` | `canEdit()` for an existing file |
+
+An asset class's verbs are read from its governing class: the nearest class in its ancestry
+(`Image` → `File`) that declares any. When an asset upload does not send `publish` and its
+class lacks `action`, the file is written draft-only and the response carries an
+`ACTION_VERB_MISSING` warning; an explicit `"publish": true` without `action` is `403
+FORBIDDEN_CLASS`. A composition `assets[]` entry without its own `publish` follows the
+composition's: draft-only under `publish: "none"`.
+
 ## Record-level gate
 
 `PermissionPolicy::checkRecordAccess()` calls the model's own permission method for the verb:

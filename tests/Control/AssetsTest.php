@@ -8,6 +8,7 @@ use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\Assets\File;
 use SilverStripe\Assets\Image;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Versioned\Versioned;
 
 class AssetsTest extends ContentApiTestCase
 {
@@ -27,7 +28,7 @@ class AssetsTest extends ContentApiTestCase
 
         $this->adminToken = $this->mintTokenFor('adminUser');
 
-        Config::modify()->set(File::class, 'api_access', 'read,create');
+        Config::modify()->set(File::class, 'api_access', 'read,create,update,action');
     }
 
     protected function tearDown(): void
@@ -304,5 +305,104 @@ class AssetsTest extends ContentApiTestCase
         $body = $this->decode($this->apiGet("assets/{$uploaded['data']['id']}", $this->adminToken));
 
         $this->assertSame($uploaded['data']['id'], $body['data']['id']);
+    }
+
+    /**
+     * #235: overwriting an existing file changes that record, so it needs
+     * `update` on its class, not just `create`.
+     */
+    public function testOverwriteRequiresTheUpdateVerb(): void
+    {
+        [, $first] = $this->uploadPixel();
+        Config::modify()->set(File::class, 'api_access', 'read,create,action');
+
+        [$response] = $this->uploadPixel(['base64' => base64_encode('replacement')]);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertSame($first['data']['hash'], File::get()->byID($first['data']['id'])->getHash());
+    }
+
+    /**
+     * #235: the existing-file lookup reads the draft stage, so a draft-only
+     * file is an overwrite (needs `update`), not a fresh create.
+     */
+    public function testOverwriteOfADraftOnlyFileIsStillAnOverwrite(): void
+    {
+        [, $first] = $this->uploadPixel(['publish' => false]);
+        $this->assertFalse($first['data']['stage']['live']);
+        Config::modify()->set(File::class, 'api_access', 'read,create,action');
+
+        [$response] = $this->uploadPixel(['base64' => base64_encode('replacement')]);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+    }
+
+    /**
+     * #246: `conflict: skip` is a true no-op, so it needs only `read` and
+     * leaves Title and the external id alone.
+     */
+    public function testSkipNeedsOnlyReadAndWritesNothing(): void
+    {
+        [, $first] = $this->uploadPixel(['title' => 'Hero']);
+        Config::modify()->set(File::class, 'api_access', 'read');
+
+        [$response, $second] = $this->uploadPixel([
+            'base64' => base64_encode('different'),
+            'conflict' => 'skip',
+            'title' => 'Changed',
+            'externalId' => 'img-other',
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame($first['data']['id'], $second['data']['id']);
+
+        $file = File::get()->byID($first['data']['id']);
+        $this->assertSame('Hero', $file->Title);
+        $this->assertSame('img-pixel', $file->getField('FixtureIdentifier'));
+        $this->assertFalse($file->isModifiedOnDraft());
+    }
+
+    /**
+     * #235: publishing needs `action`. With `publish` not sent, a class
+     * without it gets a draft-only file plus ACTION_VERB_MISSING.
+     */
+    public function testImplicitPublishWithoutActionWritesDraftWithAWarning(): void
+    {
+        Config::modify()->set(File::class, 'api_access', 'read,create');
+
+        [$response, $body] = $this->uploadPixel();
+
+        $this->assertSame(201, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertFalse($body['data']['stage']['live']);
+        $this->assertSame('ACTION_VERB_MISSING', $body['data']['warnings'][0]['code']);
+        $this->assertNull(Versioned::get_by_stage(File::class, Versioned::LIVE)->byID($body['data']['id']));
+    }
+
+    public function testExplicitPublishWithoutActionIsRefused(): void
+    {
+        Config::modify()->set(File::class, 'api_access', 'read,create');
+
+        [$response] = $this->uploadPixel(['publish' => true]);
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertNull(File::get()->filter('FileFilename', 'api-test/pixel.png')->first());
+    }
+
+    /**
+     * #239: a JSON string "false" must not read as true.
+     */
+    public function testPublishStringFalseWritesDraftOnly(): void
+    {
+        [$response, $body] = $this->uploadPixel(['publish' => 'false']);
+
+        $this->assertSame(201, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertFalse($body['data']['stage']['live']);
+    }
+
+    public function testUnparseablePublishIsRejected(): void
+    {
+        [$response] = $this->uploadPixel(['publish' => 'sometimes']);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }
 }

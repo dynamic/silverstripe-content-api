@@ -105,6 +105,21 @@ class PermissionPolicy
     }
 
     /**
+     * Gate a verb on a loaded record at both levels: the record's own class
+     * must expose the verb (checkClassAccess()) and the model's can*() must
+     * allow it (checkRecordAccess()). Use this on any path that changes or
+     * publishes a record it did not get from an already-authorized write,
+     * e.g. a composition's prune or an asset overwrite.
+     *
+     * @throws ApiError FORBIDDEN | FORBIDDEN_CLASS | FORBIDDEN_RECORD
+     */
+    public function authorize(DataObject $record, string $verb, Member $member): void
+    {
+        $this->checkClassAccess(get_class($record), $verb, $member);
+        $this->checkRecordAccess($record, $verb, $member);
+    }
+
+    /**
      * Whether a member may see a record at all (used for filtering lists
      * without throwing).
      */
