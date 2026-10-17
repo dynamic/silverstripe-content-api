@@ -118,7 +118,7 @@ class AssetService
                 $this->policy->checkClassAccess($governing, 'action', $member);
 
                 if ($existing && $conflict === 'overwrite') {
-                    $this->policy->checkRecordAccess($existing, 'action', $member);
+                    $this->policy->checkStageAccess($existing, 'publish', $member);
                 }
             }
         }

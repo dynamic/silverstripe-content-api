@@ -122,6 +122,38 @@ class PermissionPolicy
     }
 
     /**
+     * Record-level gate for a stage transition: `publish` asks the model's
+     * canPublish(), `unpublish` its canUnpublish(), falling back to
+     * canEdit() for a model without them (#235). Versioned and SiteTree
+     * consult extensions before falling back to canEdit() themselves, so a
+     * project that allows edit but denies publish is honoured the way the
+     * CMS honours it. The class-level verb for both stays `action`.
+     *
+     * @throws ApiError FORBIDDEN_RECORD
+     */
+    public function checkStageAccess(DataObject $record, string $operation, Member $member): void
+    {
+        $method = match ($operation) {
+            'publish' => 'canPublish',
+            'unpublish' => 'canUnpublish',
+            default => throw new \InvalidArgumentException(sprintf('Unknown stage operation "%s".', $operation)),
+        };
+
+        // canPublish()/canUnpublish() come from the Versioned extension (and
+        // SiteTree), so they are only known at runtime.
+        $allowed = $record->hasMethod($method)
+            ? (bool) call_user_func([$record, $method], $member)
+            : $record->canEdit($member);
+
+        if (!$allowed) {
+            throw new ApiError(
+                ErrorCode::FORBIDDEN_RECORD,
+                sprintf('Not allowed to %s %s #%d.', $operation, $record->ClassName, $record->ID)
+            );
+        }
+    }
+
+    /**
      * Whether a member may see a record at all (used for filtering lists
      * without throwing).
      */
