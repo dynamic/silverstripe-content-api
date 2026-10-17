@@ -104,7 +104,9 @@ class RecordWriter
         }
 
         if ($existing) {
-            $this->policy->checkClassAccess($className, 'update', $member);
+            // The row found may be a subclass of the requested class, so the
+            // gate is its own class (#236).
+            $this->policy->checkClassAccess(get_class($existing), 'update', $member);
             $this->policy->checkRecordAccess($existing, 'update', $member);
 
             return $this->write($existing, $payload, 'updated', $member, $internalFields);

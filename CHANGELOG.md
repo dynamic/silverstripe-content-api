@@ -128,7 +128,43 @@ All notable changes to this project are documented here. Format loosely follows
   `?token=` must send the `X-Silverstripe-Apitoken` header (or set `tokenQueryVar: token`).
   Landed on branch `1` first (unreleased), merged up here.
 
+- **(#236)** Read-side exposure closed on `/content-api/v1`:
+  - A subclass that explicitly denies or narrows its ancestor's verbs stays denied when its row
+    is reached through the ancestor's ref. Reads, list rows (and `meta.total`), stage actions
+    (including the forced-unpublish `delete` check), parity and upsert-to-existing all check
+    the record's own class. Asset endpoints resolve the nearest class that *declares* access,
+    so an explicitly denied `Image` is no longer governed by `File`'s grant.
+  - List filters and sorts accept only columns a response can show (`api_fields`, emitted
+    has_one FKs, `ID`, the external-id column, minus `hidden_fields`). A withheld column used to
+    leak its value through which rows matched.
+  - `GET schema/$ClassRef` refuses a mapped class with no verbs (`403 FORBIDDEN_CLASS`) instead
+    of serving its full field inventory.
+  - Every response carries `Cache-Control: no-cache, no-store, must-revalidate, private`.
+
+  **Behavior change:** ancestor-ref reads and actions on explicitly denied subclass rows return
+  `403` and list totals drop; filtering or sorting on a never-emitted column returns `422`
+  (`ClassName`, `ID` and the external-id column stay filterable). A project that set
+  `Image: api_access: false` meaning "no opinion, use File's" must remove the key instead: an
+  explicit `false` on an asset class is now a deny.
+  Landed on branch `1` first (unreleased), merged up here.
+
 ### Changed
+- **(#238)** Partial-failure atomicity:
+  - A batch op's failure is always that op's own result. An unsettable value (unparseable
+    Date/Datetime, an array on a scalar column) is `422 INVALID_VALUE`, and any other exception is
+    a per-op `SERVER_ERROR`. Either used to escape as a `500` that dropped every result and left
+    earlier non-atomic ops committed.
+  - Archive, unpublish and non-versioned delete (batch `delete` op and the `archive` action) run
+    in a transaction, so a hook that throws mid-archive no longer leaves a record unpublished but
+    still on draft.
+  - `subtree` and `owns` publish cascades run in one transaction for every caller, so a hook
+    failing on target N no longer leaves targets 1..N-1 live.
+  - Composition assets are ingested draft-only and published after the composition's
+    transaction commits. A later failure no longer deletes an overwritten file's previously
+    published bytes from the asset store. A post-commit publish that fails is a warning on that
+    asset (and it is left out of `published`), not a 500 over a committed composition.
+    Overwriting a never-published file is still destructive on failure; see docs 08.
+  Landed on branch `1` first (unreleased), merged up here.
 - **(#238)** `POST pages/$ID/convert` runs the class change and the publish in one transaction.
   A refused publish now rolls the conversion back (`(convert rolled back)` in the message)
   instead of leaving the draft converted behind a 403. A publishing convert reports what it
@@ -140,6 +176,23 @@ All notable changes to this project are documented here. Format loosely follows
   Landed on branch `1` first (unreleased), merged up here.
 
 ### Fixed
+- **(#239)** Silent successes on stage state:
+  - `unpublish`, `archive` and batch `delete` of a record whose live row is a different class
+    from its draft (a draft-only class conversion) refuse with a new `409 STAGE_CLASS_MISMATCH`.
+    They used to answer 200 with the old-class page still live, and archive also deleted the
+    draft row. A draft converted to an ancestor class is unaffected (Versioned finds that live
+    row).
+  - `POST records/$ClassRef/$ID/publish` with `{"mode": "none"}` is `400 PAYLOAD_INVALID`
+    instead of a no-op answering `published`.
+  - The `stage` block reads Versioned (`isOnDraft()`, `isModifiedOnDraft()`): a live-only
+    record now reports `draft: false, modifiedOnDraft: false` instead of a hardcoded draft.
+  - An unknown many_many `extraFields` key is `422 UNKNOWN_FIELD` under `strict` (a warning,
+    and the key dropped, otherwise), instead of being dropped while the op reported `updated`.
+    A through relation's join `ID` and foreign-key columns are never valid `extraFields` keys,
+    so a client can no longer re-point a join row at a record it isn't authorized for.
+
+  **Behavior change:** callers relying on any of those 2xx answers now get the error.
+  Landed on branch `1` first (unreleased), merged up here.
 - **(#235)** A has_one integer or `{"id": n}` must name an existing record (`404 NOT_FOUND`),
   as the `{"externalId"}` shape and has_many/many_many items already must; `0` still clears.
   A dangling foreign key used to be stored and reported as `updated`.

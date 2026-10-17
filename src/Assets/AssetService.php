@@ -130,17 +130,21 @@ class AssetService
 
     /**
      * The class that governs API access for an asset record. Asset endpoints
-     * take no classRef, so walk the concrete class's ancestry (e.g. Image →
-     * File) and return the nearest class that is actually granted access;
-     * fall back to File so a fully-ungranted asset still fails the
-     * deny-by-default check.
+     * take no classRef, so walk the concrete class's ancestry (Image → File)
+     * and return the nearest class that declares `api_access` /
+     * `content_api_access` itself — including an explicit deny. An Image
+     * granted on its own (the README quick-start) governs itself; an Image
+     * that declares nothing falls through to File; an Image that explicitly
+     * denies stays denied. (The walk used to skip any class with no verbs,
+     * which turned that explicit deny into File's grant, #236.) Falls back to
+     * File so a fully undeclared asset still fails deny-by-default.
      */
     public function governingAssetClass(string $concreteClass): string
     {
         $candidate = $concreteClass;
 
         while ($candidate) {
-            if ($this->registry->accessVerbs($candidate) !== []) {
+            if ($this->registry->declaresAccess($candidate)) {
                 return $candidate;
             }
 

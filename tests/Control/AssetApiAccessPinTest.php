@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Assets\AssetService;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use SilverStripe\Assets\File;
 use SilverStripe\Assets\Image;
@@ -28,15 +29,18 @@ use SilverStripe\Core\Config\Config;
  */
 class AssetApiAccessPinTest extends ContentApiTestCase
 {
-    public function testFileAndImageArePinnedToNoAccessByDefault(): void
+    public function testFileIsPinnedToNoAccessAndImageGovernsThroughIt(): void
     {
         $this->assertFalse(
             Config::inst()->get(File::class, 'api_access', Config::UNINHERITED),
             'ContentApiTestCase::setUp() should pin File::api_access to false'
         );
-        $this->assertFalse(
+        // Image's own declaration is removed (not set to false, which is an
+        // explicit deny since #236), so it governs through File.
+        $this->assertNull(
             Config::inst()->get(Image::class, 'api_access', Config::UNINHERITED),
-            'ContentApiTestCase::setUp() should pin Image::api_access to false'
+            'ContentApiTestCase::setUp() should remove Image::api_access'
         );
+        $this->assertSame(File::class, AssetService::singleton()->governingAssetClass(Image::class));
     }
 }

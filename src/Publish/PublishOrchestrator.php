@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Verify\OwnedTreeWalker;
+use Dynamic\ContentApi\Write\DbTransaction;
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Assets\File;
@@ -229,10 +230,15 @@ class PublishOrchestrator
     {
         $targets = $this->collectSubtreeTargets($record, $member, $liveOnly, true);
 
+        // One transaction for the whole cascade (#238): authorization is
+        // checked before the loop, but a publish hook or DB error on target
+        // N would otherwise leave targets 1..N-1 live behind a bare error.
         if (!$dryRun) {
-            foreach ($targets as $target) {
-                $target->publishSingle();
-            }
+            DbTransaction::run(function () use ($targets) {
+                foreach ($targets as $target) {
+                    $target->publishSingle();
+                }
+            });
         }
 
         return array_map(fn (DataObject $target) => $this->subtreeEntry($target), $targets);
@@ -421,6 +427,8 @@ class PublishOrchestrator
      * caller.
      *
      * @param DataObject[] $additional
+     * @param DataObject[] $deferred records left out of this cascade because
+     *   the caller publishes them itself afterwards
      * @return array<int, array{id: int, className: string}> every record
      *   published (or, under `dryRun`, that would be published) — `$root`
      *   included, last
@@ -430,7 +438,8 @@ class PublishOrchestrator
         DataObject $root,
         Member $member,
         array $additional = [],
-        bool $dryRun = false
+        bool $dryRun = false,
+        array $deferred = []
     ): array {
         $this->assertVersioned($root, 'publish the owned tree of');
 
@@ -475,6 +484,13 @@ class PublishOrchestrator
 
         unset($targets[get_class($root) . ':' . $root->ID]);
 
+        // `$deferred` records the caller publishes itself later (a
+        // composition's ingested assets, published after its transaction
+        // commits): neither checked nor published here.
+        foreach ($deferred as $record) {
+            unset($targets[get_class($record) . ':' . $record->ID]);
+        }
+
         // The root's class verb is the caller's check; its record-level
         // publish check runs here like every target's (#235).
         $this->policy->checkStageAccess($root, 'publish', $member);
@@ -483,12 +499,15 @@ class PublishOrchestrator
             $this->assertDescendantPublishable($target, $member);
         }
 
+        // One transaction for the whole cascade, as publishSubtree() (#238).
         if (!$dryRun) {
-            foreach ($targets as $target) {
-                $target->publishSingle();
-            }
+            DbTransaction::run(function () use ($targets, $root) {
+                foreach ($targets as $target) {
+                    $target->publishSingle();
+                }
 
-            $root->publishSingle();
+                $root->publishSingle();
+            });
         }
 
         $entries = array_map(fn (DataObject $target) => $this->subtreeEntry($target), array_values($targets));
@@ -577,13 +596,17 @@ class PublishOrchestrator
             return $this->unpublishOwnedTree($record, $member, $force, $dryRun);
         }
 
+        $this->assertStagesShareClass($record, 'unpublish');
+
         if (!$force) {
             $this->assertNoDescendants($record, [Versioned::LIVE], 'Unpublishing');
         } else {
             $this->logForcedBypass($record, [Versioned::LIVE], 'Unpublishing');
         }
 
-        $record->doUnpublish();
+        // doUnpublish() deletes the Live row and then runs hooks; a hook
+        // that throws must not leave the record half taken down (#238).
+        DbTransaction::run(fn () => $record->doUnpublish());
 
         return null;
     }
@@ -654,6 +677,8 @@ class PublishOrchestrator
      */
     protected function unpublishOwnedTree(DataObject $root, Member $member, bool $force, bool $dryRun = false): array
     {
+        $this->assertStagesShareClass($root, 'unpublish');
+
         $walked = $this->ownedTreeWalker->walkOwnedExcluding($root, PublishOrchestrator::UNPUBLISH_EXCLUDED_CLASSES);
 
         $targets = [];
@@ -713,6 +738,45 @@ class PublishOrchestrator
             'unpublished' => $unpublished,
             'skipped' => $skipped,
         ];
+    }
+
+    /**
+     * Refuse an unpublish/archive when the record's live row is a different
+     * class from its draft (a draft-only class conversion, #239).
+     * Versioned's doUnpublish() re-reads the live row through the draft
+     * row's class, misses the old-class row, and reports success while the
+     * page stays live; doArchive() would also delete the draft row, leaving
+     * the live one unreachable by any stage action. Read by base class so
+     * the live row is found whatever its class.
+     *
+     * @throws ApiError STAGE_CLASS_MISMATCH
+     */
+    protected function assertStagesShareClass(DataObject $record, string $action): void
+    {
+        $live = Versioned::withVersionedMode(function () use ($record) {
+            Versioned::set_stage(Versioned::LIVE);
+
+            return DataObject::get_by_id($record->baseClass(), (int) $record->ID);
+        });
+
+        // Versioned re-reads the live row through the draft row's class and
+        // its subclasses, so only a live row outside that tree is missed
+        // (a draft converted to an ancestor still unpublishes correctly).
+        if ($live && !is_a($live, get_class($record))) {
+            throw new ApiError(
+                ErrorCode::STAGE_CLASS_MISMATCH,
+                sprintf(
+                    'Cannot %s %s #%d: it is live as %s but %s on draft (a draft-only class conversion). '
+                        . 'Publish the conversion first, then %s.',
+                    $action,
+                    $record->ClassName,
+                    $record->ID,
+                    $live->ClassName,
+                    $record->ClassName,
+                    $action
+                )
+            );
+        }
     }
 
     /**
@@ -882,6 +946,7 @@ class PublishOrchestrator
     public function archive(DataObject $record, bool $force = false): void
     {
         $this->assertVersioned($record, 'archive');
+        $this->assertStagesShareClass($record, 'archive');
 
         $stages = [Versioned::LIVE, Versioned::DRAFT];
 
@@ -891,7 +956,9 @@ class PublishOrchestrator
             $this->logForcedBypass($record, $stages, 'Archiving');
         }
 
-        $record->doArchive();
+        // doArchive() unpublishes, records a deleted version and deletes the
+        // draft row, with hooks between; all or nothing (#238).
+        DbTransaction::run(fn () => $record->doArchive());
     }
 
     /**
@@ -922,7 +989,7 @@ class PublishOrchestrator
         }
 
         if (!$isVersioned) {
-            $record->delete();
+            DbTransaction::run(fn () => $record->delete());
 
             return;
         }

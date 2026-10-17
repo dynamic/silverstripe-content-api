@@ -43,6 +43,15 @@ use Throwable;
  */
 class ContentApiController extends Controller
 {
+    /**
+     * Every response is per-token and may carry draft content, so no shared
+     * or browser cache may store it (#236). Set on the response itself: the
+     * framework's HTTPCacheControlMiddleware only goes private/no-store for
+     * a session or an error, and this API is stateless with its token in a
+     * custom header, not Authorization.
+     */
+    public const CACHE_CONTROL = 'no-cache, no-store, must-revalidate, private';
+
     private static array $url_handlers = [
         'GET auth/session' => 'handleAuthSession',
         'POST records/$ClassRef!/$ID!/$RecordAction!' => 'handleRecordAction',
@@ -453,7 +462,8 @@ class ContentApiController extends Controller
         ];
 
         return HTTPResponse::create(json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), $status)
-            ->addHeader('Content-Type', 'application/json');
+            ->addHeader('Content-Type', 'application/json')
+            ->addHeader('Cache-Control', ContentApiController::CACHE_CONTROL);
     }
 
     protected function errorResponse(ApiError $error): HTTPResponse
@@ -465,6 +475,7 @@ class ContentApiController extends Controller
         ];
 
         return HTTPResponse::create(json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), $error->getStatus())
-            ->addHeader('Content-Type', 'application/json');
+            ->addHeader('Content-Type', 'application/json')
+            ->addHeader('Cache-Control', ContentApiController::CACHE_CONTROL);
     }
 }

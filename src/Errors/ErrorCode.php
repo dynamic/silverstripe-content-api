@@ -41,6 +41,7 @@ enum ErrorCode: string
     case CROSS_PAGE_REPARENT = 'CROSS_PAGE_REPARENT';
     case ACTION_VERB_MISSING = 'ACTION_VERB_MISSING';
     case VALUE_SANITISED = 'VALUE_SANITISED';
+    case STAGE_CLASS_MISMATCH = 'STAGE_CLASS_MISMATCH';
 
     public function httpStatus(): int
     {
@@ -52,7 +53,7 @@ enum ErrorCode: string
             ErrorCode::METHOD_NOT_ALLOWED => 405,
             ErrorCode::MULTIPLE_MATCHES, ErrorCode::ALREADY_EXISTS, ErrorCode::ASSET_CONFLICT,
             ErrorCode::URLSEGMENT_COLLISION, ErrorCode::UNPUBLISH_STRANDS_DESCENDANTS,
-            ErrorCode::CROSS_PAGE_REPARENT => 409,
+            ErrorCode::CROSS_PAGE_REPARENT, ErrorCode::STAGE_CLASS_MISMATCH => 409,
             ErrorCode::VALIDATION_FAILED, ErrorCode::UNKNOWN_FIELD, ErrorCode::READONLY_FIELD,
             ErrorCode::INVALID_VALUE, ErrorCode::UNKNOWN_RELATION, ErrorCode::UNRESOLVED_REF, ErrorCode::CIRCULAR_REF,
             ErrorCode::EXTERNAL_ID_UNSUPPORTED, ErrorCode::TOKEN_RESOLUTION_FAILED,
