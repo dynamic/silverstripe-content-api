@@ -6,6 +6,7 @@ use Dynamic\ContentApi\Assets\AssetService;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
+use Dynamic\ContentApi\Publish\OwnedLinks;
 use Dynamic\ContentApi\Publish\PublishOrchestrator;
 use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
@@ -503,6 +504,7 @@ class CompositionService
         /** @var SiteTree $converted */
         $converted = $page->newClassInstance($targetClass);
         $converted->write();
+        OwnedLinks::singleton()->restampOwnerClass($converted);
 
         return $converted;
     }

@@ -182,7 +182,9 @@ All notable changes to this project are documented here. Format loosely follows
     longer leaves a live orphan link. When the owner publishes, a link replaced by a type change
     is archived.
   - In a publish cascade an owned link is gated on its owner's class `action` verb instead of
-    the `Link` class's, plus its own `canPublish()`.
+    the `Link` class's (checked even for an owner the cascade finds unchanged), plus its own
+    `canPublish()`. A replaced link another record still points at (a duplicated owner's copy)
+    is never archived. A page convert re-stamps its links' `OwnerClass`.
 
   **Behavior change:** a link edit made with `"publish": "none"` waits for the owner to be
   published.

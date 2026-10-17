@@ -121,8 +121,11 @@ transaction (a failed operation leaves no link behind), with its Owner fields (`
 owner and CMS editors who can edit the owner can edit the link. It goes live when the owner is
 published, by any publish mode or path: an operation's `publish`, a stage action, a cascade or a
 composition's `recursive` publish. Publishing it needs the owner's class `action` verb and the
-link's `canPublish()` (which linkfield defers to the owner); a `"publish": "none"` edit stays on
-draft. When the owner publishes, a link a type change replaced is archived.
+link's `canPublish()` (which linkfield defers to the owner), checked even when a cascade finds
+the owner itself unchanged; a `"publish": "none"` edit stays on draft. When the owner publishes,
+a link a type change replaced is archived, unless another record of the owner's class still
+points at it (a duplicated owner's copied link keeps the original's Owner fields). A page
+convert re-points the page's links at the new class.
 
 A key that's neither in the table above nor `title`/`openInNew` is rejected with
 `422 UNKNOWN_FIELD` — including a key that's valid for a *different* `type` (e.g. `fileId` sent

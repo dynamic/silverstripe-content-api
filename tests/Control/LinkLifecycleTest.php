@@ -238,6 +238,72 @@ class LinkLifecycleTest extends ContentApiTestCase
         $this->assertContains($linkId, array_column($this->decode($response)['data']['published'], 'id'));
     }
 
+    /**
+     * Review follow-up: an in-place link edit leaves its owner's row
+     * unchanged, so a recursive cascade skips the owner's own check; the
+     * owner's `action` verb is still required to publish its link.
+     */
+    public function testARecursiveCascadeChecksTheOwnerVerbForItsLinks(): void
+    {
+        $element = $this->createElement('/before');
+        $linkId = (int) $element->CtaID;
+        $pageId = (int) $element->getPage()->ID;
+        $this->updateCta($element, ['type' => 'ExternalLink', 'url' => '/after', 'title' => 'Go'], 'none');
+        $this->assertFalse(ApiTestElement::get()->byID($element->ID)->stagesDiffer(), 'fixture: owner unchanged');
+
+        Config::modify()->set(ApiTestElement::class, 'api_access', 'read,create,update');
+        $response = $this->apiPost(
+            "records/BlockPageStub/{$pageId}/publish",
+            ['mode' => 'recursive'],
+            $this->adminToken
+        );
+
+        $this->assertErrorCode($response, 'FORBIDDEN_CLASS', 403);
+        $this->assertSame('/before', $this->onStage(Versioned::LIVE, $linkId)->ExternalUrl);
+    }
+
+    /**
+     * The stage action publishes an owner's pending link with it.
+     */
+    public function testTheStageActionPublishesTheOwnersLink(): void
+    {
+        $element = $this->createElement('/draft', 'none');
+        $linkId = (int) $element->CtaID;
+
+        $response = $this->apiPost("records/ApiTestElement/{$element->ID}/publish", [], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame('/draft', $this->onStage(Versioned::LIVE, $linkId)->ExternalUrl);
+    }
+
+    /**
+     * Review follow-up: a duplicated owner's copied link keeps the
+     * original's Owner fields; publishing the original must not archive it.
+     */
+    public function testADuplicatedOwnersLinkIsNotRetired(): void
+    {
+        Config::modify()->merge(ApiTestElement::class, 'cascade_duplicates', ['Cta']);
+        $element = $this->createElement('/original');
+
+        $copy = Versioned::withVersionedMode(function () use ($element) {
+            Versioned::set_stage(Versioned::DRAFT);
+            $copy = ApiTestElement::get()->byID($element->ID)->duplicate();
+            $copy->publishSingle();
+            $copy->Cta()->publishSingle();
+
+            return $copy;
+        });
+        $copyLinkId = (int) $copy->CtaID;
+        $this->assertNotSame((int) $element->CtaID, $copyLinkId, 'fixture: the link was copied');
+        $this->assertSame((int) $element->ID, (int) $this->onStage(Versioned::DRAFT, $copyLinkId)->OwnerID);
+
+        $result = $this->updateCta($element, ['type' => 'ExternalLink', 'url' => '/edited'], 'single');
+
+        $this->assertSame('updated', $result['status'], json_encode($result));
+        $this->assertNotNull($this->onStage(Versioned::LIVE, $copyLinkId));
+        $this->assertNotNull($this->onStage(Versioned::DRAFT, $copyLinkId));
+    }
+
     private function cmsEditor(): Member
     {
         $group = Group::create(['Title' => 'Link editors']);

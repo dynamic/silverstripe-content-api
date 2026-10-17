@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Publish;
 use SilverStripe\Core\ClassInfo;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\ORM\DataObject;
+use SilverStripe\ORM\DataObjectSchema;
 use SilverStripe\Versioned\Versioned;
 
 /**
@@ -59,17 +60,22 @@ class OwnedLinks
      * new link) leaves behind. Once the owner publishes, neither stage
      * references them.
      *
+     * A link another record of the owner's class still points at, on
+     * either stage, is not stale: a duplicated owner's copied link keeps
+     * the original's Owner fields (DataObject::duplicate() copies them).
+     *
      * @return DataObject[]
      */
     public function stale(DataObject $owner): array
     {
         $stale = [];
+        $baseClass = DataObject::getSchema()->baseDataClass($owner);
 
         foreach ($this->linkRelations($owner) as $relation) {
             $filter = [
                 'OwnerID' => (int) $owner->ID,
                 'OwnerRelation' => $relation,
-                'OwnerClass' => ClassInfo::subclassesFor(DataObject::getSchema()->baseDataClass($owner)),
+                'OwnerClass' => ClassInfo::subclassesFor($baseClass),
             ];
             $current = (int) $owner->getField($relation . 'ID');
 
@@ -84,9 +90,48 @@ class OwnedLinks
                     $stale[(int) $link->ID] ??= $link;
                 }
             }
+
+            // The class that declares the has_one owns its column.
+            $spec = (string) DataObject::getSchema()->fieldSpec(
+                get_class($owner),
+                $relation . 'ID',
+                DataObjectSchema::INCLUDE_CLASS
+            );
+            $declaringClass = (string) strtok($spec, '.');
+
+            foreach (array_keys($stale) as $id) {
+                if ($this->referencedByAnother($declaringClass, $relation, $id, (int) $owner->ID)) {
+                    unset($stale[$id]);
+                }
+            }
         }
 
         return array_values($stale);
+    }
+
+    /**
+     * Point an owner's links back at it after its class changed (a page
+     * convert): linkfield's Link::Owner() looks the owner up by OwnerClass,
+     * so a stale one leaves the link ownerless and ADMIN-only. Writes the
+     * links' draft; they publish with the owner.
+     */
+    public function restampOwnerClass(DataObject $owner): void
+    {
+        foreach ($this->linkRelations($owner) as $relation) {
+            $id = (int) $owner->getField($relation . 'ID');
+            $link = $id > 0
+                ? $this->onStage(Versioned::DRAFT, fn () => DataObject::get_by_id(OwnedLinks::LINK_CLASS, $id))
+                : null;
+
+            if (
+                $link
+                && $this->ownedBy($link, $owner, $relation)
+                && $link->getField('OwnerClass') !== $owner->ClassName
+            ) {
+                $link->setField('OwnerClass', $owner->ClassName);
+                $link->write();
+            }
+        }
     }
 
     /**
@@ -137,6 +182,22 @@ class OwnedLinks
             && (string) $link->getField('OwnerRelation') === $relation
             && class_exists($ownerClass)
             && DataObject::getSchema()->baseDataClass($ownerClass) === DataObject::getSchema()->baseDataClass($owner);
+    }
+
+    private function referencedByAnother(string $declaringClass, string $relation, int $linkId, int $ownerId): bool
+    {
+        foreach ([Versioned::DRAFT, Versioned::LIVE] as $stage) {
+            $referenced = $this->onStage($stage, fn () => DataObject::get($declaringClass)
+                ->filter($relation . 'ID', $linkId)
+                ->exclude('ID', $ownerId)
+                ->exists());
+
+            if ($referenced) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function onStage(string $stage, callable $read): mixed

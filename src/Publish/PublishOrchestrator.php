@@ -230,12 +230,13 @@ class PublishOrchestrator
 
     /**
      * The links the owners publish with them, and the stale links their
-     * publish retires (#242, see OwnedLinks). A pending link needs its
-     * canPublish(), which linkfield's Link defers to the owner, under the
-     * owner's class verb (the caller's check for the root, the cascade's
-     * for every other owner). Retiring a stale link needs canEdit() on its
-     * owner: a link the owner no longer points at has no owner for its own
-     * can*() to defer to. All checked before anything is written.
+     * publish retires (#242, see OwnedLinks). An owner with either needs
+     * its class `action` verb, checked here even for an owner a cascade
+     * skips as unchanged (a link edited in place leaves its owner's row
+     * untouched). A pending link needs its canPublish(), which linkfield's
+     * Link defers to the owner. Retiring a stale link needs canEdit() on
+     * its owner: a link the owner no longer points at has no owner for its
+     * own can*() to defer to. All checked before anything is written.
      *
      * @param DataObject[] $owners
      * @return array{0: DataObject[], 1: DataObject[]} pending links, stale links
@@ -247,12 +248,17 @@ class PublishOrchestrator
         $stale = [];
 
         foreach ($owners as $owner) {
-            foreach ($this->ownedLinks->pending($owner) as $link) {
+            $links = $this->ownedLinks->pending($owner);
+            $retire = $this->ownedLinks->stale($owner);
+
+            if ($links !== [] || $retire !== []) {
+                $this->policy->checkClassAccess(get_class($owner), 'action', $member);
+            }
+
+            foreach ($links as $link) {
                 $this->policy->checkStageAccess($link, 'publish', $member);
                 $pending[get_class($link) . ':' . $link->ID] = $link;
             }
-
-            $retire = $this->ownedLinks->stale($owner);
 
             if ($retire !== []) {
                 $this->policy->checkRecordAccess($owner, 'update', $member);
