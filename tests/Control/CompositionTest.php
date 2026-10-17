@@ -13,6 +13,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPlainChildObject;
 use Dynamic\ContentApi\Write\Transformers\LinkTransformer;
 use DNADesign\Elemental\Models\BaseElement;
 use DNADesign\Elemental\Models\ElementContent;
+use DNADesign\Elemental\Models\ElementalArea;
 use SilverStripe\Assets\Dev\TestAssetStore;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
@@ -788,8 +789,8 @@ class CompositionTest extends ContentApiTestCase
     }
 
     /**
-     * #233: the guarded-policy setup lists an element's parent link in
-     * `api_protected_fields` to keep it off the client surfaces. A
+     * #233: a guarded-policy project typically lists an element's parent
+     * link in `api_protected_fields` to keep it off the client surfaces. A
      * composition must still create and attach a new element under that
      * config, because its `ParentID` is server-derived (trusted channel).
      */
@@ -821,6 +822,48 @@ class CompositionTest extends ContentApiTestCase
         $area = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea();
         $element = ElementContent::get()->filter('FixtureIdentifier', 'protected-parent-e1')->first();
 
+        $this->assertNotNull($element);
+        $this->assertSame((int) $area->ID, (int) $element->ParentID);
+    }
+
+    /**
+     * #233 security half: with the parent link in `api_protected_fields`, a
+     * client-supplied `Parent` on a composition element is still rejected,
+     * and a client-supplied `ParentID` never wins over the server-derived
+     * area. The trusted channel only ever carries the server's value.
+     */
+    public function testClientParentKeysStayBlockedWhenParentIdIsInApiProtectedFields(): void
+    {
+        Config::modify()->set(BaseElement::class, 'api_protected_fields', ['ParentID', 'Parent']);
+
+        $page = $this->blockPage();
+        $otherArea = ElementalArea::create();
+        $otherArea->write();
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [[
+                'class' => 'ElementContent',
+                'externalId' => 'protected-parent-client-rel',
+                'fields' => ['Title' => 'Probe', 'Parent' => (int) $otherArea->ID],
+            ]],
+        ], $this->adminToken);
+
+        $this->assertErrorCode($response, 'READONLY_FIELD', 422);
+        $this->assertNull(ElementContent::get()->filter('FixtureIdentifier', 'protected-parent-client-rel')->first());
+
+        $response = $this->apiPost('compositions/page', [
+            'page' => ['match' => ['id' => (int) $page->ID]],
+            'elements' => [[
+                'class' => 'ElementContent',
+                'externalId' => 'protected-parent-client-fk',
+                'fields' => ['Title' => 'Probe', 'ParentID' => (int) $otherArea->ID],
+            ]],
+        ], $this->adminToken);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $area = ApiTestBlockPage::get()->byID($page->ID)->ElementalArea();
+        $element = ElementContent::get()->filter('FixtureIdentifier', 'protected-parent-client-fk')->first();
         $this->assertNotNull($element);
         $this->assertSame((int) $area->ID, (int) $element->ParentID);
     }

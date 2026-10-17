@@ -39,10 +39,10 @@ use SilverStripe\Versioned\Versioned;
  * param) lets in-process population machinery (e.g. `CompositionService`)
  * write server-derived structural fields — like an element's `ParentID` —
  * without adding them to `api_writable_fields`, which would also expose them
- * on the untrusted colymba PUT surface. The `protected_fields` /
- * `api_protected_fields` denylist still applies to trusted writes; only the
- * allowlist check is bypassed. Nothing derived from request input may be
- * passed as `$internalFields`.
+ * on the untrusted colymba PUT surface. The global `protected_fields` floor
+ * still applies to trusted writes; the allowlist and the class's
+ * `api_protected_fields` are bypassed. Nothing derived from request input
+ * may be passed as `$internalFields`.
  */
 class WriteApplicator
 {
@@ -673,10 +673,11 @@ class WriteApplicator
     ): bool {
         // A class's own api_protected_fields restricts what CLIENTS may write.
         // The trusted channel carries server-derived values (an element's
-        // ParentID/Sort) that a project has no reason to block, and listing
-        // ParentID there is exactly what the guarded-policy setup does to keep
-        // it off the colymba PUT surface (#233). The module's protected_fields
-        // floor still applies to trusted writes.
+        // ParentID, and Sort when the client sent none) that a project has no
+        // reason to block; a guarded-policy project typically lists
+        // ParentID/Parent there to keep the link off the client surfaces
+        // (#233). The module's protected_fields floor still applies to
+        // trusted writes.
         $protected = (array) static::config()->get('protected_fields');
         if (!$trusted) {
             $protected = array_merge($protected, (array) Config::inst()->get($className, 'api_protected_fields'));

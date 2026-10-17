@@ -25,9 +25,11 @@ All notable changes to this project are documented here. Format loosely follows
   setup does to keep it off the client surfaces). Previously every new element failed with
   `READONLY_FIELD: Field "ParentID" is not writable`. A class's `api_protected_fields` now
   restricts client-supplied fields only. The trusted internal-fields channel (a composition
-  element's server-derived `ParentID`/`Sort`) is not blocked by it. The global
+  element's server-derived `ParentID`, and its default `Sort`) is not blocked by it. The global
   `WriteApplicator.protected_fields` floor still applies to trusted writes. Client writes of a
-  field listed in `api_protected_fields` are still rejected on every surface.
+  field listed in `api_protected_fields` are still blocked on every client surface (rejected by
+  batch and compositions, reverted on colymba `/api`). `PermissionPolicy::buildCreateContext()`
+  now prefers the trusted value over a client key for the same relation.
 - **(#234)** The test suite now passes in a standalone module checkout, not only inside a host
   project. `ContentApiTestCase::getRequiredExtensions()` applies the extensions 22 tests relied on
   a host's exposure YAML for (`ExternalIdentifierExtension` on `File`/`BaseElement`,

@@ -273,8 +273,8 @@ class WriteApplicatorTest extends SapphireTest
 
     /**
      * #233: a class's `api_protected_fields` restricts client-supplied
-     * fields only. The guarded-policy setup lists an element's `ParentID`
-     * there to keep it off the client surfaces, and the trusted channel
+     * fields only. A guarded-policy project typically lists an element's
+     * `ParentID` there to keep it off the client surfaces, and the trusted channel
      * (a composition's server-derived `ParentID`) must still be able to
      * write it. The module's global `protected_fields` floor still applies
      * to trusted writes.
