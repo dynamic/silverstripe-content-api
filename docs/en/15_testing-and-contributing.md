@@ -19,8 +19,11 @@ module's `phpcs.xml.dist` ruleset).
 ## Running the suite
 
 ```bash
-SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit vendor/dynamic/silverstripe-content-api/tests
+SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit -c vendor/dynamic/silverstripe-content-api/phpunit.xml.dist
 ```
+
+Point `-c` at the module's config: PHPUnit only looks for a config in the current directory, and
+the module's is what loads `tests/bootstrap.php` (which drops the shared config cache, see below).
 
 `SS_PHPUNIT_FLUSH=1` matters — PHPUnit's class manifest (`classmanifest_tests`) is a separate
 cache bucket from the one `sake db:build --flush` clears, and goes stale independently whenever a
@@ -38,6 +41,14 @@ vendor/bin/phpcs src/ tests/     # or: composer lint (from the module directory)
 vendor/bin/phpcbf src/ tests/    # auto-fix — composer lint-clean
 vendor/bin/phpstan analyse       # phpstan.neon.dist
 ```
+
+PHPStan, `dev/build` and PHPUnit are all gates: `local-ci --strict` must be green before a PR.
+PHPStan needs `cambis/silverstan`, which the `phpstan/extension-installer` Composer plugin loads.
+An install with `--no-plugins` leaves it out, and `phpstan-bootstrap.php` then stops the run with
+that message rather than reporting SilverStripe config properties and extension members as
+errors. Reinstall with plugins enabled. `dev/build` can run before the suite: `tests/bootstrap.php`
+drops the config cache the live and test kernels share, so the test kernel rebuilds it with the
+TestOnly stubs.
 
 ### Standalone (no host project)
 
@@ -65,7 +76,7 @@ repos/dynamic/silverstripe-content-api/actions/permissions` returns `{"enabled":
 consistent with the other `dynamic/*` module repos. The actual pre-push gate is `local-ci`,
 which auto-detects this repo's `phpunit.xml.dist`/`phpcs.xml.dist`/`phpstan.neon.dist` and
 additionally runs the project-declared `scripts/check-doc-drift.sh` (`.local-ci.json`). Run it
-(or the commands above by hand, including `SS_PHPUNIT_FLUSH=1` for PHPUnit) before opening a
+(or the commands above by hand) before opening a
 PR — nothing else will catch a regression for you.
 
 ## Test suite map
