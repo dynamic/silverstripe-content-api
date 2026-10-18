@@ -5,6 +5,12 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-10-18
+
+The 2026-10 security/correctness audit (epic #133: #221/#222, #225-#246, #231, #232), plus
+#207 and #277, all landed on branch `1` first (`1.15.0`). **Behavior changes** are called out in their
+entries; the main ones are listed in the release notes.
+
 ### Added
 - **(#232)** `PATCH records/$ClassRef/$ID` with `{"fields": {...}, "publish": "none|single"}`:
   a single-record field update that needs `CONTENT_API_ACCESS` only and is not behind the
@@ -1471,6 +1477,7 @@ Initial release: token auth, class registry, read/write CRUD, publish orchestrat
 batch operations, atomic page compositions, asset upload/read, schema introspection,
 color tokens, and apply-template.
 
+[2.9.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.8.0...2.9.0
 [2.8.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.7.0...2.8.0
 [2.7.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.6.0...2.7.0
 [2.6.0]: https://github.com/dynamic/silverstripe-content-api/compare/2.5.0...2.6.0
