@@ -5,20 +5,22 @@
  *
  * silverstan is what teaches PHPStan that a `private static` config property
  * is read through Config and which members SilverStripe extensions add. It is
- * loaded by the phpstan/extension-installer Composer plugin, so an install
- * with `--no-plugins` (or with the plugin disallowed) analyses without it and
- * reports dozens of false errors (#277). Fail once, with the fix, instead.
+ * usually loaded by the phpstan/extension-installer Composer plugin, so an
+ * install with `--no-plugins` (or with the plugin disallowed) analyses
+ * without it and reports dozens of false errors (#277). Fail once, with the
+ * fix, instead.
  *
- * The check reads the GeneratedConfig of whichever install runs PHPStan: the
- * module's own vendor in a standalone checkout, the host project's in a
- * vendor/ checkout.
+ * Checked through the container PHPStan passes to bootstrap files, so a
+ * project that includes silverstan's extension.neon by hand passes too.
  */
 
-$extensions = class_exists(\PHPStan\ExtensionInstaller\GeneratedConfig::class)
-    ? \PHPStan\ExtensionInstaller\GeneratedConfig::EXTENSIONS
-    : [];
+use PHPStan\DependencyInjection\Container;
 
-if (!isset($extensions['cambis/silverstan'])) {
+$loaded = isset($container)
+    && $container instanceof Container
+    && $container->findServiceNamesByType('Cambis\\Silverstan\\Autoloader\\Autoloader') !== [];
+
+if (!$loaded) {
     throw new \RuntimeException(
         'cambis/silverstan is not loaded, so this analysis would report SilverStripe config properties '
         . 'and extension members as errors. It is loaded by the phpstan/extension-installer Composer '

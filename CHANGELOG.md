@@ -193,13 +193,14 @@ All notable changes to this project are documented here. Format loosely follows
     isn't loaded (a `composer install --no-plugins` skips the `phpstan/extension-installer`
     plugin that loads it), instead of reporting 55 SilverStripe config properties and extension
     members as errors.
-  - `tests/bootstrap.php` (now the `phpunit.xml.dist` bootstrap) flushes the test kernel once per
-    run. The test kernel shares its config cache with the live kernel, so a live `dev/build` run
-    first used to leave a config without the TestOnly stubs and fail dozens of tests. It also
-    finds the CMS bootstrap in a `vendor/` checkout, not only a standalone one.
-  - `testAnUnknownEditorConfigNeverStoresScript` checks the behaviour (refused or sanitised)
-    rather than the framework major, since later SS 5.x gives an unknown editor config the
-    default rules as SS6 does.
+  - `tests/bootstrap.php` (now the `phpunit.xml.dist` bootstrap) drops the config cache the test
+    and live kernels share before the suite boots, so a live `dev/build` run first no longer
+    leaves a config without the TestOnly stubs (dozens of failures). It also finds the CMS
+    bootstrap in a `vendor/` checkout. Docs 15's host command now passes `-c` with the module's
+    config, which is what loads it.
+  - `testAnUnknownEditorConfigNeverStoresScript` reads from the framework whether an unknown
+    editor config has element rules (later SS 5.x and SS6 give it the defaults) and pins the
+    matching outcome.
 - **(#245)** Setup and tooling:
   - The install recipe (README, docs 00) adds the module's own VCS entry; it is not on
     Packagist.

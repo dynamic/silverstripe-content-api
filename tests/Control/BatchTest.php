@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use DNADesign\Elemental\Models\ElementalArea;
 use Dynamic\ContentApi\Batch\BatchProcessor;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
@@ -20,12 +21,14 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestSideEffectObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestTag;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use Dynamic\ContentApi\Tests\Stub\ForceUnverifiedRollbackBatchProcessor;
-use DNADesign\Elemental\Models\ElementalArea;
-use SilverStripe\Core\Config\Config;
-use SilverStripe\Forms\HTMLEditor\HTMLEditorField;
 use Dynamic\ContentApi\Write\WriteApplicator;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorConfig;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorField;
+use SilverStripe\Forms\HTMLEditor\HTMLEditorSanitiser;
 use SilverStripe\Versioned\Versioned;
+use SilverStripe\View\Parsers\HTMLValue;
 
 class BatchTest extends ContentApiTestCase
 {
@@ -2618,10 +2621,11 @@ class BatchTest extends ContentApiTestCase
 
     /**
      * An editor config with no usable element rules must never let script
-     * through. Older framework versions (SS 5.2) build an empty config for an
-     * unknown identifier, so the write is refused; newer ones (later 5.x, SS6)
-     * build one with the default rules, so the value is sanitised. Either way
-     * nothing raw lands.
+     * through. Some framework versions (SS 5.2) build an empty config for an
+     * unknown identifier, so the write must be refused; others (later 5.x,
+     * SS6) build one with the default rules, so the value must be sanitised.
+     * Which one applies is read from the framework itself, the way the
+     * sanitiser probe reads it, so each outcome is pinned where it applies.
      */
     public function testAnUnknownEditorConfigNeverStoresScript(): void
     {
@@ -2637,7 +2641,12 @@ class BatchTest extends ContentApiTestCase
 
         $result = $body['data']['results'][0];
 
-        if ($result['status'] === 'updated') {
+        $probe = HTMLValue::create('<p>probe</p><script>probe()</script>');
+        HTMLEditorSanitiser::create(HTMLEditorConfig::get('no-such-editor-config'))->sanitise($probe);
+        $hasRules = str_contains($probe->getContent(), '<p>') && !str_contains($probe->getContent(), '<script');
+
+        if ($hasRules) {
+            $this->assertSame('updated', $result['status'], json_encode($body));
             // Default element rules: the value was sanitised, and said so.
             $this->assertSame('VALUE_SANITISED', $result['warnings'][0]['code'] ?? null, json_encode($body));
         } else {

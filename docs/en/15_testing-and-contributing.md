@@ -19,14 +19,18 @@ module's `phpcs.xml.dist` ruleset).
 ## Running the suite
 
 ```bash
-SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit vendor/dynamic/silverstripe-content-api/tests
+vendor/bin/phpunit -c vendor/dynamic/silverstripe-content-api/phpunit.xml.dist
 ```
 
-`SS_PHPUNIT_FLUSH=1` matters — PHPUnit's class manifest (`classmanifest_tests`) is a separate
-cache bucket from the one `dev/build flush=1` clears, and goes stale independently whenever a
-`TestOnly` stub class is added or changed. A `references nonexistent X in 'extensions'` failure
-for a stub class that loads fine elsewhere is almost always this, not a real autoload gap — run
-once with the flush and subsequent runs pass without it.
+Point `-c` at the module's config: PHPUnit only looks for a config in the current directory, and
+the module's is what loads `tests/bootstrap.php` (which drops the shared config cache, see below).
+
+PHPUnit's class manifest (`classmanifest_tests`) is a separate cache bucket from the one
+`dev/build flush=1` clears, and goes stale independently whenever a `TestOnly` stub class is
+added or changed. A `references nonexistent X in 'extensions'` failure for a stub class that loads
+fine elsewhere is almost always this, not a real autoload gap. On this branch `SS_PHPUNIT_FLUSH=1`
+does nothing (SS5's `SapphireTest` reads `flush` only from the request); wipe the cache instead,
+`ddev exec 'rm -rf /tmp/silverstripe-cache-*'`, and run again.
 
 The suite includes cross-surface tests that hit colymba's real `/api` route, so a full run needs
 the host project's DB wired up (SilverStripe's `SapphireTest` per-run `ss_tmpdb_*` databases —
@@ -44,7 +48,8 @@ PHPStan needs `cambis/silverstan`, which the `phpstan/extension-installer` Compo
 An install with `--no-plugins` leaves it out, and `phpstan-bootstrap.php` then stops the run with
 that message rather than reporting SilverStripe config properties and extension members as
 errors. Reinstall with plugins enabled. `dev/build` can run before the suite: `tests/bootstrap.php`
-flushes the test kernel, so the live kernel's config cache doesn't hide the TestOnly stubs.
+drops the config cache the live and test kernels share, so the test kernel rebuilds it with the
+TestOnly stubs.
 
 ### Standalone (no host project)
 
@@ -72,7 +77,7 @@ repos/dynamic/silverstripe-content-api/actions/permissions` returns `{"enabled":
 consistent with the other `dynamic/*` module repos. The actual pre-push gate is `local-ci`,
 which auto-detects this repo's `phpunit.xml.dist`/`phpcs.xml.dist`/`phpstan.neon.dist` and
 additionally runs the project-declared `scripts/check-doc-drift.sh` (`.local-ci.json`). Run it
-(or the commands above by hand, including `SS_PHPUNIT_FLUSH=1` for PHPUnit) before opening a
+(or the commands above by hand) before opening a
 PR — nothing else will catch a regression for you.
 
 ## Test suite map
