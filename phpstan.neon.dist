@@ -5,6 +5,10 @@ parameters:
   paths:
     - src
 
+  # Fails the run up front when cambis/silverstan isn't loaded (#277).
+  bootstrapFiles:
+    - phpstan-bootstrap.php
+
   ignoreErrors:
     # Versioned decorates DataObject with magic methods; call sites are guarded
     # by hasExtension(Versioned::class) checks PHPStan cannot narrow on.
