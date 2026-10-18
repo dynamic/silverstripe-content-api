@@ -4,6 +4,7 @@ namespace Dynamic\ContentApi\Write;
 
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
@@ -37,6 +38,10 @@ use SilverStripe\Versioned\Versioned;
  *
  * Scoped strictly to writes running under colymba's RESTfulAPI controller:
  * CMS writes and this module's own WriteApplicator path are never touched.
+ *
+ * Business rules this extension enforces directly, because nothing else on
+ * this surface does: Elemental's per-page-type element placement
+ * (`ElementPlacementPolicy`, #64/#100) alongside the field-level rules above.
  *
  * Opt-in per model:
  * ```yml
@@ -128,6 +133,10 @@ class WriteGuardExtension extends Extension
         $translatedRelations = $this->translatePolymorphicHasOnes($body);
         $filtered = $translatedRelations !== [] || $filtered;
 
+        // #100: rejected before the payload is stored/applied, so a rejected
+        // create leaves no record behind — see assertElementPlacement().
+        $this->assertElementPlacement($body);
+
         WriteGuardPayloads::store($this->getOwner(), $body, $translatedRelations);
 
         if ($filtered) {
@@ -158,6 +167,126 @@ class WriteGuardExtension extends Extension
 
             $rawJson = $encoded;
         }
+    }
+
+    /**
+     * Reject an element placement this surface must not perform, before
+     * colymba applies anything (#100).
+     *
+     * `RecordWriter::assertElementPlacementAllowed()` enforces Elemental's
+     * per-page-type `allowed_elements`/`disallowed_elements` on the batch /
+     * composition / `PATCH records/$ClassRef/$ID` pipeline, but colymba's
+     * generic `POST`/`PUT /api/$Model` never routes through `RecordWriter`,
+     * so an element class exposed with write verbs and no
+     * `api_writable_fields` could be attached to (or moved between) any
+     * `ElementalArea` — a side door around the CMS's own "add element"
+     * picker, and around #64.
+     *
+     * Deliberately in `onBeforeDeserialize()`, not `onBeforeWrite()`: that
+     * hook can only revert changed fields, and reverting `ParentID` on a POST
+     * would persist an orphaned element (`ParentID` 0) instead of refusing
+     * the create. Reuses `ElementPlacementPolicy` — the same delegated
+     * `getElementalTypes()` check the CMS makes — rather than a second
+     * implementation, and the same skip branches `RecordWriter` documents:
+     * an area that can't be resolved, one with no `getOwnerPage()`, or one no
+     * page owns, all have nothing for this policy to say about them. Unlike
+     * `RecordWriter` (which always runs inside a DRAFT versioned mode) this
+     * surface has to ask for that stage explicitly to see a draft area at all.
+     *
+     * @param array<string, mixed> $body the payload as it will reach colymba
+     * @throws HTTPResponse_Exception 422 (ELEMENT_NOT_ALLOWED_ON_PAGE) —
+     *   thrown as `HTTPResponse_Exception` rather than a bare `ApiError`
+     *   because this hook has no handler of its own to catch the latter; see
+     *   onBeforeDeserialize() for why that shape is required here.
+     */
+    private function assertElementPlacement(array $body): void
+    {
+        $owner = $this->getOwner();
+
+        // This extension is also applied to non-element classes; those have
+        // no placement to check.
+        if (
+            !class_exists('DNADesign\\Elemental\\Models\\BaseElement')
+            || !is_a($owner, 'DNADesign\\Elemental\\Models\\BaseElement')
+        ) {
+            return;
+        }
+
+        if (!array_key_exists('ParentID', $body)) {
+            return;
+        }
+
+        $parentID = (int) $body['ParentID'];
+
+        // A detach, or the routine GET-then-PUT round trip that echoes the
+        // record's own area back — neither is a placement change, same rule
+        // RecordWriter applies.
+        if ($parentID === 0 || $parentID === (int) $owner->ParentID) {
+            return;
+        }
+
+        // If ParentID isn't writable for this class, onBeforeWrite() reverts
+        // it later in this same request anyway (see
+        // WriteGuardTest::testParentIdStaysReadonlyOnColymbaSurface());
+        // refusing the request here would change a documented silent revert
+        // into a hard error for a field the client was never allowed to
+        // write — the same reason translatePolymorphicHasOnes() checks
+        // writability before resolving.
+        if (!Injector::inst()->get(WriteApplicator::class)->isFieldWritable(get_class($owner), 'ParentID')) {
+            return;
+        }
+
+        $elementClass = get_class($owner);
+
+        // Resolve the target area and its owner page on the DRAFT stage:
+        // `ElementalArea` is versioned, and /api defaults to LIVE, so an
+        // unpublished area — or the page that owns it — would be invisible
+        // to this lookup and the check would silently skip the exact writes it
+        // exists for. Same reasoning, and the same mechanism, as
+        // authorizeRelationTargets() reading relation targets on DRAFT.
+        // The error is built inside the closure, where the owner page still
+        // carries the type `getOwnerPage()` gives it: `getElementalTypes()`
+        // is contributed by `ElementalAreasExtension`, so a widened
+        // `DataObject` return could no longer name the allowed types.
+        $error = Versioned::withVersionedMode(function () use ($parentID, $elementClass): ?ApiError {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            $area = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID($parentID);
+
+            if (!$area || !$area->hasMethod('getOwnerPage')) {
+                return null;
+            }
+
+            $page = $area->getOwnerPage();
+
+            if (!$page) {
+                return null;
+            }
+
+            if (Injector::inst()->get(ElementPlacementPolicy::class)->isAllowedOnPage($elementClass, $page)) {
+                return null;
+            }
+
+            // Reached only when `isAllowedOnPage()` returned false, which it
+            // cannot do for a page without `getElementalTypes()` — that case
+            // is its own "nothing to enforce" branch.
+            return new ApiError(
+                ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE,
+                sprintf(
+                    '"%s" is not an allowed element type on %s (#%d) — allowed types: %s.',
+                    $elementClass,
+                    get_class($page),
+                    (int) $page->ID,
+                    implode(', ', array_keys($page->getElementalTypes()))
+                )
+            );
+        });
+
+        if (!$error) {
+            return;
+        }
+
+        throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
     }
 
     /**
