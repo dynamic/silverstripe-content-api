@@ -194,7 +194,7 @@ All notable changes to this project are documented here. Format loosely follows
     plugin that loads it), instead of reporting 55 SilverStripe config properties and extension
     members as errors.
   - `tests/bootstrap.php` (now the `phpunit.xml.dist` bootstrap) flushes the test kernel once per
-    run. The test kernel shares its config cache with the live kernel, so a `sake dev/build` run
+    run. The test kernel shares its config cache with the live kernel, so a live `dev/build` run
     first used to leave a config without the TestOnly stubs and fail dozens of tests. It also
     finds the CMS bootstrap in a `vendor/` checkout, not only a standalone one.
   - `testAnUnknownEditorConfigNeverStoresScript` checks the behaviour (refused or sanitised)

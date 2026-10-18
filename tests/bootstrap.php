@@ -5,7 +5,7 @@
  *
  * The test kernel shares its config cache with the live kernel, and never
  * flushes on its own (SapphireTest::start() mocks a bare `phpunit /` request).
- * So a live `sake dev/build` run before the suite (local-ci's dev/build gate)
+ * So a live database build run before the suite (local-ci's dev/build gate)
  * leaves a config without the TestOnly stubs, and the suite then fails with
  * tables named after a stub's class and missing relations (#277). Asking for
  * a flush makes the test kernel rebuild its manifests and config once per run.
