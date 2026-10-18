@@ -2618,9 +2618,10 @@ class BatchTest extends ContentApiTestCase
 
     /**
      * An editor config with no usable element rules must never let script
-     * through. SS5 builds an empty config for an unknown identifier (so the
-     * write is refused); SS6 builds one with the default rules (so the value
-     * is sanitised). Either way nothing raw lands.
+     * through. Older framework versions (SS 5.2) build an empty config for an
+     * unknown identifier, so the write is refused; newer ones (later 5.x, SS6)
+     * build one with the default rules, so the value is sanitised. Either way
+     * nothing raw lands.
      */
     public function testAnUnknownEditorConfigNeverStoresScript(): void
     {
@@ -2636,11 +2637,11 @@ class BatchTest extends ContentApiTestCase
 
         $result = $body['data']['results'][0];
 
-        if (class_exists('SilverStripe\\Model\\ModelData')) {
-            // SS6: an unknown identifier still gets the default element rules.
-            $this->assertSame('updated', $result['status'], json_encode($body));
+        if ($result['status'] === 'updated') {
+            // Default element rules: the value was sanitised, and said so.
+            $this->assertSame('VALUE_SANITISED', $result['warnings'][0]['code'] ?? null, json_encode($body));
         } else {
-            // SS5: an empty config, so the probe refuses the write.
+            // An empty config: the probe refuses the write.
             $this->assertSame('SERVER_ERROR', $result['error']['code'] ?? null, json_encode($body));
         }
 

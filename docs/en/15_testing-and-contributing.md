@@ -39,6 +39,13 @@ vendor/bin/phpcbf src/ tests/    # auto-fix — composer lint-clean
 vendor/bin/phpstan analyse       # phpstan.neon.dist
 ```
 
+PHPStan, `dev/build` and PHPUnit are all gates: `local-ci --strict` must be green before a PR.
+PHPStan needs `cambis/silverstan`, which the `phpstan/extension-installer` Composer plugin loads.
+An install with `--no-plugins` leaves it out, and `phpstan-bootstrap.php` then stops the run with
+that message rather than reporting SilverStripe config properties and extension members as
+errors. Reinstall with plugins enabled. `dev/build` can run before the suite: `tests/bootstrap.php`
+flushes the test kernel, so the live kernel's config cache doesn't hide the TestOnly stubs.
+
 ### Standalone (no host project)
 
 The suite also runs from a standalone module checkout with its own `composer install`, using

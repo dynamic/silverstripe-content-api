@@ -188,6 +188,18 @@ All notable changes to this project are documented here. Format loosely follows
   self-reference). It used to pick the code by counting stuck entries. Both stay 422.
 
 ### Fixed
+- **(#277)** `local-ci --strict` is green with PHPStan and `dev/build` as gates:
+  - `phpstan-bootstrap.php` stops PHPStan with one actionable error when `cambis/silverstan`
+    isn't loaded (a `composer install --no-plugins` skips the `phpstan/extension-installer`
+    plugin that loads it), instead of reporting 55 SilverStripe config properties and extension
+    members as errors.
+  - `tests/bootstrap.php` (now the `phpunit.xml.dist` bootstrap) flushes the test kernel once per
+    run. The test kernel shares its config cache with the live kernel, so a `sake dev/build` run
+    first used to leave a config without the TestOnly stubs and fail dozens of tests. It also
+    finds the CMS bootstrap in a `vendor/` checkout, not only a standalone one.
+  - `testAnUnknownEditorConfigNeverStoresScript` checks the behaviour (refused or sanitised)
+    rather than the framework major, since later SS 5.x gives an unknown editor config the
+    default rules as SS6 does.
 - **(#245)** Setup and tooling:
   - The install recipe (README, docs 00) adds the module's own VCS entry; it is not on
     Packagist.
