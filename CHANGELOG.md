@@ -14,10 +14,11 @@ All notable changes to this project are documented here. Format loosely follows
   `WriteGuardExtension::onBeforeDeserialize()` now refuses such a payload with
   `422 ELEMENT_NOT_ALLOWED_ON_PAGE` — the module's standard JSON error envelope, so callers can
   branch on `error.code` as [docs/en/12_error-codes.md](docs/en/12_error-codes.md) tells them to —
-  before colymba applies anything, so a rejected create leaves no record. The target is read from both `ParentID` and the bare `Parent` relation name (colymba
-  maps either to the FK), the check passes the relation name to the shared
-  `WriteApplicator::isFieldWritable()` so it agrees with `onBeforeWrite()`'s revert decision, and
-  the target area and its owner page are read on DRAFT. **Behavior change:** colymba `POST`/`PUT`
+  before colymba applies anything, so a rejected create leaves no record. The target is read from
+  both `ParentID` and the bare `Parent` relation name (colymba maps either to the FK), the check
+  passes the relation name to the shared `WriteApplicator::isFieldWritable()` so it agrees with
+  `onBeforeWrite()`'s revert decision, and the target area and its owner page are read on DRAFT.
+  **Behavior change:** colymba `POST`/`PUT`
   clients that used to get `200` for a placement the target page disallows now get `422`.
   Attaching an existing element through `ElementalArea.Elements` remains an open gap (#64).
   See [docs/en/08_page-compositions.md](docs/en/08_page-compositions.md) and

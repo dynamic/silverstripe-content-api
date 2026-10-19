@@ -4,6 +4,11 @@ Every error response carries a stable, machine-readable code — a caller (human
 branch on `error.code`, never on `error.message` text. Source:
 [`ErrorCode.php`](../../src/Errors/ErrorCode.php).
 
+One caveat while #283 is open: on the colymba `/api` generic write surface, `WriteGuardExtension`
+refusals other than `ELEMENT_NOT_ALLOWED_ON_PAGE` still arrive as `text/plain` bodies with no code
+at all, so the code-based branching below only works for that one guard refusal on that surface.
+The module's own endpoints (`records/*`, batch, compositions) always send the envelope.
+
 ```json
 { "data": null, "meta": {}, "error": { "code": "VALIDATION_FAILED", "status": 422,
   "message": "...", "details": [ { "field": "Title", "code": "UNKNOWN_FIELD", "message": "..." } ] } }

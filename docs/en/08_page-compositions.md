@@ -106,9 +106,14 @@ check rather than sharing `RecordWriter`'s, because it never routes through `Rec
 page disallows the element class, reading the payload's `ParentID` *and* the bare `Parent` relation
 name (colymba maps either to the FK, and payload order decides which one wins when a client sends
 both), so a refusal happens before anything is written and a rejected create leaves no record
-(#100). It skips the same cases `RecordWriter` skips — a detach, a payload echoing the element's own
-area, an area no page owns, and a class whose `Parent`/`ParentID` is not writable, which stays the
-documented silent revert. **Still not covered:** attaching an *existing* element via
+(#100). It skips the cases `RecordWriter` skips — a detach, a payload echoing the element's own
+area, an area no page owns — plus one specific to this path: a class whose `Parent`/`ParentID` is
+not writable, where this guard's own `onBeforeWrite()` reverts the field silently anyway and a 422
+would harden that documented silent revert (`RecordWriter`'s pipeline rejects such a write as
+read-only instead). The refusal carries the standard JSON error envelope, so `error.code` is
+`ELEMENT_NOT_ALLOWED_ON_PAGE` as the error-code table says; note that other
+`WriteGuardExtension` refusals on this surface still answer `text/plain` with no code, tracked
+separately (#283). **Still not covered:** attaching an *existing* element via
 `ElementalArea.Elements` if a project opts that relation into `api_writable_relations` — a
 pre-existing gap in how that surface relates to this module's write pipeline, tracked separately.
 
