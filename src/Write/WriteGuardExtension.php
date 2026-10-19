@@ -2,11 +2,14 @@
 
 namespace Dynamic\ContentApi\Write;
 
+use Dynamic\ContentApi\Control\ContentApiController;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
+use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
+use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
@@ -37,6 +40,10 @@ use SilverStripe\Versioned\Versioned;
  *
  * Scoped strictly to writes running under colymba's RESTfulAPI controller:
  * CMS writes and this module's own WriteApplicator path are never touched.
+ *
+ * Business rules this extension enforces directly, because nothing else on
+ * this surface does: Elemental's per-page-type element placement
+ * (`ElementPlacementPolicy`, #64/#100) alongside the field-level rules above.
  *
  * Opt-in per model:
  * ```yml
@@ -128,6 +135,10 @@ class WriteGuardExtension extends Extension
         $translatedRelations = $this->translatePolymorphicHasOnes($body);
         $filtered = $translatedRelations !== [] || $filtered;
 
+        // #100: rejected before the payload is stored/applied, so a rejected
+        // create leaves no record behind — see assertElementPlacement().
+        $this->assertElementPlacement($body);
+
         WriteGuardPayloads::store($this->getOwner(), $body, $translatedRelations);
 
         if ($filtered) {
@@ -158,6 +169,214 @@ class WriteGuardExtension extends Extension
 
             $rawJson = $encoded;
         }
+    }
+
+    /**
+     * Reject an element placement this surface must not perform, before
+     * colymba applies anything (#100).
+     *
+     * `RecordWriter::assertElementPlacementAllowed()` enforces Elemental's
+     * per-page-type `allowed_elements`/`disallowed_elements` on the batch /
+     * composition / `PATCH records/$ClassRef/$ID` pipeline, but colymba's
+     * generic `POST`/`PUT /api/$Model` never routes through `RecordWriter`,
+     * so an element class exposed with write verbs and no
+     * `api_writable_fields` could be attached to (or moved between) any
+     * `ElementalArea` — a side door around the CMS's own "add element"
+     * picker, and around #64.
+     *
+     * Deliberately in `onBeforeDeserialize()`, not `onBeforeWrite()`: that
+     * hook can only revert changed fields, and reverting `ParentID` on a POST
+     * would persist an orphaned element (`ParentID` 0) instead of refusing
+     * the create. Reuses `ElementPlacementPolicy` — the same delegated
+     * `getElementalTypes()` check the CMS makes — rather than a second
+     * implementation, and the same skip branches `RecordWriter` documents:
+     * an area that can't be resolved, one with no `getOwnerPage()`, or one no
+     * page owns, all have nothing for this policy to say about them. Unlike
+     * `RecordWriter` (which always runs inside a DRAFT versioned mode) this
+     * surface has to ask for that stage explicitly to see a draft area at all.
+     *
+     * The target is read from BOTH `ParentID` and the bare has_one name
+     * `Parent`: `schemaKeys()` admits either, and
+     * `DefaultQueryHandler::updateModel()` turns a has_one *name* into its FK
+     * (`$model->{$attribute . 'ID'} = $value`), so `{"Parent": 7}` reparents
+     * exactly like `{"ParentID": 7}`. Which of the two wins when a payload
+     * carries both depends on key order, so neither is trusted to be the
+     * effective one: every distinct target the payload names is checked, and
+     * one disallowed target refuses the whole request.
+     *
+     * @param array<string, mixed> $body the payload as it will reach colymba
+     * @throws HTTPResponse_Exception 422 carrying the module's JSON error
+     *   envelope for `ELEMENT_NOT_ALLOWED_ON_PAGE` — thrown as
+     *   `HTTPResponse_Exception` rather than a bare `ApiError` because this
+     *   hook has no handler of its own to catch the latter, and built from an
+     *   `HTTPResponse` rather than a message string so the documented
+     *   `error.code` survives; see onBeforeDeserialize() and
+     *   errorResponse().
+     */
+    private function assertElementPlacement(array $body): void
+    {
+        $owner = $this->getOwner();
+
+        // This extension is also applied to non-element classes; those have
+        // no placement to check.
+        if (
+            !class_exists('DNADesign\\Elemental\\Models\\BaseElement')
+            || !is_a($owner, 'DNADesign\\Elemental\\Models\\BaseElement')
+        ) {
+            return;
+        }
+
+        $targets = [];
+
+        foreach (['ParentID', 'Parent'] as $key) {
+            // An ARRAY under the relation name is not a scalar FK: colymba's
+            // `updateModel()` only maps a non-array has_one value to the FK,
+            // and routes an array to its relation handling instead. That path
+            // (attaching existing elements through a relation payload, e.g.
+            // `PUT /api/ElementalArea/{id}` with `Elements`) never comes back
+            // through here — it is the #64 gap this issue does not close,
+            // documented in RecordWriter::assertElementPlacementAllowed() and
+            // tracked separately. Skipping it is deliberate, not an oversight.
+            if (!array_key_exists($key, $body) || is_array($body[$key])) {
+                continue;
+            }
+
+            $targets[(int) $body[$key]] = true;
+        }
+
+        $currentParentID = (int) $owner->ParentID;
+
+        // A detach, or the routine GET-then-PUT round trip that echoes the
+        // record's own area back — neither is a placement change, same rule
+        // RecordWriter applies.
+        unset($targets[0], $targets[$currentParentID]);
+
+        if ($targets === []) {
+            return;
+        }
+
+        // If ParentID isn't writable for this class, onBeforeWrite() reverts
+        // it later in this same request anyway (see
+        // WriteGuardTest::testParentIdStaysReadonlyOnColymbaSurface());
+        // refusing the request here would change a documented silent revert
+        // into a hard error for a field the client was never allowed to
+        // write — the same reason translatePolymorphicHasOnes() checks
+        // writability before resolving.
+        //
+        // The relation name is passed for the same reason onBeforeWrite()
+        // passes it: WriteApplicator::isFieldWritable() matches
+        // `api_writable_fields`/`api_protected_fields` by column OR relation
+        // name, so omitting it here would disagree with the revert decision
+        // made later in this same request — skipping enforcement for a class
+        // that allowlists `Parent` (a second bypass), or refusing with 422
+        // where the documented behaviour is a silent revert for a class that
+        // protects `Parent`.
+        if (!Injector::inst()->get(WriteApplicator::class)->isFieldWritable(get_class($owner), 'ParentID', 'Parent')) {
+            return;
+        }
+
+        $elementClass = get_class($owner);
+
+        // Each candidate target is resolved through placementError(), which
+        // reads the area and its owner page on the DRAFT stage and builds any
+        // violation there.
+        foreach (array_keys($targets) as $parentID) {
+            $error = $this->placementError($parentID, $elementClass);
+
+            if ($error !== null) {
+                throw new HTTPResponse_Exception($this->errorResponse($error));
+            }
+        }
+    }
+
+    /**
+     * The placement violation for one candidate target area, or null when
+     * there is nothing to refuse (unknown area, no owner page, a page no
+     * page-type restriction covers, or a type that page allows).
+     *
+     * The area and its owner page are read on the DRAFT stage: `ElementalArea`
+     * is versioned, and /api defaults to LIVE, so an unpublished area — or the
+     * page that owns it — would be invisible to this lookup and the check
+     * would silently skip the exact writes it exists for. Same reasoning, and
+     * the same mechanism, as authorizeRelationTargets() reading relation
+     * targets on DRAFT. The error is likewise built inside the closure, where
+     * the owner page still carries the type `getOwnerPage()` gives it:
+     * `getElementalTypes()` is contributed by `ElementalAreasExtension`, so a
+     * widened `DataObject` return could no longer name the allowed types.
+     */
+    private function placementError(int $parentID, string $elementClass): ?ApiError
+    {
+        return Versioned::withVersionedMode(function () use ($parentID, $elementClass): ?ApiError {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            $area = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID($parentID);
+
+            if (!$area || !$area->hasMethod('getOwnerPage')) {
+                return null;
+            }
+
+            $page = $area->getOwnerPage();
+
+            if (!$page) {
+                return null;
+            }
+
+            if (Injector::inst()->get(ElementPlacementPolicy::class)->isAllowedOnPage($elementClass, $page)) {
+                return null;
+            }
+
+            // Reached only when `isAllowedOnPage()` returned false, which it
+            // cannot do for a page without `getElementalTypes()` — that case
+            // is its own "nothing to enforce" branch.
+            return new ApiError(
+                ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE,
+                sprintf(
+                    '"%s" is not an allowed element type on %s (#%d) — allowed types: %s.',
+                    $elementClass,
+                    get_class($page),
+                    (int) $page->ID,
+                    implode(', ', array_keys($page->getElementalTypes()))
+                )
+            );
+        });
+    }
+
+    /**
+     * The module's JSON error envelope as a response, so a client can branch
+     * on `error.code` the way docs/en/12_error-codes.md tells it to (#100).
+     *
+     * Mirrors ContentApiController::errorResponse() — same body shape, same
+     * `Cache-Control` — because that controller never sees this throw: it
+     * escapes an extension hook, crosses colymba's controller (which catches
+     * nothing) and leaves `RequestHandler::runRequest()` through its
+     * `HTTPResponse_Exception` arm, which returns whatever response the
+     * exception carries. Handing that exception a message STRING instead —
+     * what the sibling refusals in this class still do — makes
+     * `HTTPResponse_Exception` itself build a `text/plain` body ("error
+     * responses should always be considered plaintext, for security
+     * reasons"), and the `ErrorCode` is lost on the way out. That is a
+     * pre-existing gap on those other refusals, tracked separately; this is
+     * the first guard refusal on the colymba surface to carry its code.
+     *
+     * The message it carries is server-derived (element class, page class,
+     * page id, that page's allowed types) and reaches only a caller that has
+     * already cleared colymba's authentication policy, which is the same
+     * exposure this code has in the envelope on the module's own surface.
+     */
+    private function errorResponse(ApiError $error): HTTPResponse
+    {
+        $body = [
+            'data' => null,
+            'meta' => (object) [],
+            'error' => $error->toArray(),
+        ];
+
+        return HTTPResponse::create(
+            json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+            $error->getStatus()
+        )
+            ->addHeader('Content-Type', 'application/json')
+            ->addHeader('Cache-Control', ContentApiController::CACHE_CONTROL);
     }
 
     /**

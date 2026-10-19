@@ -100,12 +100,22 @@ succeeds as a plain edit, matching Elemental's own gate (which has no equivalent
 editing existing content," only for a new placement) (#64). An `ElementalArea`-type has_one FK
 (e.g. a page's own area relation) is never directly client-writable at all, on any surface,
 including colymba `/api` — only a `BaseElement`'s own `Parent` relation to its area is exempt,
-since that's the one FK this check inspects. Not covered by this check itself, though: the
-colymba `/api` surface can still create/attach an element via its own `ParentID` (a `BaseElement`'s
-FK is exempt from the guard above by design, and that surface never routes through this
-placement check at all), and attaching an *existing* element via `ElementalArea.Elements` if a
-project opts that relation into `api_writable_relations` — both pre-existing gaps in how those
-surfaces relate to this module's write pipeline, tracked separately.
+since that's the one FK this check inspects. The colymba `/api` surface gets its own copy of the
+check rather than sharing `RecordWriter`'s, because it never routes through `RecordWriter` at all:
+`WriteGuardExtension::onBeforeDeserialize()` refuses a create or move whose target area's owning
+page disallows the element class, reading the payload's `ParentID` *and* the bare `Parent` relation
+name (colymba maps either to the FK, and payload order decides which one wins when a client sends
+both), so a refusal happens before anything is written and a rejected create leaves no record
+(#100). It skips the cases `RecordWriter` skips — a detach, a payload echoing the element's own
+area, an area no page owns — plus one specific to this path: a class whose `Parent`/`ParentID` is
+not writable, where this guard's own `onBeforeWrite()` reverts the field silently anyway and a 422
+would harden that documented silent revert (`RecordWriter`'s pipeline rejects such a write as
+read-only instead). The refusal carries the standard JSON error envelope, so `error.code` is
+`ELEMENT_NOT_ALLOWED_ON_PAGE` as the error-code table says; note that other
+`WriteGuardExtension` refusals on this surface still answer `text/plain` with no code, tracked
+separately (#283). **Still not covered:** attaching an *existing* element via
+`ElementalArea.Elements` if a project opts that relation into `api_writable_relations` — a
+pre-existing gap in how that surface relates to this module's write pipeline, tracked separately.
 
 ### `$ref` resolution
 

@@ -4,6 +4,11 @@ Every error response carries a stable, machine-readable code — a caller (human
 branch on `error.code`, never on `error.message` text. Source:
 [`ErrorCode.php`](../../src/Errors/ErrorCode.php).
 
+One caveat while #283 is open: on the colymba `/api` generic write surface, `WriteGuardExtension`
+refusals other than `ELEMENT_NOT_ALLOWED_ON_PAGE` still arrive as `text/plain` bodies with no code
+at all, so the code-based branching below only works for that one guard refusal on that surface.
+The module's own endpoints (`records/*`, batch, compositions) always send the envelope.
+
 ```json
 { "data": null, "meta": {}, "error": { "code": "VALIDATION_FAILED", "status": 422,
   "message": "...", "details": [ { "field": "Title", "code": "UNKNOWN_FIELD", "message": "..." } ] } }
@@ -39,7 +44,7 @@ otherwise.
 | `CIRCULAR_REF` | 422 | Every unresolved composition `$ref` is declared by a stuck element (a cycle, including a self-reference) |
 | `EXTERNAL_ID_UNSUPPORTED` | 422 | Class lacks the external-id column (`ExternalIdentifierExtension` not applied) |
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
-| `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, or generic upsert) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64) |
+| `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, generic upsert, or a colymba `/api` `POST`/`PUT` on the element itself) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64, colymba surface #100) |
 | `ACTION_VERB_MISSING` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
 | `VALUE_SANITISED` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
 | `URLSEGMENT_COLLISION` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
