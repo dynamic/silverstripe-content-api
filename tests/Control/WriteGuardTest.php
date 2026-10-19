@@ -749,6 +749,13 @@ class WriteGuardTest extends ContentApiTestCase
         Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
         static::resetElementalTypesCache();
 
+        // Name the skip branch rather than infer it: the area IS resolvable
+        // (so this is not silently the "area not found" branch) and it has no
+        // owner page for the policy to consult.
+        $resolved = ElementalArea::get()->byID((int) $orphanArea->ID);
+        $this->assertNotNull($resolved, 'the fixture area is resolvable — this is the no-owner-page branch');
+        $this->assertNull($resolved->getOwnerPage(), 'the fixture area has no owner page');
+
         $response = $this->colymba('PUT', "ApiTestElement/{$element->ID}", ['ParentID' => (int) $orphanArea->ID]);
 
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
