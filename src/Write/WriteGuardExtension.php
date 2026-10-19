@@ -224,10 +224,14 @@ class WriteGuardExtension extends Extension
         $targets = [];
 
         foreach (['ParentID', 'Parent'] as $key) {
-            // An ARRAY under the relation name is colymba's relation-add/set
-            // shape, not a scalar FK; `applyRelations()` handles that (still
-            // un-enforced, an undisclosed #64 gap documented in
-            // RecordWriter::assertElementPlacementAllowed()).
+            // An ARRAY under the relation name is not a scalar FK: colymba's
+            // `updateModel()` only maps a non-array has_one value to the FK,
+            // and routes an array to its relation handling instead. That path
+            // (attaching existing elements through a relation payload, e.g.
+            // `PUT /api/ElementalArea/{id}` with `Elements`) never comes back
+            // through here — it is the #64 gap this issue does not close,
+            // documented in RecordWriter::assertElementPlacementAllowed() and
+            // tracked separately. Skipping it is deliberate, not an oversight.
             if (!array_key_exists($key, $body) || is_array($body[$key])) {
                 continue;
             }

@@ -69,15 +69,19 @@ class WriteGuardTest extends ContentApiTestCase
     }
 
     /**
-     * An `ApiTestBlockPage` with a genuinely persisted `ElementalArea`,
-     * published alongside it.
+     * An `ApiTestBlockPage` whose page AND area are both LIVE.
      *
-     * Publishing the page is what makes the fixture a realistic target for a
-     * colymba request (/api is stage-unaware and reads LIVE, so
-     * `testColymbaPutRejectsAnElementOntoAnUnpublishedPageAreaIsRejected`
-     * covers the draft-only case on its own) and it keeps
-     * `ElementalArea::getOwnerPage()` resolving for the surfaces that read
-     * LIVE during the request. The area itself is only auto-created by
+     * `publishRecursive()`, not `publishSingle()`: `ElementalArea` is in
+     * `ElementalPageExtension::$owns` and is itself `Versioned`, so
+     * `publishSingle()` leaves the area DRAFT-only — which would make every
+     * 422 case here pass for the wrong reason (a LIVE area lookup finds
+     * nothing, and an unresolvable area is the guard's skip branch, not its
+     * enforcement branch). With both records LIVE, a rejection can only come
+     * from the placement policy, and
+     * {@see self::testColymbaPutRejectsAnElementOntoAnUnpublishedPageArea()}
+     * is the only case left that still needs the guard's DRAFT-stage read.
+     *
+     * The area is only auto-created by
      * `ElementalAreasExtension::allowAlteringElementalArea()` during a write
      * in the DRAFT stage, hence the surrounding `withVersionedMode()`.
      */
@@ -89,7 +93,7 @@ class WriteGuardTest extends ContentApiTestCase
             $page = ApiTestBlockPage::create(['Title' => $title]);
             $page->write();
             $area = $page->ElementalArea();
-            $page->publishSingle();
+            $page->publishRecursive();
 
             return $area;
         });
@@ -97,7 +101,8 @@ class WriteGuardTest extends ContentApiTestCase
 
     /**
      * Same fixture, deliberately left DRAFT-only: neither the page nor its
-     * area exists in any `_live` table.
+     * area exists in any `_live` table — the shape that only a DRAFT-stage
+     * read of the target area can see.
      */
     private function draftBlockPageArea(string $title): ElementalArea
     {
@@ -654,8 +659,9 @@ class WriteGuardTest extends ContentApiTestCase
 
         $this->assertSame(422, $blocked->getStatusCode(), (string) $blocked->getBody());
 
-        // Same page, list narrowed to something that still includes
-        // ApiTestElement.
+        // Same page, `disallowed_elements` swapped to a list that no longer
+        // names ApiTestElement — so the type is allowed here and was not
+        // above.
         Config::modify()->set(
             ApiTestBlockPage::class,
             'disallowed_elements',
@@ -802,8 +808,9 @@ class WriteGuardTest extends ContentApiTestCase
      * what the guard's explicit `set_stage(DRAFT)` exists for: `/api` resolves
      * to LIVE, so an area read on LIVE is simply not there, and reading it
      * that way would skip enforcement for the unpublished pages a content API
-     * is most often drafting content onto. Deleting that stage handling keeps
-     * every other test in this file passing; only this one notices.
+     * is most often drafting content onto. Deleting that stage handling makes
+     * this test fail while every LIVE-fixture case above still passes — which
+     * is only true because `blockPageArea()` publishes the area too.
      */
     public function testColymbaPutRejectsAnElementOntoAnUnpublishedPageArea(): void
     {
@@ -832,6 +839,48 @@ class WriteGuardTest extends ContentApiTestCase
         $this->assertSame(
             (int) $sourceArea->ID,
             (int) ApiTestElement::get()->byID($element->ID)->ParentID
+        );
+    }
+
+    /**
+     * The reverse direction of the same disagreement: a class that
+     * `api_protected_fields` the relation (`Parent`) has `ParentID` reverted
+     * silently by `onBeforeWrite()`, and must not be met with a 422 from the
+     * placement check for a field the client was never allowed to write.
+     */
+    public function testColymbaPlacementCheckDoesNotHardenADocumentedProtectedFieldRevert(): void
+    {
+        $this->exposeElement();
+
+        Config::modify()->set(ApiTestElement::class, 'api_protected_fields', ['Parent']);
+
+        $sourceArea = $this->blockPageArea('Protected Source');
+        $targetArea = $this->blockPageArea('Protected Target');
+
+        $element = ApiTestElement::create();
+        $element->Title = 'Protected parent';
+        $element->ParentID = $sourceArea->ID;
+        $element->write();
+        $element->publishRecursive();
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+
+        $response = $this->colymba('PUT', "ApiTestElement/{$element->ID}", [
+            'Title' => 'Renamed only',
+            'ParentID' => (int) $targetArea->ID,
+        ]);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(
+            'Renamed only',
+            ApiTestElement::get()->byID($element->ID)->Title,
+            'the writable field still applies'
+        );
+        $this->assertSame(
+            (int) $sourceArea->ID,
+            (int) ApiTestElement::get()->byID($element->ID)->ParentID,
+            'the protected field is silently reverted, not refused'
         );
     }
 
