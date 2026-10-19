@@ -2,12 +2,14 @@
 
 namespace Dynamic\ContentApi\Write;
 
+use Dynamic\ContentApi\Control\ContentApiController;
 use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Psr\Log\LoggerInterface;
 use SilverStripe\Control\Controller;
+use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Core\Extension;
 use SilverStripe\Core\Injector\Injector;
@@ -203,10 +205,13 @@ class WriteGuardExtension extends Extension
      * one disallowed target refuses the whole request.
      *
      * @param array<string, mixed> $body the payload as it will reach colymba
-     * @throws HTTPResponse_Exception 422 (ELEMENT_NOT_ALLOWED_ON_PAGE) —
-     *   thrown as `HTTPResponse_Exception` rather than a bare `ApiError`
-     *   because this hook has no handler of its own to catch the latter; see
-     *   onBeforeDeserialize() for why that shape is required here.
+     * @throws HTTPResponse_Exception 422 carrying the module's JSON error
+     *   envelope for `ELEMENT_NOT_ALLOWED_ON_PAGE` — thrown as
+     *   `HTTPResponse_Exception` rather than a bare `ApiError` because this
+     *   hook has no handler of its own to catch the latter, and built from an
+     *   `HTTPResponse` rather than a message string so the documented
+     *   `error.code` survives; see onBeforeDeserialize() and
+     *   errorResponse().
      */
     private function assertElementPlacement(array $body): void
     {
@@ -279,7 +284,7 @@ class WriteGuardExtension extends Extension
             $error = $this->placementError($parentID, $elementClass);
 
             if ($error !== null) {
-                throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
+                throw new HTTPResponse_Exception($this->errorResponse($error));
             }
         }
     }
@@ -334,6 +339,44 @@ class WriteGuardExtension extends Extension
                 )
             );
         });
+    }
+
+    /**
+     * The module's JSON error envelope as a response, so a client can branch
+     * on `error.code` the way docs/en/12_error-codes.md tells it to (#100).
+     *
+     * Mirrors ContentApiController::errorResponse() — same body shape, same
+     * `Cache-Control` — because that controller never sees this throw: it
+     * escapes an extension hook, crosses colymba's controller (which catches
+     * nothing) and leaves `RequestHandler::runRequest()` through its
+     * `HTTPResponse_Exception` arm, which returns whatever response the
+     * exception carries. Handing that exception a message STRING instead —
+     * what the sibling refusals in this class still do — makes
+     * `HTTPResponse_Exception` itself build a `text/plain` body ("error
+     * responses should always be considered plaintext, for security
+     * reasons"), and the `ErrorCode` is lost on the way out. That is a
+     * pre-existing gap on those other refusals, tracked separately; this is
+     * the first guard refusal on the colymba surface to carry its code.
+     *
+     * The message it carries is server-derived (element class, page class,
+     * page id, that page's allowed types) and reaches only a caller that has
+     * already cleared colymba's authentication policy, which is the same
+     * exposure this code has in the envelope on the module's own surface.
+     */
+    private function errorResponse(ApiError $error): HTTPResponse
+    {
+        $body = [
+            'data' => null,
+            'meta' => (object) [],
+            'error' => $error->toArray(),
+        ];
+
+        return HTTPResponse::create(
+            json_encode($body, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES),
+            $error->getStatus()
+        )
+            ->addHeader('Content-Type', 'application/json')
+            ->addHeader('Cache-Control', ContentApiController::CACHE_CONTROL);
     }
 
     /**

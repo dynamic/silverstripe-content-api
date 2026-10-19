@@ -12,8 +12,9 @@ All notable changes to this project are documented here. Format loosely follows
   moved between, any `ElementalArea` past the owning page's `allowed_elements`/
   `disallowed_elements` — a side door around the CMS's "add element" picker and around #64.
   `WriteGuardExtension::onBeforeDeserialize()` now refuses such a payload with
-  `422 ELEMENT_NOT_ALLOWED_ON_PAGE` before colymba applies anything, so a rejected create leaves
-  no record. The target is read from both `ParentID` and the bare `Parent` relation name (colymba
+  `422 ELEMENT_NOT_ALLOWED_ON_PAGE` — the module's standard JSON error envelope, so callers can
+  branch on `error.code` as [docs/en/12_error-codes.md](docs/en/12_error-codes.md) tells them to —
+  before colymba applies anything, so a rejected create leaves no record. The target is read from both `ParentID` and the bare `Parent` relation name (colymba
   maps either to the FK), the check passes the relation name to the shared
   `WriteApplicator::isFieldWritable()` so it agrees with `onBeforeWrite()`'s revert decision, and
   the target area and its owner page are read on DRAFT. **Behavior change:** colymba `POST`/`PUT`

@@ -128,6 +128,36 @@ class WriteGuardTest extends ContentApiTestCase
         );
     }
 
+    /**
+     * Assert a colymba rejection is the placement policy's own AND delivered
+     * the way docs/en/12_error-codes.md promises: the JSON error envelope
+     * carrying `error.code === ELEMENT_NOT_ALLOWED_ON_PAGE`, not a plain-text
+     * 422 whose only signal is prose a caller would have to pattern-match
+     * (#100 review: the code was documented but dropped on the way out).
+     */
+    private function assertPlacementRejection(HTTPResponse $response, string $context): void
+    {
+        $body = (string) $response->getBody();
+
+        $this->assertSame(422, $response->getStatusCode(), "$context: $body");
+        $this->assertSame('application/json', $response->getHeader('Content-Type'), "$context: $body");
+
+        $envelope = json_decode($body, true);
+
+        $this->assertIsArray($envelope, "$context: the refusal is the JSON error envelope: $body");
+        $this->assertSame(
+            'ELEMENT_NOT_ALLOWED_ON_PAGE',
+            $envelope['error']['code'] ?? null,
+            "$context: a caller must be able to branch on error.code: $body"
+        );
+        $this->assertSame(422, $envelope['error']['status'] ?? null, "$context: $body");
+        $this->assertStringContainsString(
+            'is not an allowed element type',
+            (string) ($envelope['error']['message'] ?? ''),
+            "$context: the rejection is the placement policy, not an unrelated failure: $body"
+        );
+    }
+
     public function testUnauthenticatedColymbaRequestIsRejected(): void
     {
         $response = $this->mainSession->sendRequest('GET', 'api/ApiTest', []);
@@ -589,12 +619,7 @@ class WriteGuardTest extends ContentApiTestCase
             'ParentID' => (int) $targetArea->ID,
         ]);
 
-        $this->assertSame(422, $response->getStatusCode(), (string) $response->getBody());
-        $this->assertStringContainsString(
-            'is not an allowed element type',
-            (string) $response->getBody(),
-            'the rejection is the placement policy, not an unrelated failure'
-        );
+        $this->assertPlacementRejection($response, 'a disallowed move must be refused with its code');
         $this->assertSame(
             (int) $sourceArea->ID,
             (int) ApiTestElement::get()->byID($element->ID)->ParentID,
@@ -622,7 +647,7 @@ class WriteGuardTest extends ContentApiTestCase
             'ParentID' => (int) $area->ID,
         ]);
 
-        $this->assertSame(422, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertPlacementRejection($response, 'a disallowed create must be refused with its code');
         $this->assertSame(
             0,
             ApiTestElement::get()->filter('Title', 'Never created')->count(),
@@ -657,7 +682,7 @@ class WriteGuardTest extends ContentApiTestCase
             'ParentID' => (int) $targetArea->ID,
         ]);
 
-        $this->assertSame(422, $blocked->getStatusCode(), (string) $blocked->getBody());
+        $this->assertPlacementRejection($blocked, 'the blocked create on the disallowing page');
 
         // Same page, `disallowed_elements` swapped to a list that no longer
         // names ApiTestElement — so the type is allowed here and was not
@@ -795,7 +820,7 @@ class WriteGuardTest extends ContentApiTestCase
             'Parent' => (int) $targetArea->ID,
         ]);
 
-        $this->assertSame(422, $byRelationName->getStatusCode(), (string) $byRelationName->getBody());
+        $this->assertPlacementRejection($byRelationName, 'a move sent as the bare relation name');
 
         $mixed = $this->colymba('PUT', "ApiTestElement/{$element->ID}", [
             'ParentID' => (int) $sourceArea->ID,
@@ -842,7 +867,7 @@ class WriteGuardTest extends ContentApiTestCase
             'ParentID' => (int) $draftArea->ID,
         ]);
 
-        $this->assertSame(422, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertPlacementRejection($response, 'a draft-only target area must still be enforced');
         $this->assertSame(
             (int) $sourceArea->ID,
             (int) ApiTestElement::get()->byID($element->ID)->ParentID
@@ -921,7 +946,7 @@ class WriteGuardTest extends ContentApiTestCase
             'ParentID' => (int) $targetArea->ID,
         ]);
 
-        $this->assertSame(422, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertPlacementRejection($response, 'an allowlist named by relation must not skip enforcement');
         $this->assertSame(
             (int) $sourceArea->ID,
             (int) ApiTestElement::get()->byID($element->ID)->ParentID
