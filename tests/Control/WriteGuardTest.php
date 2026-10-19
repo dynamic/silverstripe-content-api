@@ -69,14 +69,15 @@ class WriteGuardTest extends ContentApiTestCase
     }
 
     /**
-     * An `ApiTestBlockPage` with a genuinely persisted, LIVE `ElementalArea`,
-     * which is what `ElementalArea::getOwnerPage()` needs to resolve during a
-     * colymba request: /api is stage-unaware and resolves to LIVE (see
-     * {@see self::testParentIdStaysReadonlyOnColymbaSurface()}), and a
-     * draft-only page there returns null from `getOwnerPage()` — the skip
-     * branch, not the enforcement branch.
+     * An `ApiTestBlockPage` with a genuinely persisted `ElementalArea`,
+     * published alongside it.
      *
-     * The area itself is only auto-created by
+     * Publishing the page is what makes the fixture a realistic target for a
+     * colymba request (/api is stage-unaware and reads LIVE, so
+     * `testColymbaPutRejectsAnElementOntoAnUnpublishedPageAreaIsRejected`
+     * covers the draft-only case on its own) and it keeps
+     * `ElementalArea::getOwnerPage()` resolving for the surfaces that read
+     * LIVE during the request. The area itself is only auto-created by
      * `ElementalAreasExtension::allowAlteringElementalArea()` during a write
      * in the DRAFT stage, hence the surrounding `withVersionedMode()`.
      */
@@ -91,6 +92,22 @@ class WriteGuardTest extends ContentApiTestCase
             $page->publishSingle();
 
             return $area;
+        });
+    }
+
+    /**
+     * Same fixture, deliberately left DRAFT-only: neither the page nor its
+     * area exists in any `_live` table.
+     */
+    private function draftBlockPageArea(string $title): ElementalArea
+    {
+        return Versioned::withVersionedMode(function () use ($title) {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            $page = ApiTestBlockPage::create(['Title' => $title]);
+            $page->write();
+
+            return $page->ElementalArea();
         });
     }
 
@@ -731,6 +748,126 @@ class WriteGuardTest extends ContentApiTestCase
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame(
             (int) $orphanArea->ID,
+            (int) ApiTestElement::get()->byID($element->ID)->ParentID
+        );
+    }
+
+    /**
+     * The same placement sent as the bare has_one NAME (`Parent`) rather than
+     * the FK column (`ParentID`). `schemaKeys()` admits either, and
+     * `DefaultQueryHandler::updateModel()` maps a has_one name to its FK
+     * (`$model->{$attribute . 'ID'} = $value`), so a check that only read
+     * `ParentID` would be one key-rename away from being bypassed. The mixed
+     * payload matters just as much: colymba applies keys in payload order, so
+     * which of the two wins is the client's choice, not something this guard
+     * can assume.
+     */
+    public function testColymbaPutMovingAnElementViaTheBareParentRelationNameIsRejected(): void
+    {
+        $this->exposeElement();
+
+        $sourceArea = $this->blockPageArea('Relation Name Source');
+        $targetArea = $this->blockPageArea('Relation Name Target');
+
+        $element = ApiTestElement::create();
+        $element->Title = 'Renamed-key move';
+        $element->ParentID = $sourceArea->ID;
+        $element->write();
+        $element->publishSingle();
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+
+        $byRelationName = $this->colymba('PUT', "ApiTestElement/{$element->ID}", [
+            'Parent' => (int) $targetArea->ID,
+        ]);
+
+        $this->assertSame(422, $byRelationName->getStatusCode(), (string) $byRelationName->getBody());
+
+        $mixed = $this->colymba('PUT', "ApiTestElement/{$element->ID}", [
+            'ParentID' => (int) $sourceArea->ID,
+            'Parent' => (int) $targetArea->ID,
+        ]);
+
+        $this->assertSame(422, $mixed->getStatusCode(), (string) $mixed->getBody());
+        $this->assertSame(
+            (int) $sourceArea->ID,
+            (int) ApiTestElement::get()->byID($element->ID)->ParentID,
+            'neither key shape may move the element'
+        );
+    }
+
+    /**
+     * The target area — and the page owning it — exist on DRAFT only. This is
+     * what the guard's explicit `set_stage(DRAFT)` exists for: `/api` resolves
+     * to LIVE, so an area read on LIVE is simply not there, and reading it
+     * that way would skip enforcement for the unpublished pages a content API
+     * is most often drafting content onto. Deleting that stage handling keeps
+     * every other test in this file passing; only this one notices.
+     */
+    public function testColymbaPutRejectsAnElementOntoAnUnpublishedPageArea(): void
+    {
+        $this->exposeElement();
+
+        $sourceArea = $this->blockPageArea('Draft Target Source');
+        $draftArea = $this->draftBlockPageArea('Draft Only Target');
+
+        $element = ApiTestElement::create();
+        $element->Title = 'Heading for a draft page';
+        $element->ParentID = $sourceArea->ID;
+        $element->write();
+        // The ELEMENT must be LIVE for colymba's PUT to find the record at all
+        // (see testParentIdStaysReadonlyOnColymbaSurface); the TARGET page does
+        // not, which is the point of the case.
+        $element->publishSingle();
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+
+        $response = $this->colymba('PUT', "ApiTestElement/{$element->ID}", [
+            'ParentID' => (int) $draftArea->ID,
+        ]);
+
+        $this->assertSame(422, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(
+            (int) $sourceArea->ID,
+            (int) ApiTestElement::get()->byID($element->ID)->ParentID
+        );
+    }
+
+    /**
+     * A class that allowlists the relation by NAME (`api_writable_fields:
+     * [Title, Parent]`) — which `WriteApplicator::isFieldWritable()` honours,
+     * and `onBeforeWrite()` therefore applies. `assertElementPlacement()` has
+     * to pass the same relation name to that shared check, or it decides
+     * `ParentID` is unwritable, takes its skip branch, and lets the move
+     * through as a plain 200.
+     */
+    public function testColymbaPlacementCheckAgreesWithAnAllowlistNamedByRelation(): void
+    {
+        $this->exposeElement();
+
+        Config::modify()->set(ApiTestElement::class, 'api_writable_fields', ['Title', 'Parent']);
+
+        $sourceArea = $this->blockPageArea('Named Allowlist Source');
+        $targetArea = $this->blockPageArea('Named Allowlist Target');
+
+        $element = ApiTestElement::create();
+        $element->Title = 'Allowlisted by relation name';
+        $element->ParentID = $sourceArea->ID;
+        $element->write();
+        $element->publishSingle();
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+
+        $response = $this->colymba('PUT', "ApiTestElement/{$element->ID}", [
+            'ParentID' => (int) $targetArea->ID,
+        ]);
+
+        $this->assertSame(422, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame(
+            (int) $sourceArea->ID,
             (int) ApiTestElement::get()->byID($element->ID)->ParentID
         );
     }

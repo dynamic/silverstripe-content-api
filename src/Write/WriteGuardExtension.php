@@ -193,6 +193,15 @@ class WriteGuardExtension extends Extension
      * `RecordWriter` (which always runs inside a DRAFT versioned mode) this
      * surface has to ask for that stage explicitly to see a draft area at all.
      *
+     * The target is read from BOTH `ParentID` and the bare has_one name
+     * `Parent`: `schemaKeys()` admits either, and
+     * `DefaultQueryHandler::updateModel()` turns a has_one *name* into its FK
+     * (`$model->{$attribute . 'ID'} = $value`), so `{"Parent": 7}` reparents
+     * exactly like `{"ParentID": 7}`. Which of the two wins when a payload
+     * carries both depends on key order, so neither is trusted to be the
+     * effective one: every distinct target the payload names is checked, and
+     * one disallowed target refuses the whole request.
+     *
      * @param array<string, mixed> $body the payload as it will reach colymba
      * @throws HTTPResponse_Exception 422 (ELEMENT_NOT_ALLOWED_ON_PAGE) —
      *   thrown as `HTTPResponse_Exception` rather than a bare `ApiError`
@@ -212,16 +221,28 @@ class WriteGuardExtension extends Extension
             return;
         }
 
-        if (!array_key_exists('ParentID', $body)) {
-            return;
+        $targets = [];
+
+        foreach (['ParentID', 'Parent'] as $key) {
+            // An ARRAY under the relation name is colymba's relation-add/set
+            // shape, not a scalar FK; `applyRelations()` handles that (still
+            // un-enforced, an undisclosed #64 gap documented in
+            // RecordWriter::assertElementPlacementAllowed()).
+            if (!array_key_exists($key, $body) || is_array($body[$key])) {
+                continue;
+            }
+
+            $targets[(int) $body[$key]] = true;
         }
 
-        $parentID = (int) $body['ParentID'];
+        $currentParentID = (int) $owner->ParentID;
 
         // A detach, or the routine GET-then-PUT round trip that echoes the
         // record's own area back — neither is a placement change, same rule
         // RecordWriter applies.
-        if ($parentID === 0 || $parentID === (int) $owner->ParentID) {
+        unset($targets[0], $targets[$currentParentID]);
+
+        if ($targets === []) {
             return;
         }
 
@@ -232,23 +253,51 @@ class WriteGuardExtension extends Extension
         // into a hard error for a field the client was never allowed to
         // write — the same reason translatePolymorphicHasOnes() checks
         // writability before resolving.
-        if (!Injector::inst()->get(WriteApplicator::class)->isFieldWritable(get_class($owner), 'ParentID')) {
+        //
+        // The relation name is passed for the same reason onBeforeWrite()
+        // passes it: WriteApplicator::isFieldWritable() matches
+        // `api_writable_fields`/`api_protected_fields` by column OR relation
+        // name, so omitting it here would disagree with the revert decision
+        // made later in this same request — skipping enforcement for a class
+        // that allowlists `Parent` (a second bypass), or refusing with 422
+        // where the documented behaviour is a silent revert for a class that
+        // protects `Parent`.
+        if (!Injector::inst()->get(WriteApplicator::class)->isFieldWritable(get_class($owner), 'ParentID', 'Parent')) {
             return;
         }
 
         $elementClass = get_class($owner);
 
-        // Resolve the target area and its owner page on the DRAFT stage:
-        // `ElementalArea` is versioned, and /api defaults to LIVE, so an
-        // unpublished area — or the page that owns it — would be invisible
-        // to this lookup and the check would silently skip the exact writes it
-        // exists for. Same reasoning, and the same mechanism, as
-        // authorizeRelationTargets() reading relation targets on DRAFT.
-        // The error is built inside the closure, where the owner page still
-        // carries the type `getOwnerPage()` gives it: `getElementalTypes()`
-        // is contributed by `ElementalAreasExtension`, so a widened
-        // `DataObject` return could no longer name the allowed types.
-        $error = Versioned::withVersionedMode(function () use ($parentID, $elementClass): ?ApiError {
+        // Each candidate target is resolved through placementError(), which
+        // reads the area and its owner page on the DRAFT stage and builds any
+        // violation there.
+        foreach (array_keys($targets) as $parentID) {
+            $error = $this->placementError($parentID, $elementClass);
+
+            if ($error !== null) {
+                throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
+            }
+        }
+    }
+
+    /**
+     * The placement violation for one candidate target area, or null when
+     * there is nothing to refuse (unknown area, no owner page, a page no
+     * page-type restriction covers, or a type that page allows).
+     *
+     * The area and its owner page are read on the DRAFT stage: `ElementalArea`
+     * is versioned, and /api defaults to LIVE, so an unpublished area — or the
+     * page that owns it — would be invisible to this lookup and the check
+     * would silently skip the exact writes it exists for. Same reasoning, and
+     * the same mechanism, as authorizeRelationTargets() reading relation
+     * targets on DRAFT. The error is likewise built inside the closure, where
+     * the owner page still carries the type `getOwnerPage()` gives it:
+     * `getElementalTypes()` is contributed by `ElementalAreasExtension`, so a
+     * widened `DataObject` return could no longer name the allowed types.
+     */
+    private function placementError(int $parentID, string $elementClass): ?ApiError
+    {
+        return Versioned::withVersionedMode(function () use ($parentID, $elementClass): ?ApiError {
             Versioned::set_stage(Versioned::DRAFT);
 
             $area = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID($parentID);
@@ -281,12 +330,6 @@ class WriteGuardExtension extends Extension
                 )
             );
         });
-
-        if (!$error) {
-            return;
-        }
-
-        throw new HTTPResponse_Exception($error->getMessage(), $error->getStatus());
     }
 
     /**
