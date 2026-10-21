@@ -44,7 +44,7 @@ otherwise.
 | `CIRCULAR_REF` | 422 | Every unresolved composition `$ref` is declared by a stuck element (a cycle, including a self-reference) |
 | `EXTERNAL_ID_UNSUPPORTED` | 422 | Class lacks the external-id column (`ExternalIdentifierExtension` not applied) |
 | `TOKEN_RESOLUTION_FAILED` | 422 | A `$palette`/`$button` color token is malformed or unresolvable |
-| `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, generic upsert, or a colymba `/api` `POST`/`PUT` on the element itself) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64, colymba surface #100) |
+| `ELEMENT_NOT_ALLOWED_ON_PAGE` | 422 | An element write (composition, batch, generic upsert, a relation-attach through the area's `Elements` has_many on those same `/content-api/v1` paths, or a colymba `/api` `POST`/`PUT` on the element itself) is being attached to an `ElementalArea` whose owning page's Elemental config (`allowed_elements`/`disallowed_elements`) doesn't permit that element class — the error message lists the page's actual allowed types (#64, colymba surface #100, relation-attach #101) |
 | `ACTION_VERB_MISSING` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
 | `VALUE_SANITISED` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
 | `URLSEGMENT_COLLISION` | — | Warning code, never thrown: see [Warning codes](#warning-codes-200-responses) |
