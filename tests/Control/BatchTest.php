@@ -5,6 +5,7 @@ namespace Dynamic\ContentApi\Tests\Control;
 use DNADesign\Elemental\Models\ElementalArea;
 use Dynamic\ContentApi\Batch\BatchProcessor;
 use Dynamic\ContentApi\Security\EnvironmentGate;
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestBlockPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestChildObject;
@@ -1776,6 +1777,226 @@ class BatchTest extends ContentApiTestCase
             (int) ApiTestElement::get()->byID($elementId)->ParentID,
             'an explicit client-driven cross-page move must still succeed'
         );
+    }
+
+    /**
+     * #101: #64's per-page-type placement check lives in
+     * `RecordWriter::assertElementPlacementAllowed()`, which only runs when
+     * a `BaseElement`'s own `ParentID` is written. Attaching an existing
+     * element through the `ElementalArea`'s own `Elements` has_many
+     * (`api_writable_relations`) goes through `WriteApplicator::
+     * applyRelations()` instead and never calls back into `RecordWriter` for
+     * the attached item — so without the relation-level check this is a
+     * side door around the CMS's own "add element" picker.
+     */
+    public function testBatchAddOfADisallowedElementToAnAreaIsRejected(): void
+    {
+        $sourceArea = $this->createBlockPageWithArea('Batch Relation Source');
+        $targetArea = $this->createBlockPageWithArea('Batch Relation Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Already placed elsewhere', 'ParentID' => (int) $sourceArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+        Config::modify()->set(ElementalArea::class, 'api_writable_relations', ['Elements']);
+        $this->registerElementalAreaModel();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ElementalArea',
+                    'id' => (int) $targetArea->ID,
+                    'relations' => [
+                        'Elements' => [
+                            'mode' => 'add',
+                            'items' => [(int) $elementId],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('ELEMENT_NOT_ALLOWED_ON_PAGE', $body['data']['results'][0]['error']['code']);
+        $this->assertSame(
+            (int) $sourceArea->ID,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'a rejected relation-attach must leave the element in its original area'
+        );
+    }
+
+    /**
+     * Companion to the rejection test: `remove` only detaches, so the
+     * placement check must not refuse it — otherwise a page type that
+     * narrows its `disallowed_elements` after content exists could never
+     * clean up the elements it now disallows.
+     */
+    public function testBatchRemoveOfADisallowedElementFromAnAreaStillSucceeds(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Relation Remove');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Detach me', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+        Config::modify()->set(ElementalArea::class, 'api_writable_relations', ['Elements']);
+        $this->registerElementalAreaModel();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ElementalArea',
+                    'id' => (int) $area->ID,
+                    'relations' => [
+                        'Elements' => [
+                            'mode' => 'remove',
+                            'items' => [(int) $elementId],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame(
+            0,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'a remove must detach the element even when its type is now disallowed'
+        );
+    }
+
+    /**
+     * Companion to the rejection test: a `set` that re-lists the area's own
+     * current elements is the GET-then-`set` round trip, not a placement
+     * change — it must keep succeeding even after the page type narrows to
+     * disallow the element's type.
+     */
+    public function testBatchSetOfAnAreasCurrentElementsIsUnaffectedByALaterDisallow(): void
+    {
+        $area = $this->createBlockPageWithArea('Batch Relation Set');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Already here', 'ParentID' => (int) $area->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+        Config::modify()->set(ElementalArea::class, 'api_writable_relations', ['Elements']);
+        $this->registerElementalAreaModel();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ElementalArea',
+                    'id' => (int) $area->ID,
+                    'relations' => [
+                        'Elements' => [
+                            'mode' => 'set',
+                            'items' => [(int) $elementId],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame(
+            (int) $area->ID,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'a set echoing the area\'s own current elements must not detach or refuse them'
+        );
+    }
+
+    /**
+     * The other side of the same fix: an `add` of a type the page still
+     * allows must succeed and actually reparent the element — the check
+     * only refuses genuine placements it disallows.
+     */
+    public function testBatchAddOfAnAllowedElementToAnAreaSucceeds(): void
+    {
+        $sourceArea = $this->createBlockPageWithArea('Batch Relation Allowed Source');
+        $targetArea = $this->createBlockPageWithArea('Batch Relation Allowed Target');
+
+        $created = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Move me via relation', 'ParentID' => (int) $sourceArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $elementId = (int) $created['data']['results'][0]['id'];
+
+        Config::modify()->set(ElementalArea::class, 'api_writable_relations', ['Elements']);
+        $this->registerElementalAreaModel();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ElementalArea',
+                    'id' => (int) $targetArea->ID,
+                    'relations' => [
+                        'Elements' => [
+                            'mode' => 'add',
+                            'items' => [(int) $elementId],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('updated', $body['data']['results'][0]['status']);
+        $this->assertSame(
+            (int) $targetArea->ID,
+            (int) ApiTestElement::get()->byID($elementId)->ParentID,
+            'an allowed relation-attach must reparent the element onto the target area'
+        );
+    }
+
+    /**
+     * Registers `ElementalArea` as a batch class ref. The shared test config
+     * only maps the ApiTest* stubs and discovery is off by default, so a
+     * batch op naming `ElementalArea` would otherwise fail UNKNOWN_CLASS.
+     */
+    private function registerElementalAreaModel(): void
+    {
+        $models = (array) Config::inst()->get(ClassRegistry::class, 'models');
+        $models['ElementalArea'] = ElementalArea::class;
+        Config::modify()->set(ClassRegistry::class, 'models', $models);
     }
 
     /**

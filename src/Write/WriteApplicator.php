@@ -6,9 +6,11 @@ use Dynamic\ContentApi\Errors\ApiError;
 use Dynamic\ContentApi\Errors\ErrorCode;
 use Dynamic\ContentApi\Identity\ExternalIdResolver;
 use Dynamic\ContentApi\Registry\ClassRegistry;
+use Dynamic\ContentApi\Registry\ElementPlacementPolicy;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
+use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Forms\HTMLEditor\HTMLEditorConfig;
 use SilverStripe\Forms\HTMLEditor\HTMLEditorField;
 use SilverStripe\Forms\HTMLEditor\HTMLEditorSanitiser;
@@ -539,6 +541,15 @@ class WriteApplicator
      * `read` for a many_many item (only the join row changes). It throws to
      * refuse. `RecordWriter::write()` passes PermissionPolicy::authorize().
      *
+     * #64/#101: attaching an existing `BaseElement` to an `ElementalArea`
+     * through the area's own `Elements` has_many (`api_writable_relations`)
+     * never calls back into `RecordWriter::write()` for the attached item,
+     * so `RecordWriter::assertElementPlacementAllowed()`'s per-page-type
+     * check would otherwise be bypassed. Pass 1 therefore runs the same
+     * `ElementPlacementPolicy` check per attached item — see
+     * `assertElementPlacementAllowedForRelation()`'s own docblock for the
+     * exact scope (`add`/`set` only, items already in this area skipped).
+     *
      * @param array<string, mixed> $relations
      * @param (callable(DataObject, string): void)|null $authorize
      * @return DataObject[] Deduplicated (by class + id) — see this method's
@@ -593,6 +604,8 @@ class WriteApplicator
                 }
             }
 
+            $this->assertElementPlacementAllowedForRelation($record, $relationClass, $isHasMany, $mode, $resolved);
+
             $plan[] = [$name, $mode, $isHasMany, $resolved, $existing];
         }
 
@@ -633,6 +646,92 @@ class WriteApplicator
         }
 
         return array_values($dirtiedPublished);
+    }
+
+    /**
+     * Elemental placement check for a relation write (#64/#101).
+     *
+     * `RecordWriter::assertElementPlacementAllowed()` only runs when a
+     * `BaseElement`'s own `ParentID` is written, so attaching an existing
+     * element to an `ElementalArea` through the area's own `Elements`
+     * has_many (`api_writable_relations`) would otherwise bypass it. This
+     * runs inside pass 1 of `applyRelations()`, before any list is mutated,
+     * so a refusal on a later item cannot leave earlier items attached.
+     *
+     * Only `add`/`set` are checked: `remove` detaches, and `set`'s existing
+     * children are already placed. An item already in this area
+     * (`ParentID` === the area's ID) is skipped for the same reason
+     * `RecordWriter` skips an unchanged `ParentID` — the GET-then-`set`
+     * round trip is not a placement change.
+     *
+     * No `Versioned::withVersionedMode()` here: `RecordWriter::write()`
+     * always calls `applyRelations()` inside the DRAFT stage, so the area
+     * and its owner page are already visible.
+     *
+     * @param array<int, array{0: DataObject, 1: array<string, mixed>}> $resolved
+     * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE
+     */
+    private function assertElementPlacementAllowedForRelation(
+        DataObject $record,
+        string $relationClass,
+        bool $isHasMany,
+        string $mode,
+        array $resolved
+    ): void {
+        if ($mode === 'remove' || !$isHasMany) {
+            return;
+        }
+
+        if (
+            !class_exists('DNADesign\\Elemental\\Models\\BaseElement')
+            || !is_a($relationClass, 'DNADesign\\Elemental\\Models\\BaseElement', true)
+        ) {
+            return;
+        }
+
+        if (
+            !class_exists('DNADesign\\Elemental\\Models\\ElementalArea')
+            || !is_a($record, 'DNADesign\\Elemental\\Models\\ElementalArea')
+        ) {
+            return;
+        }
+
+        $area = DataObject::get('DNADesign\\Elemental\\Models\\ElementalArea')->byID((int) $record->ID);
+
+        if (!$area || !$area->hasMethod('getOwnerPage')) {
+            return;
+        }
+
+        $page = $area->getOwnerPage();
+
+        if (!$page) {
+            return;
+        }
+
+        $policy = Injector::inst()->get(ElementPlacementPolicy::class);
+
+        foreach ($resolved as [$related]) {
+            if ((int) $related->ParentID === (int) $record->ID) {
+                continue;
+            }
+
+            $elementClass = get_class($related);
+
+            if ($policy->isAllowedOnPage($elementClass, $page)) {
+                continue;
+            }
+
+            throw new ApiError(
+                ErrorCode::ELEMENT_NOT_ALLOWED_ON_PAGE,
+                sprintf(
+                    '"%s" is not an allowed element type on %s (#%d) — allowed types: %s.',
+                    $elementClass,
+                    get_class($page),
+                    (int) $page->ID,
+                    implode(', ', array_keys($page->getElementalTypes()))
+                )
+            );
+        }
     }
 
     /**
