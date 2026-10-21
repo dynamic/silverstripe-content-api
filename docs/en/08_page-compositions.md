@@ -113,9 +113,13 @@ would harden that documented silent revert (`RecordWriter`'s pipeline rejects su
 read-only instead). The refusal carries the standard JSON error envelope, so `error.code` is
 `ELEMENT_NOT_ALLOWED_ON_PAGE` as the error-code table says; note that other
 `WriteGuardExtension` refusals on this surface still answer `text/plain` with no code, tracked
-separately (#283). **Still not covered:** attaching an *existing* element via
-`ElementalArea.Elements` if a project opts that relation into `api_writable_relations` — a
-pre-existing gap in how that surface relates to this module's write pipeline, tracked separately.
+separately (#283). **Relation-attach:** attaching an *existing* element via
+`ElementalArea.Elements` when a project opts that relation into `api_writable_relations` is
+checked on the `/content-api/v1` write path (batch `update`, upsert and composition) by
+`WriteApplicator::applyRelations()` pass 1, which runs the same `ElementPlacementPolicy` check
+per attached item before any list is mutated (#101). The colymba `PUT /api/ElementalArea/{id}`
+`Elements`-array path is still open — that surface never reaches `applyRelations()` — and is
+tracked separately.
 
 ### `$ref` resolution
 

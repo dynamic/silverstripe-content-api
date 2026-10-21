@@ -20,7 +20,23 @@ All notable changes to this project are documented here. Format loosely follows
   `onBeforeWrite()`'s revert decision, and the target area and its owner page are read on DRAFT.
   **Behavior change:** colymba `POST`/`PUT`
   clients that used to get `200` for a placement the target page disallows now get `422`.
-  Attaching an existing element through `ElementalArea.Elements` remains an open gap (#64).
+  Attaching an existing element through `ElementalArea.Elements` is now closed on the
+  `/content-api/v1` write path (#101); the colymba `/api` relation-attach path remains open (#64).
+  See [docs/en/08_page-compositions.md](docs/en/08_page-compositions.md) and
+  [docs/en/12_error-codes.md](docs/en/12_error-codes.md).
+- **(#101)** Attaching an existing element through an `ElementalArea`'s own `Elements` has_many
+  (`api_writable_relations`) bypassed `ElementPlacementPolicy` (#64): `RecordWriter::
+  assertElementPlacementAllowed()` only runs when a `BaseElement`'s own `ParentID` is written,
+  and `WriteApplicator::applyRelations()` attaches the related record directly without calling
+  back into `RecordWriter::write()` for it. `applyRelations()` pass 1 now runs the same
+  `ElementPlacementPolicy::isAllowedOnPage()` check per attached item, before any list is
+  mutated — so a refusal on a later item cannot leave earlier items attached. Only `add`/`set`
+  are checked (`remove` detaches, and `set`'s existing children are already placed), and an item
+  already in the area is skipped (the GET-then-`set` round trip is not a placement change).
+  **Behavior change:** a batch `update` (or an upsert/composition write) that relation-attaches
+  an element the owning page disallows used to return `updated` and reparent the element; it now
+  returns `ELEMENT_NOT_ALLOWED_ON_PAGE` and leaves the element where it was. The colymba
+  `PUT /api/ElementalArea/{id}` `Elements`-array path is still open and is tracked separately.
   See [docs/en/08_page-compositions.md](docs/en/08_page-compositions.md) and
   [docs/en/12_error-codes.md](docs/en/12_error-codes.md).
 

@@ -1939,6 +1939,76 @@ class BatchTest extends ContentApiTestCase
     }
 
     /**
+     * A `set` that brings in a disallowed element from another area must be
+     * refused in pass 1, before `set`'s `removeAll()` detaches the area's
+     * existing children — otherwise a refused payload would leave the area
+     * half-applied. The existing child is already in this area, so the
+     * placement check skips it; the foreign element is the genuine new
+     * placement.
+     */
+    public function testBatchSetAddingADisallowedElementFromAnotherAreaLeavesExistingChildrenAlone(): void
+    {
+        $sourceArea = $this->createBlockPageWithArea('Batch Relation Set Source');
+        $targetArea = $this->createBlockPageWithArea('Batch Relation Set Target');
+
+        $existing = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Already here', 'ParentID' => (int) $targetArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+        $existingId = (int) $existing['data']['results'][0]['id'];
+
+        $foreign = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'create',
+                    'class' => 'ApiTestElement',
+                    'fields' => ['Title' => 'Foreign element', 'ParentID' => (int) $sourceArea->ID],
+                ],
+            ],
+        ], $this->adminToken));
+        $foreignId = (int) $foreign['data']['results'][0]['id'];
+
+        Config::modify()->set(ApiTestBlockPage::class, 'disallowed_elements', [ApiTestElement::class]);
+        static::resetElementalTypesCache();
+        Config::modify()->set(ElementalArea::class, 'api_writable_relations', ['Elements']);
+        $this->registerElementalAreaModel();
+
+        $body = $this->decode($this->apiPost('batch', [
+            'operations' => [
+                [
+                    'op' => 'update',
+                    'class' => 'ElementalArea',
+                    'id' => (int) $targetArea->ID,
+                    'relations' => [
+                        'Elements' => [
+                            'mode' => 'set',
+                            'items' => [(int) $existingId, (int) $foreignId],
+                        ],
+                    ],
+                ],
+            ],
+        ], $this->adminToken));
+
+        $this->assertSame('error', $body['data']['results'][0]['status']);
+        $this->assertSame('ELEMENT_NOT_ALLOWED_ON_PAGE', $body['data']['results'][0]['error']['code']);
+        $this->assertSame(
+            (int) $targetArea->ID,
+            (int) ApiTestElement::get()->byID($existingId)->ParentID,
+            'a refused set must not have detached the area\'s existing children'
+        );
+        $this->assertSame(
+            (int) $sourceArea->ID,
+            (int) ApiTestElement::get()->byID($foreignId)->ParentID,
+            'a refused set must not have attached the disallowed foreign element'
+        );
+    }
+
+    /**
      * The other side of the same fix: an `add` of a type the page still
      * allows must succeed and actually reparent the element — the check
      * only refuses genuine placements it disallows.
