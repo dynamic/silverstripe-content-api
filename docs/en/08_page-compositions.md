@@ -115,9 +115,9 @@ read-only instead). The refusal carries the standard JSON error envelope, so `er
 `WriteGuardExtension` refusals on this surface still answer `text/plain` with no code, tracked
 separately (#283). **Relation-attach:** attaching an *existing* element via
 `ElementalArea.Elements` when a project opts that relation into `api_writable_relations` is
-checked on the `/content-api/v1` write path (batch `update`, upsert and composition) by
-`WriteApplicator::applyRelations()` pass 1, which runs the same `ElementPlacementPolicy` check
-per attached item before any list is mutated (#101). The colymba `PUT /api/ElementalArea/{id}`
+checked on the `/content-api/v1` write path (batch `update`, upsert, or
+`PATCH records/$ClassRef/$ID`) by `WriteApplicator::applyRelations()` pass 1, which runs the
+same `ElementPlacementPolicy` check per attached item before any list is mutated (#101). The colymba `PUT /api/ElementalArea/{id}`
 `Elements`-array path is still open — that surface never reaches `applyRelations()` — and is
 tracked separately.
 

@@ -559,12 +559,14 @@ class RecordWriter
      * through this check. `WriteApplicator::applyFields()` closes that
      * specific FK off from client writes entirely (see its own comment)
      * rather than trying to re-validate every element in a reassigned
-     * area here. A second, undisclosed gap — attaching an existing element
-     * via `ElementalArea.Elements` `api_writable_relations` has_many
-     * add/set — is NOT closed (that goes through `WriteApplicator::
+     * area here. Attaching an existing element via `ElementalArea.Elements`
+     * `api_writable_relations` has_many add/set goes through `WriteApplicator::
      * applyRelations()`, which never calls back into `RecordWriter::write()`
-     * for the related record) and is deliberately deferred; see the
-     * CHANGELOG and #64 follow-up issues.
+     * for the related record, so this method cannot see it; that gap is now
+     * closed on the `/content-api/v1` path by `WriteApplicator::
+     * assertElementPlacementAllowedForRelation()` (#101). Only the colymba
+     * `PUT /api/ElementalArea/{id}` `Elements`-array path remains open — see
+     * `WriteGuardExtension::assertElementPlacement()` and the CHANGELOG.
      *
      * @throws ApiError ELEMENT_NOT_ALLOWED_ON_PAGE | CROSS_PAGE_REPARENT
      */

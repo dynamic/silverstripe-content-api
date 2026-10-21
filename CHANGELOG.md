@@ -33,10 +33,11 @@ All notable changes to this project are documented here. Format loosely follows
   mutated — so a refusal on a later item cannot leave earlier items attached. Only `add`/`set`
   are checked (`remove` detaches, and `set`'s existing children are already placed), and an item
   already in the area is skipped (the GET-then-`set` round trip is not a placement change).
-  **Behavior change:** a batch `update` (or an upsert/composition write) that relation-attaches
-  an element the owning page disallows used to return `updated` and reparent the element; it now
-  returns `ELEMENT_NOT_ALLOWED_ON_PAGE` and leaves the element where it was. The colymba
-  `PUT /api/ElementalArea/{id}` `Elements`-array path is still open and is tracked separately.
+  **Behavior change:** a batch `update`, an upsert, or a `PATCH records/$ClassRef/$ID` that
+  relation-attaches an element the owning page disallows used to return `updated` and reparent
+  the element; it now returns `ELEMENT_NOT_ALLOWED_ON_PAGE` and leaves the element where it was.
+  The colymba `PUT /api/ElementalArea/{id}` `Elements`-array path is still open and is tracked
+  separately.
   See [docs/en/08_page-compositions.md](docs/en/08_page-compositions.md) and
   [docs/en/12_error-codes.md](docs/en/12_error-codes.md).
 
