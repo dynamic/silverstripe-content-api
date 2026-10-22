@@ -6,6 +6,20 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **(#196)** Documented `content_batch`'s scope for attaching a **newly created** element to a
+  page's `ElementalArea`. The capability itself was never missing — a batch `create` op can set
+  `fields.ParentID` to the area's id directly (placement-checked, `422
+  ELEMENT_NOT_ALLOWED_ON_PAGE` when the page disallows the type) — but nothing in the tool
+  description or docs said so, so two agents on one client build independently fell back to
+  `content_compose_page` the hard way. `content_batch`'s description in
+  [schema/endpoints.json](schema/endpoints.json) (bumped to v1.19) now states the
+  `fields.ParentID` path, that `relations: {"Parent": ...}` is rejected because `relations` is
+  has_many/many_many only (#191), and that a project listing `ParentID` in
+  `api_protected_fields` (#233) rejects that client write with `422 READONLY_FIELD` —
+  `content_compose_page`'s trusted server-derived `ParentID` is the fallback there.
+  [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md) gained an "Attaching a new
+  element to a page" section covering the same, with the two failure modes and their error
+  codes. Docs/schema-description only; no behavior change.
 - **(#100)** `ElementPlacementPolicy` had no effect on the colymba `/api` generic write
   surface. `POST /api/$Model` / `PUT /api/$Model/{id}` never route through `RecordWriter`, so an
   element class exposed with write verbs and no `api_writable_fields` could be created on, or

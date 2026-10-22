@@ -38,6 +38,37 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
 `update`/`delete` require either `id` or `externalId` to locate the target
 (`400 PAYLOAD_INVALID` if neither is present).
 
+## Attaching a new element to a page
+
+A batch `create` can attach a brand-new element directly to a page's `ElementalArea`: set
+`fields.ParentID` to the area's id on the create op —
+
+```json
+{
+  "operations": [
+    { "op": "create", "class": "ElementContent", "externalId": "about-intro",
+      "fields": { "Title": "Who We Are", "ParentID": 12 } }
+  ]
+}
+```
+
+That write is deliberate and placement-checked: if the owning page's Elemental config
+(`allowed_elements`/`disallowed_elements`) doesn't permit the element type, the op fails with
+`422 ELEMENT_NOT_ALLOWED_ON_PAGE` — see [Page compositions](08_page-compositions.md#elements).
+
+Two things will not work:
+
+- `relations: {"Parent": ...}` cannot attach the element — `relations` is has_many/many_many
+  only, and a has_one name there is rejected with `400 PAYLOAD_INVALID` before anything is
+  written ([Write payloads](06_write-payloads.md#relations-has_many--many_many)). A has_one —
+  including an element's `Parent` area link — belongs under `fields`.
+- On a project that lists `ParentID` in the element class's `api_protected_fields`
+  ([Configuration](02_configuration.md#per-exposed-class-config)), that client write is rejected with
+  `422 READONLY_FIELD` instead — the guarded-policy setup keeps the parent link off every
+  client surface. Use [content_compose_page](08_page-compositions.md) there: its
+  server-derived `ParentID` goes through the trusted internal-fields channel, which that
+  denylist does not apply to.
+
 ## Atomicity
 
 - **Non-atomic (default, `"atomic": false`)**: an operation that fails reports an `error` result
