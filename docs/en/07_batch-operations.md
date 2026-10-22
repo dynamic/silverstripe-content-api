@@ -63,15 +63,17 @@ Two things will not work:
   written ([Write payloads](06_write-payloads.md#relations-has_many--many_many)). A has_one —
   including an element's `Parent` area link — belongs under `fields`.
 - The write only lands if the class makes `ParentID`/`Parent` client-writable — otherwise it is
-  rejected with `422 READONLY_FIELD`. Two setups produce that: the guarded-policy project that
-  lists `ParentID` or `Parent` in the element class's `api_protected_fields`
-  ([Configuration](02_configuration.md#per-exposed-class-config)) to keep the parent link off
-  every client surface, and a class under an `api_writable_fields` allowlist whose list names
-  neither. Fixing it in configuration — adding `ParentID` to `api_writable_fields`, or removing
-  it from `api_protected_fields` — is the other way besides falling back:
-  [content_compose_page](08_page-compositions.md) attaches the element either way, because its
-  server-derived `ParentID` goes through the trusted internal-fields channel, which neither the
-  per-class denylist nor the allowlist applies to.
+  rejected with `422 READONLY_FIELD`. Two setups produce that, each with its own fix:
+  the guarded-policy project that lists `ParentID` or `Parent` in the element class's
+  `api_protected_fields` ([Configuration](02_configuration.md#per-exposed-class-config)) to keep
+  the parent link off every client surface — remove them from that denylist to allow the write —
+  and a class under an `api_writable_fields` allowlist whose list names neither — add `ParentID`
+  to that allowlist. Mind the allowlist switch: **any** non-empty `api_writable_fields` puts the
+  class in allowlist mode (everything not on the list becomes `422 READONLY_FIELD` too), so
+  don't add it to a guarded class just to fix this. Either way,
+  [content_compose_page](08_page-compositions.md) attaches the element without any config
+  change: its server-derived `ParentID` goes through the trusted internal-fields channel, which
+  neither the per-class denylist nor the allowlist applies to.
 
 ## Atomicity
 
