@@ -38,6 +38,43 @@ Population-domain endpoint: requires `CONTENT_API_POPULATE` and passes
 `update`/`delete` require either `id` or `externalId` to locate the target
 (`400 PAYLOAD_INVALID` if neither is present).
 
+## Attaching a new element to a page
+
+A batch `create` can attach a brand-new element directly to a page's `ElementalArea`: set
+`fields.ParentID` to the area's id on the create op —
+
+```json
+{
+  "operations": [
+    { "op": "create", "class": "ElementContent", "externalId": "about-intro",
+      "fields": { "Title": "Who We Are", "ParentID": 12 } }
+  ]
+}
+```
+
+That write is deliberate and placement-checked: if the owning page's Elemental config
+(`allowed_elements`/`disallowed_elements`) doesn't permit the element type, the op fails with
+`422 ELEMENT_NOT_ALLOWED_ON_PAGE` — see [Page compositions](08_page-compositions.md#elements).
+
+Two things will not work:
+
+- `relations: {"Parent": ...}` cannot attach the element — `relations` is has_many/many_many
+  only, and a has_one name there is rejected with `400 PAYLOAD_INVALID` before anything is
+  written ([Write payloads](06_write-payloads.md#relations-has_many--many_many)). A has_one —
+  including an element's `Parent` area link — belongs under `fields`.
+- The write only lands if the class makes `ParentID`/`Parent` client-writable — otherwise it is
+  rejected with `422 READONLY_FIELD`. Two setups produce that, each with its own fix:
+  the guarded-policy project that lists `ParentID` or `Parent` in the element class's
+  `api_protected_fields` ([Configuration](02_configuration.md#per-exposed-class-config)) to keep
+  the parent link off every client surface — remove them from that denylist to allow the write —
+  and a class under an `api_writable_fields` allowlist whose list names neither — add `ParentID`
+  to that allowlist. Mind the allowlist switch: **any** non-empty `api_writable_fields` puts the
+  class in allowlist mode (everything not on the list becomes `422 READONLY_FIELD` too), so
+  don't add it to a guarded class just to fix this. Either way,
+  [content_compose_page](08_page-compositions.md) attaches the element without any config
+  change: its server-derived `ParentID` goes through the trusted internal-fields channel, which
+  neither the per-class denylist nor the allowlist applies to.
+
 ## Atomicity
 
 - **Non-atomic (default, `"atomic": false`)**: an operation that fails reports an `error` result
