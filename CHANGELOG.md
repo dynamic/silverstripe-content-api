@@ -14,9 +14,11 @@ All notable changes to this project are documented here. Format loosely follows
   `content_compose_page` the hard way. `content_batch`'s description in
   [schema/endpoints.json](schema/endpoints.json) (bumped to v1.19) now states the
   `fields.ParentID` path, that `relations: {"Parent": ...}` is rejected because `relations` is
-  has_many/many_many only (#191), and that a project listing `ParentID` in
-  `api_protected_fields` (#233) rejects that client write with `422 READONLY_FIELD` —
-  `content_compose_page`'s trusted server-derived `ParentID` is the fallback there.
+  has_many/many_many only (#191), and that the write only lands when the class makes
+  `ParentID`/`Parent` client-writable: a project listing either in `api_protected_fields`
+  (#233) or running an `api_writable_fields` allowlist without them rejects the client write
+  with `422 READONLY_FIELD` — `content_compose_page`'s trusted server-derived `ParentID`
+  bypasses both, and configuring `api_writable_fields` is the alternative fix.
   [docs/en/07_batch-operations.md](docs/en/07_batch-operations.md) gained an "Attaching a new
   element to a page" section covering the same, with the two failure modes and their error
   codes. Docs/schema-description only; no behavior change.

@@ -62,12 +62,16 @@ Two things will not work:
   only, and a has_one name there is rejected with `400 PAYLOAD_INVALID` before anything is
   written ([Write payloads](06_write-payloads.md#relations-has_many--many_many)). A has_one —
   including an element's `Parent` area link — belongs under `fields`.
-- On a project that lists `ParentID` in the element class's `api_protected_fields`
-  ([Configuration](02_configuration.md#per-exposed-class-config)), that client write is rejected with
-  `422 READONLY_FIELD` instead — the guarded-policy setup keeps the parent link off every
-  client surface. Use [content_compose_page](08_page-compositions.md) there: its
-  server-derived `ParentID` goes through the trusted internal-fields channel, which that
-  denylist does not apply to.
+- The write only lands if the class makes `ParentID`/`Parent` client-writable — otherwise it is
+  rejected with `422 READONLY_FIELD`. Two setups produce that: the guarded-policy project that
+  lists `ParentID` or `Parent` in the element class's `api_protected_fields`
+  ([Configuration](02_configuration.md#per-exposed-class-config)) to keep the parent link off
+  every client surface, and a class under an `api_writable_fields` allowlist whose list names
+  neither. Fixing it in configuration — adding `ParentID` to `api_writable_fields`, or removing
+  it from `api_protected_fields` — is the other way besides falling back:
+  [content_compose_page](08_page-compositions.md) attaches the element either way, because its
+  server-derived `ParentID` goes through the trusted internal-fields channel, which neither the
+  per-class denylist nor the allowlist applies to.
 
 ## Atomicity
 
