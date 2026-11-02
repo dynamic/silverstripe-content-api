@@ -8,7 +8,10 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Verify\VersionCache;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
+use SilverStripe\Security\Group;
+use SilverStripe\Security\Permission;
 use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\DB;
 use SilverStripe\Versioned\Versioned;
@@ -22,6 +25,29 @@ class RecordsReadTest extends ContentApiTestCase
         parent::setUp();
 
         $this->token = $this->mintTokenFor('apiUser');
+
+        // `path:` addressing is SiteTree-only (#121), so these cases address
+        // SiteTree itself — the same registration PageActionsTest does.
+        Config::modify()->set(SiteTree::class, 'api_access', 'read');
+        Config::modify()->merge(
+            \Dynamic\ContentApi\Registry\ClassRegistry::class,
+            'models',
+            ['SiteTree' => SiteTree::class]
+        );
+    }
+
+    /**
+     * The fixture pages are draft-only, and `Versioned::canViewVersioned()`
+     * vetoes a draft read whose stages diverge unless the member holds
+     * `non_live_permissions` — the same `VIEW_DRAFT_CONTENT` the README tells
+     * a host to grant alongside CONTENT_API_ACCESS. Scoped to the cases that
+     * read a page, so the rest of this file keeps its original conditions.
+     */
+    private function allowDraftPageReads(): void
+    {
+        $apiGroup = $this->objFromFixture(Group::class, 'apiGroup');
+        Permission::grant((int) $apiGroup->ID, 'VIEW_DRAFT_CONTENT');
+        Permission::reset();
     }
 
     public function testListReturnsRecords(): void
@@ -117,6 +143,140 @@ class RecordsReadTest extends ContentApiTestCase
         $response = $this->apiGet('records/ApiTest/ext:nope', $this->token);
 
         $this->assertErrorCode($response, 'NOT_FOUND', 404);
+    }
+
+    public function testReadOneByPath(): void
+    {
+        $this->allowDraftPageReads();
+
+        $body = $this->decode($this->apiGet('records/SiteTree/path:about', $this->token));
+
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $this->assertSame('About', $body['data']['fields']['Title']);
+        $this->assertSame((int) $about->ID, $body['data']['id']);
+    }
+
+    /**
+     * `$ID` matches a single route segment, so a nested path reaches the
+     * handler as one `%2F`-encoded segment and is decoded back into slashes.
+     */
+    public function testReadOneByNestedPath(): void
+    {
+        $this->allowDraftPageReads();
+
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $child = SiteTree::create([
+            'Title' => 'Our Team',
+            'URLSegment' => 'our-team',
+            'ParentID' => (int) $about->ID,
+        ]);
+        $child->write();
+
+        $body = $this->decode($this->apiGet('records/SiteTree/path:about%2Four-team', $this->token));
+
+        $this->assertSame('Our Team', $body['data']['fields']['Title']);
+        $this->assertSame((int) $child->ID, $body['data']['id']);
+    }
+
+    /**
+     * #121: `get_by_link()` returns a unique-URLSegment match without walking
+     * the rest of the path, so `about/not-a-child` would otherwise resolve to
+     * `about`. The front end can treat the leftovers as a controller action;
+     * an id that also addresses PATCH and publish cannot.
+     */
+    public function testATrailingSegmentUnderAPageIs404(): void
+    {
+        $response = $this->apiGet('records/SiteTree/path:about%2Fnot-a-child%2Fat-all', $this->token);
+
+        $this->assertErrorCode($response, 'NOT_FOUND', 404);
+    }
+
+    /**
+     * #121: the same fallback means a nested page must be addressed by its
+     * full path and not by its bare segment, or two pages at different depths
+     * would share one address.
+     */
+    public function testANestedPageIsNotAddressableByItsBareSegment(): void
+    {
+        $this->allowDraftPageReads();
+
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+        $child = SiteTree::create([
+            'Title' => 'Our Team',
+            'URLSegment' => 'our-team',
+            'ParentID' => (int) $about->ID,
+        ]);
+        $child->write();
+
+        $bare = $this->apiGet('records/SiteTree/path:our-team', $this->token);
+        $this->assertErrorCode($bare, 'NOT_FOUND', 404);
+
+        $full = $this->apiGet('records/SiteTree/path:about%2Four-team', $this->token);
+        $this->assertSame(200, $full->getStatusCode(), (string)$full->getBody());
+        $this->assertSame((int) $child->ID, $this->decode($full)['data']['id']);
+    }
+
+    public function testMissingPathIs404(): void
+    {
+        $response = $this->apiGet('records/SiteTree/path:no-such-page', $this->token);
+
+        $this->assertErrorCode($response, 'NOT_FOUND', 404);
+    }
+
+    /**
+     * A path that resolves to a page which is not the addressed class (or a
+     * subclass of it) is a miss, not a type error — the same shape as a
+     * numeric id pointing at another class.
+     */
+    public function testPathResolvingToAnotherClassIs404(): void
+    {
+        $response = $this->apiGet('records/ApiTestPage/path:about', $this->token);
+
+        $this->assertErrorCode($response, 'NOT_FOUND', 404);
+    }
+
+    public function testPathAddressingOnANonSiteTreeClassIsRejected(): void
+    {
+        $response = $this->apiGet('records/ApiTest/path:about', $this->token);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
+    /**
+     * `SiteTree::get_by_link('')` falls back to the home page; an explicitly
+     * empty path is refused instead, so `path:` can never silently read `/`.
+     */
+    public function testEmptyPathIsRejected(): void
+    {
+        $response = $this->apiGet('records/SiteTree/path:', $this->token);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
+    public function testPathAddressingFollowsTheStage(): void
+    {
+        $this->allowDraftPageReads();
+
+        $page = SiteTree::create([
+            'Title' => 'Draft Only Page',
+            'URLSegment' => 'draft-only-page',
+        ]);
+        $page->write();
+
+        $body = $this->decode($this->apiGet('records/SiteTree/path:draft-only-page', $this->token));
+        $this->assertSame('Draft Only Page', $body['data']['fields']['Title']);
+
+        // Live misses the unpublished page.
+        $response = $this->apiGet('records/SiteTree/path:draft-only-page?_stage=live', $this->token);
+        $this->assertErrorCode($response, 'NOT_FOUND', 404);
+
+        // After publish, live finds it.
+        $page->publishSingle();
+
+        $body = $this->decode($this->apiGet('records/SiteTree/path:draft-only-page?_stage=live', $this->token));
+        $this->assertSame('Draft Only Page', $body['data']['fields']['Title']);
     }
 
     public function testMissingIdIs404(): void
