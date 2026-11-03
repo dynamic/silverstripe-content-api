@@ -5,6 +5,34 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **(#121)** `$ID` on the `records/` routes accepts `path:<url-path>`, so a caller that knows a
+  page's URL but not its id can address it directly instead of searching for the record first:
+  `GET records/Page/path:about`, `PATCH records/Page/path:about%2Four-team`,
+  `POST records/Page/path:about/publish`. Resolution goes through `SiteTree::get_by_link()` — the
+  framework's own URL-segment walk — so no new resolution logic or permission surface is
+  introduced, and `_stage=draft|live` works on every route that takes an `$ID` the way it already
+  did for reads. Scoped to `SiteTree` (`400 PAYLOAD_INVALID` on any other class, which also covers
+  `GET assets/$ID`, since a URL path means nothing for an arbitrary `DataObject`); the path is
+  percent-decoded like `ext:`, which is what turns the route's single `%2F`-encoded segment back
+  into a nested path. Two deliberate edges: the resolved page's **own full path must equal the one
+  asked for**, because `get_by_link()`'s unique-`URLSegment` fallback (and `nested_urls` off)
+  otherwise hand back a different page — affordable for a router, which sends the leftovers to a
+  controller action, not for an id that also addresses `PATCH`, `publish` and `archive`. A nested
+  page is therefore addressable only by its full path, and `path:about/not-a-child` is `404`
+  rather than `about`. And an **empty path is refused** (`path:` and `path:%2F` are `400`) rather
+  than resolving `/` through `get_by_link('')`, so no route taking an `$ID` can silently write to
+  the front page; the home page is reached by its own segment (`path:home`), which
+  `RelativeLink()` reports as the site root and `fullLink()` restores. `BatchProcessor` keeps its
+  own numeric-or-`ext:` resolution, so a `POST batch` op's `id` does not gain `path:`, and
+  `pages/$ID/convert` / `apply-template` stay numeric. Documented in
+  [docs/en/05_endpoint-reference.md](docs/en/05_endpoint-reference.md) ("Addressing one record
+  (`$ID`)") and cross-referenced from the external-ids section of
+  [docs/en/06_write-payloads.md](docs/en/06_write-payloads.md);
+  [schema/endpoints.json](schema/endpoints.json) (bumped to v1.20) describes `path:` on the four
+  `records/` tools that take an `$ID`, so an MCP client's tool description advertises it. The
+  bundled copy in the MCP server repo is a separate release step.
+
 ### Fixed
 - **(#196)** Documented `content_batch`'s scope for attaching a **newly created** element to a
   page's `ElementalArea`. The capability itself was never missing — a batch `create` op can set

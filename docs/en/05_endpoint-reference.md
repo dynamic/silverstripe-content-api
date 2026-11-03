@@ -26,7 +26,7 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 |---|---|---|
 | `GET` | `auth/session` | Token introspection: member, held permission codes, expiry |
 | `GET` | `records/$ClassRef` | List records, with filtering/sorting/pagination/stage |
-| `GET` | `records/$ClassRef/$ID` | Read one record — numeric id or `ext:<external-id>` |
+| `GET` | `records/$ClassRef/$ID` | Read one record — numeric id, `ext:<external-id>` or `path:<url-path>` |
 | `PATCH` | `records/$ClassRef/$ID` | Update one record's fields (live-safe, not population-gated) |
 | `GET` | `records/$ClassRef/$ID/parity` | Draft/live field diff for a record and its owned tree |
 | `GET` | `fingerprint` | Deterministic, path-keyed content snapshot + reachability check |
@@ -44,6 +44,58 @@ UNAUTHENTICATED` (missing/unrecognized token) and `401 TOKEN_EXPIRED`. See
 > `PATCH records/$ClassRef/$ID` updates one record's fields; there is no `PUT`, single-record
 > create or delete on this surface. Creates, relations and multi-record work go through
 > `POST batch` or a composition — see [Batch operations](07_batch-operations.md).
+
+## Addressing one record (`$ID`)
+
+Every `records/` route that takes an `$ID` resolves it the same way
+(`RecordsHandler::fetchRecord()`), so a reference that reads the right page is the same reference
+that patches, publishes and archives it. Three forms:
+
+| Form | Resolves by | Notes |
+|---|---|---|
+| `123` | primary key | Numeric ids are **not stable across environments** — see [Batch operations](07_batch-operations.md) |
+| `ext:<external-id>` | the class's `external_id_field` | [External ids](06_write-payloads.md#external-ids); percent-decoded |
+| `path:<url-path>` | `SiteTree::get_by_link()` | `SiteTree` classes only |
+
+`400 PAYLOAD_INVALID` for a malformed reference (including `path:` on a class that is not a
+`SiteTree`); `404 NOT_FOUND` when nothing resolves. `path:` is accepted on the `$ID` segment of
+`records/` routes only — a `POST batch` op's `id` stays numeric-or-`ext:`, and
+`POST pages/$ID/convert` / `apply-template` take a numeric page id.
+
+### `path:` — addressing a page by its URL
+
+`path:` resolves through `SiteTree::get_by_link()` — the same URL-segment walk the framework's own
+routing does — so the API and the front end agree on what a path means, and no second resolution
+rule or permission surface is introduced. It is scoped to `SiteTree` deliberately: a URL path has
+no meaning for an arbitrary `DataObject`, and `Hierarchy` alone has no routing equivalent.
+
+```text
+GET  /v1/records/Page/path:about
+GET  /v1/records/Page/path:about%2Four-team
+PATCH /v1/records/Page/path:about
+POST /v1/records/Page/path:about/publish
+```
+
+- **Relative to the site root**, with surrounding slashes ignored, so `path:about` and
+  `path:%2Fabout%2F` name the same page. The match ignores case, like the framework's own URL
+  handling.
+- **A nested path arrives as one `%2F`-encoded segment**, because `$ID` matches a single route
+  segment: `about/our-team` is sent as `about%2Four-team`. The value after `path:` is
+  percent-decoded before resolution, the same decoding `ext:` needs.
+- **The match is exact.** The resolved page's own full path must equal the path asked for, so a
+  nested page is addressable only by that full path: `path:our-team` does not find
+  `about/our-team`, and `path:about/not-a-child` is `404` rather than `about`. `get_by_link()`
+  would answer both with a different page — its unique-`URLSegment` fallback returns without
+  walking the remaining segments, and with `nested_urls` off it ignores them entirely. Front-end
+  routing can afford that (the leftovers become a controller action, and `OldPageRedirector`
+  redirects); an `$ID` that also addresses `PATCH`, `publish` and `archive` cannot, because a
+  stale path would silently act on the parent page.
+- **The home page is addressed by its own segment** — `path:home` on a default install — not by an
+  empty path. `path:` with nothing after it is `400 PAYLOAD_INVALID`, including as `path:%2F`:
+  `get_by_link('')` does resolve `/`, but an explicitly empty path reads as a caller bug, and
+  refusing it means no route that takes an `$ID` can silently write to the front page.
+- **It honours `_stage`** like every other read: a draft-only page resolves on `_stage=draft` and
+  is `404` on `_stage=live` until it is published.
 
 ## `GET records/$ClassRef`
 
@@ -78,16 +130,18 @@ Response `meta`: `total`, `limit`, `offset`, `stage`.
 
 ## `GET records/$ClassRef/$ID`
 
-`$ID` is a numeric id or `ext:<external-id>` (looked up via
-[`ExternalIdResolver`](06_write-payloads.md#external-ids)). Same `_stage` param as list reads.
+`$ID` is a numeric id, `ext:<external-id>` (looked up via
+[`ExternalIdResolver`](06_write-payloads.md#external-ids)) or `path:<url-path>` — see
+[Addressing one record](#addressing-one-record-id). Same `_stage` param as list reads.
 `400 PAYLOAD_INVALID` for a malformed id; `404 NOT_FOUND` if it doesn't resolve.
 
 ## `GET records/$ClassRef/$ID/parity`
 
 "Does this record, and everything it `$owns`, match between draft and live." `400
 PAYLOAD_INVALID` for a non-Versioned class (nothing to compare); `404 NOT_FOUND` for an
-unresolvable id. Query params: `include=none` skips the owned-tree walk (default: walked);
-`depth=N` caps how far it recurses. Full reference:
+unresolvable id (all three [`$ID` forms](#addressing-one-record-id) are accepted). Query params:
+`include=none` skips the owned-tree walk (default: walked); `depth=N` caps how far it recurses.
+Full reference:
 [Publishing & stages](10_publishing-and-stages.md#draftlive-parity).
 
 ## `GET fingerprint`
@@ -109,7 +163,8 @@ response. Full reference: [Verification](16_verification.md#fingerprint).
 
 ## `PATCH records/$ClassRef/$ID`
 
-Updates one existing record (numeric id or `ext:<external-id>`). Body:
+Updates one existing record (numeric id, `ext:<external-id>` or `path:<url-path>` — see
+[Addressing one record](#addressing-one-record-id)). Body:
 
 ```json
 { "fields": { "Title": "Fixed typo" }, "publish": "none" }
@@ -136,7 +191,9 @@ Response: `data` is the updated record (with its `stage`), `meta.operation` is `
 
 ## `POST records/$ClassRef/$ID/{action}`
 
-`{action}` is `publish`, `unpublish`, or `archive`. `publish` accepts `{"mode": "..."}` to
+`{action}` is `publish`, `unpublish`, or `archive`. `$ID` takes any of the three
+[reference forms](#addressing-one-record-id), so a page can be published by path without knowing
+its id. `publish` accepts `{"mode": "..."}` to
 select a [publish mode](10_publishing-and-stages.md#publish-modes) (`{"recursive": true}`
 remains a legacy shorthand for `mode: "recursive"`) — `mode: "subtree"` alone also accepts
 `{"liveOnly": true}`; `mode: "subtree"` or `"owns"` accept `{"dryRun": true}`. `unpublish`
