@@ -318,9 +318,23 @@ class RecordsHandler
         return trim($link, '/') === '' ? RootURLController::get_homepage_link() : $link;
     }
 
+    /**
+     * Percent-decode and reduce to a bare `get_by_link()` link.
+     *
+     * The slashes are trimmed *before* `makeRelative()` as well as after it, which is
+     * load-bearing and not tidiness. `makeRelative()` drops a `Director::baseURL()`
+     * prefix by plain case-insensitive prefix match, with no check that the match ends
+     * at a `/` — so on a site installed under `/en/` the path `/enquiries` came back as
+     * `quiries` and resolved a different page. The exact-path guard in `fetchByPath()`
+     * cannot catch that, because it compares against this normalised value, and the
+     * same `$ID` addresses `PATCH`, `publish` and `archive`. Trimming first leaves no
+     * leading slash for a base prefix to match, since paths are site-root relative.
+     * `makeRelative()` still runs, to strip the scheme/host off an absolute URL a
+     * caller pasted in.
+     */
     private function normaliseLink(string $link): string
     {
-        return trim(Director::makeRelative(rawurldecode($link)) ?? '', '/');
+        return trim(Director::makeRelative(trim(rawurldecode($link), '/')) ?? '', '/');
     }
 
     private function resolveStage(HTTPRequest $request): string

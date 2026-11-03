@@ -77,7 +77,9 @@ POST /v1/records/Page/path:about/publish
 ```
 
 - **Relative to the site root**, with surrounding slashes ignored, so `path:about` and
-  `path:%2Fabout%2F` name the same page. The final exact-path comparison ignores case; whether a
+  `path:%2Fabout%2F` name the same page. No install-base prefix is stripped: on a site
+  served from a subfolder (`/en/`), `path:en%2Fabout` is a path whose first segment is
+  `en`, and 404s rather than quietly becoming `/about`. The final exact-path comparison ignores case; whether a
   differently-cased path *resolves* at all depends on the collation the `URLSegment` lookup runs
   under, since `get_by_link()` matches that column directly — case-insensitive under MySQL's
   default, so `path:ABOUT` finds `about`, and a `404` on a case-sensitive collation.
@@ -105,7 +107,10 @@ POST /v1/records/Page/path:about/publish
   unaffected. Address such a page by numeric id or `ext:`.
 - **The match is exact.** The resolved page's own full path must equal the path asked for, so a
   nested page is addressable only by that full path: `path:our-team` does not find
-  `about/our-team`. This is a guard on two `get_by_link()` fallbacks. With `nested_urls` on, a
+  `about/our-team`. That last clause is with `nested_urls` on, the default; with it off a page's
+  own full path *is* its bare segment, so `path:our-team` resolves `about/our-team` and
+  `path:about%2Four-team` is the one that 404s — verified both ways. This is a guard on two
+  `get_by_link()` fallbacks. With `nested_urls` on, a
   first segment that matches no root page falls back to a unique-`URLSegment` match anywhere in
   the tree and returns it without walking the remaining segments, so `path:our-team/not-a-child`
   would otherwise hand back `about/our-team`; with `nested_urls` off it matches the first segment

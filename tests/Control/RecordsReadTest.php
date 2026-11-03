@@ -9,6 +9,7 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Verify\VersionCache;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Control\Director;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Security\Group;
 use SilverStripe\Security\Permission;
@@ -262,6 +263,45 @@ class RecordsReadTest extends ContentApiTestCase
         $full = $this->apiGet('records/SiteTree/path:about%2Four-team', $this->token);
         $this->assertSame(200, $full->getStatusCode(), (string)$full->getBody());
         $this->assertSame((int) $child->ID, $this->decode($full)['data']['id']);
+    }
+
+    /**
+     * A leading slash must not let `Director::makeRelative()` chew a prefix off the
+     * path. It strips a `Director::baseURL()` prefix by plain case-insensitive prefix
+     * match with no check that the match ends at a `/`, so on a site installed in a
+     * subfolder (`/en/`) the path `/enquiries` became `quiries` and resolved a
+     * different page. The exact-path guard could not catch it, because it compared
+     * against the already-shortened link — which matters because the same `$ID`
+     * addresses `PATCH`, `publish` and `archive`. Paths are site-root relative, so no
+     * base prefix is stripped here at all; `get_by_link()` still relativises, on a
+     * value that no longer starts with a slash to match against.
+     */
+    public function testALeadingSlashDoesNotResolveAPrefixedPageNameOnASubfolderInstall(): void
+    {
+        $this->allowDraftPageReads();
+        Config::modify()->set(Director::class, 'alternate_base_url', '/en/');
+
+        $enquiries = SiteTree::create(['Title' => 'Enquiries', 'URLSegment' => 'enquiries']);
+        $enquiries->write();
+        // The page `makeRelative()` used to fall back onto: `/enquiries` minus `/en`.
+        $quiries = SiteTree::create(['Title' => 'Quiries', 'URLSegment' => 'quiries']);
+        $quiries->write();
+
+        // The caller means `/enquiries`. Answering with `quiries` is the bug.
+        $body = $this->decode($this->apiGet('records/SiteTree/path:%2Fenquiries', $this->token));
+        $this->assertSame(
+            (int) $enquiries->ID,
+            $body['data']['id'],
+            'A leading slash resolved a different page: makeRelative() stripped the "/en" base prefix'
+        );
+
+        // The page it used to land on is still addressed by its own name.
+        $body = $this->decode($this->apiGet('records/SiteTree/path:quiries', $this->token));
+        $this->assertSame((int) $quiries->ID, $body['data']['id']);
+
+        // Surrounding slashes are still ignored, which is what the docs promise.
+        $body = $this->decode($this->apiGet('records/SiteTree/path:%2Fenquiries%2F', $this->token));
+        $this->assertSame((int) $enquiries->ID, $body['data']['id']);
     }
 
     public function testMissingPathIs404(): void
