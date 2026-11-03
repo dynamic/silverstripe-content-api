@@ -227,6 +227,10 @@ external ids work on it (`422 EXTERNAL_ID_UNSUPPORTED` otherwise).
 `GET records/ElementCard/ext:home-hero`. The id after `ext:` is percent-decoded, so
 `ext:home%20page` finds `home page`.
 
+External ids are the portable reference for any `DataObject`. For a page there is a second one:
+`path:<url-path>`, which addresses a `SiteTree` record by the URL it is served at and needs no
+column of its own — see [Addressing one record](05_endpoint-reference.md#addressing-one-record-id).
+
 **An external id identifies exactly one record.** Every write that assigns one (a create's or
 update's `externalId`, or `fields.FixtureIdentifier`, the backfill path) refuses a key another
 record already holds anywhere in the class tree that carries the column, with `409

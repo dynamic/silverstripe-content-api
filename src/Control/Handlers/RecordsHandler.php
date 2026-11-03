@@ -10,6 +10,9 @@ use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\PermissionPolicy;
 use Dynamic\ContentApi\Serialize\RecordSerializer;
 use Dynamic\ContentApi\Verify\VersionCache;
+use SilverStripe\CMS\Controllers\RootURLController;
+use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injectable;
@@ -21,7 +24,10 @@ use SilverStripe\Versioned\Versioned;
 /**
  * Read endpoints: GET records/$ClassRef and GET records/$ClassRef/$ID.
  *
- * `$ID` accepts a numeric ID or `ext:<external-id>`. List filtering uses
+ * `$ID` accepts a numeric ID, `ext:<external-id>` or `path:<url-path>`
+ * (the latter `SiteTree` classes only; a nested path must be sent
+ * percent-encoded, e.g. `path:about%2Four-team`, because `$ID` matches a
+ * single route segment). List filtering uses
  * `Field=value` / `Field__Modifier=value` query params (colymba-style syntax,
  * validated against the class schema and a modifier allowlist). `_stage`
  * selects draft (default) or live reading for Versioned classes — underscored
@@ -182,9 +188,9 @@ class RecordsHandler
     }
 
     /**
-     * Fetch by numeric ID or `ext:` external-id reference.
+     * Fetch by numeric ID, `ext:` external-id reference, or `path:` URL path.
      *
-     * @throws ApiError NOT_FOUND
+     * @throws ApiError NOT_FOUND PAYLOAD_INVALID
      */
     public function fetchRecord(string $className, string $idParam): DataObject
     {
@@ -194,10 +200,17 @@ class RecordsHandler
             return $this->externalIds->find($className, rawurldecode(substr($idParam, 4)));
         }
 
+        if (str_starts_with($idParam, 'path:')) {
+            return $this->fetchByPath($className, substr($idParam, 5));
+        }
+
         if (!ctype_digit($idParam)) {
             throw new ApiError(
                 ErrorCode::PAYLOAD_INVALID,
-                sprintf('Invalid record id "%s" — use a numeric id or "ext:<external-id>".', $idParam)
+                sprintf(
+                    'Invalid record id "%s" — use a numeric id, "ext:<external-id>", or "path:<url-path>".',
+                    $idParam
+                )
             );
         }
 
@@ -211,6 +224,117 @@ class RecordsHandler
         }
 
         return $record;
+    }
+
+    /**
+     * Resolve a `SiteTree` record by its URL path (#121), e.g. `about` or
+     * `about/our-team`, through `SiteTree::get_by_link()` — the same
+     * URL-segment walk the framework's own routing does, so no new resolution
+     * logic is introduced. The lookup runs in whichever stage the caller is
+     * already standing in: `readOne()` wraps it in `withStage()`, so
+     * `_stage=draft|live` selects the stage for `GET records/$ClassRef/$ID`,
+     * while the update, stage-action and parity handlers set the draft stage
+     * themselves and so always resolve the path against draft — `_stage` is a
+     * read modifier there, not a way to address a live page in order to write
+     * to it.
+     *
+     * Scoped to `SiteTree` deliberately: a URL path means nothing for an
+     * arbitrary `DataObject`, and `Hierarchy` alone has no routing equivalent.
+     *
+     * Known limit inherited from `get_by_link()`: with the non-default
+     * `URLSegmentFilter.default_allow_multibyte` on, segments are *stored*
+     * percent-encoded and only the root segment is re-encoded before matching,
+     * so a nested non-ASCII path misses. Documented in the endpoint reference;
+     * numeric or `ext:` ids still address such a page.
+     *
+     * @throws ApiError NOT_FOUND PAYLOAD_INVALID
+     */
+    private function fetchByPath(string $className, string $link): DataObject
+    {
+        if (!is_a($className, SiteTree::class, true)) {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                sprintf('path: addressing is only supported for SiteTree classes, got %s.', $className)
+            );
+        }
+
+        // Percent-decoded for the same reason as `ext:` above (#240), and it is
+        // what turns the route's single `%2F`-encoded segment back into a path.
+        $link = $this->normaliseLink($link);
+
+        // `get_by_link('')` resolves to the home page; an explicit but empty
+        // path is more likely a caller bug than a request for `/`.
+        if ($link === '') {
+            throw new ApiError(
+                ErrorCode::PAYLOAD_INVALID,
+                'path: addressing needs a non-empty url path.'
+            );
+        }
+
+        $page = SiteTree::get_by_link($link, false);
+
+        if (!$page instanceof $className) {
+            throw new ApiError(
+                ErrorCode::NOT_FOUND,
+                sprintf('No %s found at path "%s".', $className, $link)
+            );
+        }
+
+        // `get_by_link()` stops short in two of its fallbacks: with nested_urls
+        // on, a first segment that matches no root page falls back to a unique
+        // URLSegment match anywhere in the tree and returns it without walking
+        // the rest of the path; with nested_urls off it matches the first
+        // segment and ignores the trailing ones entirely. The front end can
+        // afford that — the leftovers become a controller action — but an
+        // addressing scheme that also feeds PATCH, publish and archive cannot,
+        // because a stale or mistyped path would silently act on a page the
+        // caller never named. So require the resolved page's own full path to be
+        // the path that was asked for, which also means a nested page must be
+        // addressed by its full path and not by its bare URLSegment.
+        if (strcasecmp($this->normaliseLink($this->fullLink($page)), $link) !== 0) {
+            throw new ApiError(
+                ErrorCode::NOT_FOUND,
+                sprintf('No %s found at path "%s".', $className, $link)
+            );
+        }
+
+        return $page;
+    }
+
+    /**
+     * The page's full URL path, including the root segment that
+     * `RelativeLink()` drops for the home page itself.
+     */
+    private function fullLink(SiteTree $page): string
+    {
+        $link = (string) $page->RelativeLink();
+
+        // RelativeLink() hands back the site root for a root-level homepage
+        // rather than its own URLSegment: '/' under the current signature, and
+        // '' for any extension that short-circuits `updateRelativeLink`. Both
+        // mean "restore the segment that was dropped", or the guard in
+        // fetchByPath() compares an empty path against the one asked for and
+        // 404s the site's own front page.
+        return trim($link, '/') === '' ? RootURLController::get_homepage_link() : $link;
+    }
+
+    /**
+     * Percent-decode and reduce to a bare `get_by_link()` link.
+     *
+     * The slashes are trimmed *before* `makeRelative()` as well as after it, which is
+     * load-bearing and not tidiness. `makeRelative()` drops a `Director::baseURL()`
+     * prefix by plain case-insensitive prefix match, with no check that the match ends
+     * at a `/` — so on a site installed under `/en/` the path `/enquiries` came back as
+     * `quiries` and resolved a different page. The exact-path guard in `fetchByPath()`
+     * cannot catch that, because it compares against this normalised value, and the
+     * same `$ID` addresses `PATCH`, `publish` and `archive`. Trimming first leaves no
+     * leading slash for a base prefix to match, since paths are site-root relative.
+     * `makeRelative()` still runs, to strip the scheme/host off an absolute URL a
+     * caller pasted in.
+     */
+    private function normaliseLink(string $link): string
+    {
+        return trim(Director::makeRelative(trim(rawurldecode($link), '/')) ?? '', '/');
     }
 
     private function resolveStage(HTTPRequest $request): string

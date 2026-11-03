@@ -94,7 +94,7 @@ PR — nothing else will catch a regression for you.
 | `Control/RecordParityTest.php` | `GET .../parity`: field comparison, liveExists/ok semantics, depth-2 owned mismatch, `include`/`depth` params, authorization |
 | `Control/RecordActionsTest.php` | Stage actions, unknown action 404, verb requirements |
 | `Control/RecordSerializerTest.php` | Unreadable-relation dedup logging, polymorphic relation edge cases |
-| `Control/RecordsReadTest.php` | List/read filters, sort/pagination, id + `ext:` reads, `_stage`, permission enforcement |
+| `Control/RecordsReadTest.php` | List/read filters, sort/pagination, id + `ext:` + `path:` reads, `_stage`, permission enforcement |
 | `Control/RequestLoggingTest.php` | `RequestLogger` wired through the real controller: off-by-default, real endpoint/status/errorCode captured, a partially-failed `POST batch`'s `opFailures` logged despite the wire response being 200 (#207) |
 | `Control/SchemaTest.php` | Site/class schema shape, enum values, allowlist reflection, polymorphic writability |
 | `Control/WriteGuardTest.php` | Colymba `/api` write path via `WriteGuardExtension` |
