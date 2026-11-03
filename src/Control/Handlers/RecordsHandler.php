@@ -271,15 +271,16 @@ class RecordsHandler
         }
 
         // `get_by_link()` stops short in two of its fallbacks: with nested_urls
-        // on it returns a unique-URLSegment match without walking the rest of
-        // the path, and with nested_urls off it ignores the trailing segments
-        // entirely. The front end can afford that — the leftovers become a
-        // controller action — but an addressing scheme that also feeds PATCH,
-        // publish and archive cannot, because a stale or mistyped path would
-        // silently act on a different page. So require the resolved page's own
-        // full path to be the path that was asked for, which also means a
-        // nested page must be addressed by its full path and not by its bare
-        // URLSegment.
+        // on, a first segment that matches no root page falls back to a unique
+        // URLSegment match anywhere in the tree and returns it without walking
+        // the rest of the path; with nested_urls off it matches the first
+        // segment and ignores the trailing ones entirely. The front end can
+        // afford that — the leftovers become a controller action — but an
+        // addressing scheme that also feeds PATCH, publish and archive cannot,
+        // because a stale or mistyped path would silently act on a page the
+        // caller never named. So require the resolved page's own full path to be
+        // the path that was asked for, which also means a nested page must be
+        // addressed by its full path and not by its bare URLSegment.
         if (strcasecmp($this->normaliseLink($this->fullLink($page)), $link) !== 0) {
             throw new ApiError(
                 ErrorCode::NOT_FOUND,

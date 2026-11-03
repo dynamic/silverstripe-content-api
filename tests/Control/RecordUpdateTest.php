@@ -88,13 +88,27 @@ class RecordUpdateTest extends ContentApiTestCase
         $this->assertSame((int) $about->ID, $this->decode($response)['data']['id']);
         $this->assertSame('About us', SiteTree::get()->byID($about->ID)->Title);
 
+        // A stale path whose first segment matches a *nested* page is the case
+        // the exact-path guard exists for: get_by_link()'s unique-URLSegment
+        // fallback returns that page without walking `former-child`, so without
+        // the guard this PATCH would rewrite a page the caller never named.
+        // (`about/former-child` would not prove it — the root match succeeds,
+        // the fallback is never reached, and get_by_link() returns null anyway.)
+        $team = SiteTree::create([
+            'Title' => 'Our Team',
+            'URLSegment' => 'our-team',
+            'ParentID' => (int) $about->ID,
+        ]);
+        $team->write();
+
         $stale = $this->apiPatch(
-            'records/SiteTree/path:about%2Fformer-child',
+            'records/SiteTree/path:our-team%2Fformer-child',
             ['fields' => ['Title' => 'Wrong page']],
             $token
         );
 
         $this->assertErrorCode($stale, 'NOT_FOUND', 404);
+        $this->assertSame('Our Team', SiteTree::get()->byID($team->ID)->Title);
         $this->assertSame('About us', SiteTree::get()->byID($about->ID)->Title);
     }
 

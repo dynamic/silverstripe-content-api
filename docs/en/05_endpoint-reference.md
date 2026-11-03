@@ -95,12 +95,15 @@ POST /v1/records/Page/path:about/publish
   or by a single-segment path avoids it.
 - **The match is exact.** The resolved page's own full path must equal the path asked for, so a
   nested page is addressable only by that full path: `path:our-team` does not find
-  `about/our-team`, and `path:about/not-a-child` is `404` rather than `about`. `get_by_link()`
-  would answer both with a different page — its unique-`URLSegment` fallback returns without
-  walking the remaining segments, and with `nested_urls` off it ignores them entirely. Front-end
-  routing can afford that (the leftovers become a controller action, and `OldPageRedirector`
-  redirects); an `$ID` that also addresses `PATCH`, `publish` and `archive` cannot, because a
-  stale path would silently act on the parent page.
+  `about/our-team`. This is a guard on two `get_by_link()` fallbacks. With `nested_urls` on, a
+  first segment that matches no root page falls back to a unique-`URLSegment` match anywhere in
+  the tree and returns it without walking the remaining segments, so `path:our-team/not-a-child`
+  would otherwise hand back `about/our-team`; with `nested_urls` off it matches the first segment
+  and ignores the rest, so `path:about/not-a-child` would hand back `about`. Front-end routing can
+  afford both (the leftovers become a controller action, and `OldPageRedirector` redirects); an
+  `$ID` that also addresses `PATCH`, `publish` and `archive` cannot, because a stale path would
+  silently act on a page the caller never named. A missing child under a *root* page also 404s,
+  but because `get_by_link()` finds nothing there, not because of this check.
 - **The home page is addressed by its own segment** — `path:home` on a default install — not by an
   empty path. `path:` with nothing after it is `400 PAYLOAD_INVALID`, including as `path:%2F`:
   `get_by_link('')` does resolve `/`, but an explicitly empty path reads as a caller bug, and

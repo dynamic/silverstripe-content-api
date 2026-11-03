@@ -19,8 +19,8 @@ All notable changes to this project are documented here. Format loosely follows
   asked for**, because `get_by_link()`'s unique-`URLSegment` fallback (and `nested_urls` off)
   otherwise hand back a different page — affordable for a router, which sends the leftovers to a
   controller action, not for an id that also addresses `PATCH`, `publish` and `archive`. A nested
-  page is therefore addressable only by its full path, and `path:about/not-a-child` is `404`
-  rather than `about`. And an **empty path is refused** (`path:` and `path:%2F` are `400`) rather
+  page is therefore addressable only by its full path, and `path:our-team/not-a-child` is `404`
+  rather than silently resolving `about/our-team`. And an **empty path is refused** (`path:` and `path:%2F` are `400`) rather
   than resolving `/` through `get_by_link('')`, so no route taking an `$ID` can silently write to
   the front page; the home page is reached by its own segment (`path:home`), which
   `RelativeLink()` reports as the site root and `fullLink()` restores. `BatchProcessor` keeps its

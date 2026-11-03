@@ -181,14 +181,60 @@ class RecordsReadTest extends ContentApiTestCase
     }
 
     /**
-     * #121: `get_by_link()` returns a unique-URLSegment match without walking
-     * the rest of the path, so `about/not-a-child` would otherwise resolve to
-     * `about`. The front end can treat the leftovers as a controller action;
-     * an id that also addresses PATCH and publish cannot.
+     * #121: `get_by_link()`'s unique-URLSegment fallback returns as soon as it
+     * matches a segment anywhere in the tree, without walking the rest of the
+     * path — so `our-team/former-child` resolves to `about/our-team` and the
+     * trailing segment is silently dropped. The front end can treat leftovers
+     * as a controller action; an id that also addresses PATCH and publish
+     * cannot, or a stale path acts on a page the caller never named.
+     *
+     * Note this needs a *nested* first segment. Under a root page
+     * (`about/not-a-child`) the root lookup succeeds, so the fallback is never
+     * reached and `get_by_link()` returns null on its own — that case 404s with
+     * or without the guard and proves nothing about it.
      */
-    public function testATrailingSegmentUnderAPageIs404(): void
+    public function testTrailingSegmentsAfterANestedPageAre404(): void
     {
-        $response = $this->apiGet('records/SiteTree/path:about%2Fnot-a-child%2Fat-all', $this->token);
+        $this->allowDraftPageReads();
+
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+        $child = SiteTree::create([
+            'Title' => 'Our Team',
+            'URLSegment' => 'our-team',
+            'ParentID' => (int) $about->ID,
+        ]);
+        $child->write();
+
+        // The page itself is addressable by its full path, so the 404 below is
+        // about the trailing segment and not a page that never existed.
+        $full = $this->apiGet('records/SiteTree/path:about%2Four-team', $this->token);
+        $this->assertSame(200, $full->getStatusCode(), (string)$full->getBody());
+        $this->assertSame((int) $child->ID, $this->decode($full)['data']['id']);
+
+        $response = $this->apiGet('records/SiteTree/path:our-team%2Fformer-child', $this->token);
+
+        $this->assertErrorCode($response, 'NOT_FOUND', 404);
+    }
+
+    /**
+     * #121: the other fallback the guard covers. With `nested_urls` off,
+     * `get_by_link()` matches the first segment and returns without looking at
+     * the remaining ones, so `about/anything` hands back `about` — the
+     * stale-path-acts-on-the-parent case in its literal form. A plain
+     * single-segment path still has to resolve, or this would just be a test
+     * that nested_urls off breaks everything.
+     */
+    public function testTrailingSegmentsAre404WithNestedUrlsOff(): void
+    {
+        $this->allowDraftPageReads();
+
+        Config::modify()->set(SiteTree::class, 'nested_urls', false);
+        SiteTree::reset();
+
+        $plain = $this->apiGet('records/SiteTree/path:about', $this->token);
+        $this->assertSame(200, $plain->getStatusCode(), (string)$plain->getBody());
+
+        $response = $this->apiGet('records/SiteTree/path:about%2Fnot-a-child', $this->token);
 
         $this->assertErrorCode($response, 'NOT_FOUND', 404);
     }
