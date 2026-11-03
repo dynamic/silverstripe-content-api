@@ -77,11 +77,22 @@ POST /v1/records/Page/path:about/publish
 ```
 
 - **Relative to the site root**, with surrounding slashes ignored, so `path:about` and
-  `path:%2Fabout%2F` name the same page. The match ignores case, like the framework's own URL
-  handling.
+  `path:%2Fabout%2F` name the same page. The final exact-path comparison ignores case; whether a
+  differently-cased path *resolves* at all depends on the collation the `URLSegment` lookup runs
+  under, since `get_by_link()` matches that column directly — case-insensitive under MySQL's
+  default, so `path:ABOUT` finds `about`, and a `404` on a case-sensitive collation.
 - **A nested path arrives as one `%2F`-encoded segment**, because `$ID` matches a single route
   segment: `about/our-team` is sent as `about%2Four-team`. The value after `path:` is
-  percent-decoded before resolution, the same decoding `ext:` needs.
+  percent-decoded before resolution, the same decoding `ext:` needs. Encode the slash **exactly
+  once**: the segment is decoded once, so `about%252Four-team` resolves a literal
+  `about%2Four-team` and misses. That matters most for the companion MCP server
+  (`dynamic/silverstripe-content-api-mcp`), which
+  percent-encodes the `id` argument itself — there, pass `about/our-team` and never a
+  pre-encoded `%2F`.
+  A literal `%2F` also has to survive the web server: Apache rejects encoded slashes in the path
+  unless `AllowEncodedSlashes` is turned on, so on such a deployment a nested path 404s before
+  SilverStripe runs. The same applies to an `ext:` id containing a slash. Addressing by numeric id
+  or by a single-segment path avoids it.
 - **The match is exact.** The resolved page's own full path must equal the path asked for, so a
   nested page is addressable only by that full path: `path:our-team` does not find
   `about/our-team`, and `path:about/not-a-child` is `404` rather than `about`. `get_by_link()`

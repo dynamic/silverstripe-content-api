@@ -30,8 +30,11 @@ All notable changes to this project are documented here. Format loosely follows
   (`$ID`)") and cross-referenced from the external-ids section of
   [docs/en/06_write-payloads.md](docs/en/06_write-payloads.md);
   [schema/endpoints.json](schema/endpoints.json) (bumped to v1.20) describes `path:` on the four
-  `records/` tools that take an `$ID`, so an MCP client's tool description advertises it. The
-  bundled copy in the MCP server repo is a separate release step.
+  `records/` tools that take an `$ID`, so an MCP client's tool description advertises it — and
+  tells that caller to pass the path **un-encoded**, which is the opposite of what a direct HTTP
+  caller needs: the MCP client percent-encodes the `id` argument itself, so a pre-emptive `%2F`
+  arrives double-encoded, decodes back to a literal `about%2Four-team`, and 404s. The bundled copy
+  in the MCP server repo is a separate release step.
 
 ### Fixed
 - **(#196)** Documented `content_batch`'s scope for attaching a **newly created** element to a
