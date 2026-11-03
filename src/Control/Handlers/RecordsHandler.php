@@ -241,6 +241,12 @@ class RecordsHandler
      * Scoped to `SiteTree` deliberately: a URL path means nothing for an
      * arbitrary `DataObject`, and `Hierarchy` alone has no routing equivalent.
      *
+     * Known limit inherited from `get_by_link()`: with the non-default
+     * `URLSegmentFilter.default_allow_multibyte` on, segments are *stored*
+     * percent-encoded and only the root segment is re-encoded before matching,
+     * so a nested non-ASCII path misses. Documented in the endpoint reference;
+     * numeric or `ext:` ids still address such a page.
+     *
      * @throws ApiError NOT_FOUND PAYLOAD_INVALID
      */
     private function fetchByPath(string $className, string $link): DataObject

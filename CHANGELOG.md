@@ -28,7 +28,12 @@ All notable changes to this project are documented here. Format loosely follows
   the front page; the home page is reached by its own segment (`path:home`), which
   `RelativeLink()` reports as the site root and `fullLink()` restores. `BatchProcessor` keeps its
   own numeric-or-`ext:` resolution, so a `POST batch` op's `id` does not gain `path:`, and
-  `pages/$ID/convert` / `apply-template` stay numeric. Documented in
+  `pages/$ID/convert` / `apply-template` stay numeric. One limitation is inherited from
+  `get_by_link()` rather than chosen here: with the non-default
+  `URLSegmentFilter.default_allow_multibyte` on, segments are stored percent-encoded and only the
+  root segment is re-encoded before matching, so a **nested non-ASCII path misses** (`path:käse`
+  resolves, `path:about%2Füber` does not, in either spelling). The default config transliterates
+  segments to ASCII and is unaffected. Documented in
   [docs/en/05_endpoint-reference.md](docs/en/05_endpoint-reference.md) ("Addressing one record
   (`$ID`)") and cross-referenced from the external-ids section of
   [docs/en/06_write-payloads.md](docs/en/06_write-payloads.md);

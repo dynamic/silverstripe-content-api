@@ -93,6 +93,16 @@ POST /v1/records/Page/path:about/publish
   unless `AllowEncodedSlashes` is turned on, so on such a deployment a nested path 404s before
   SilverStripe runs. The same applies to an `ext:` id containing a slash. Addressing by numeric id
   or by a single-segment path avoids it.
+- **A nested non-ASCII path does not resolve** when the host turns on
+  `URLSegmentFilter.default_allow_multibyte`. With it on, `URLSegmentFilter::filter()` stores each
+  segment percent-encoded (`Über` is saved as `%C3%BCber`), and `get_by_link()` re-encodes only the
+  *root* segment before matching it — every later segment is compared against the column raw. So
+  `path:käse` finds that root page, while `path:about%2Füber` and `path:about%2F%C3%BCber` both
+  `404`: the value after `path:` is percent-decoded once (which `ext:` needs), leaving the decoded
+  child segment to be matched against a stored encoded one. Verified against a live stack, both
+  spellings. This is upstream behaviour, not a choice here, and it needs a non-default config to
+  hit: with the default (`false`) the transliterator keeps segments ASCII, so nested paths are
+  unaffected. Address such a page by numeric id or `ext:`.
 - **The match is exact.** The resolved page's own full path must equal the path asked for, so a
   nested page is addressable only by that full path: `path:our-team` does not find
   `about/our-team`. This is a guard on two `get_by_link()` fallbacks. With `nested_urls` on, a
