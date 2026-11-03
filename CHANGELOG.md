@@ -11,8 +11,11 @@ All notable changes to this project are documented here. Format loosely follows
   `GET records/Page/path:about`, `PATCH records/Page/path:about%2Four-team`,
   `POST records/Page/path:about/publish`. Resolution goes through `SiteTree::get_by_link()` — the
   framework's own URL-segment walk — so no new resolution logic or permission surface is
-  introduced, and `_stage=draft|live` works on every route that takes an `$ID` the way it already
-  did for reads. Scoped to `SiteTree` (`400 PAYLOAD_INVALID` on any other class, which also covers
+  introduced. `_stage=draft|live` selects the stage for `GET records/$ClassRef/$ID` exactly as it
+  already did for a numeric id; the `PATCH`, stage-action and `parity` routes resolve the path
+  against draft, which is where they already resolve everything else — `_stage` is not a way to
+  address a live page in order to write to it. Scoped to `SiteTree` (`400 PAYLOAD_INVALID` on any
+  other class, which also covers
   `GET assets/$ID`, since a URL path means nothing for an arbitrary `DataObject`); the path is
   percent-decoded like `ext:`, which is what turns the route's single `%2F`-encoded segment back
   into a nested path. Two deliberate edges: the resolved page's **own full path must equal the one

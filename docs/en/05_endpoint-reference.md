@@ -108,8 +108,10 @@ POST /v1/records/Page/path:about/publish
   empty path. `path:` with nothing after it is `400 PAYLOAD_INVALID`, including as `path:%2F`:
   `get_by_link('')` does resolve `/`, but an explicitly empty path reads as a caller bug, and
   refusing it means no route that takes an `$ID` can silently write to the front page.
-- **It honours `_stage`** like every other read: a draft-only page resolves on `_stage=draft` and
-  is `404` on `_stage=live` until it is published.
+- **Reads honour `_stage`** like every other read: a draft-only page resolves on `_stage=draft` and
+  is `404` on `_stage=live` until it is published. `PATCH`, the stage actions and `parity` resolve
+  the path against draft, the way they resolve everything else there — `_stage` is a read modifier,
+  not a way to address a live page in order to write to it.
 
 ## `GET records/$ClassRef`
 

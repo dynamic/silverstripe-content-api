@@ -230,9 +230,13 @@ class RecordsHandler
      * Resolve a `SiteTree` record by its URL path (#121), e.g. `about` or
      * `about/our-team`, through `SiteTree::get_by_link()` — the same
      * URL-segment walk the framework's own routing does, so no new resolution
-     * logic is introduced. `readOne()` already runs this inside `withStage()`
-     * (the write handlers set the draft stage themselves), so the lookup
-     * honours `_stage=draft|live` on every route that takes an `$ID`.
+     * logic is introduced. The lookup runs in whichever stage the caller is
+     * already standing in: `readOne()` wraps it in `withStage()`, so
+     * `_stage=draft|live` selects the stage for `GET records/$ClassRef/$ID`,
+     * while the update, stage-action and parity handlers set the draft stage
+     * themselves and so always resolve the path against draft — `_stage` is a
+     * read modifier there, not a way to address a live page in order to write
+     * to it.
      *
      * Scoped to `SiteTree` deliberately: a URL path means nothing for an
      * arbitrary `DataObject`, and `Hierarchy` alone has no routing equivalent.
