@@ -2,6 +2,7 @@
 
 namespace Dynamic\ContentApi\Tests\Control;
 
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestForceUnpublishPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
@@ -11,6 +12,8 @@ use Dynamic\ContentApi\Tests\Stub\ApiTestOwnedParentObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestPage;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
 use SilverStripe\Assets\Image;
+use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Versioned\Versioned;
 
 class RecordActionsTest extends ContentApiTestCase
@@ -243,6 +246,52 @@ class RecordActionsTest extends ContentApiTestCase
             200,
             $forced->getStatusCode(),
             'force on a class the guard can never strand anything for must not need "delete"'
+        );
+    }
+
+    /**
+     * #121: `path:` reaches the publish route, and that is the write route the
+     * exact-path guard matters most on — a wrong resolution there puts a page
+     * on Live that the caller never named. Nothing asserted this before: the
+     * schema and docs advertise `POST records/$ClassRef/$ID/publish` with a
+     * `path:` id, and only the read and PATCH routes were covered.
+     */
+    public function testAPathAddressesAPageForAPublishAction(): void
+    {
+        Config::modify()->set(SiteTree::class, 'api_access', 'read,action');
+        Config::modify()->merge(ClassRegistry::class, 'models', ['SiteTree' => SiteTree::class]);
+
+        $token = $this->mintTokenFor('adminUser');
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPost('records/SiteTree/path:about/publish', [], $token);
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame((int) $about->ID, $this->decode($response)['data']['id']);
+        $this->assertTrue(
+            SiteTree::get()->byID($about->ID)->isPublished(),
+            'the page the path names is the page that went live'
+        );
+
+        // The dangerous case: a stale nested path whose first segment matches a
+        // *nested* page. get_by_link()'s unique-URLSegment fallback returns that
+        // page without walking `former-child`, so without the guard this publish
+        // would push a page the caller never named onto Live. (`about/former-child`
+        // would not prove it — the root match succeeds and get_by_link() returns
+        // null on its own, never consulting the guard.)
+        $team = SiteTree::create([
+            'Title' => 'Our Team',
+            'URLSegment' => 'our-team',
+            'ParentID' => (int) $about->ID,
+        ]);
+        $team->write();
+
+        $stale = $this->apiPost('records/SiteTree/path:our-team%2Fformer-child/publish', [], $token);
+
+        $this->assertErrorCode($stale, 'NOT_FOUND', 404);
+        $this->assertFalse(
+            SiteTree::get()->byID($team->ID)->isPublished(),
+            'the fallback match must not have been published'
         );
     }
 
