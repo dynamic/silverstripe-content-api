@@ -255,6 +255,39 @@ class RecordsReadTest extends ContentApiTestCase
         $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
     }
 
+    /**
+     * The same refusal expressed as an encoded root path, so the empty check
+     * cannot be stepped around by sending `path:%2F` instead of `path:`.
+     */
+    public function testARootPathIsRejectedToo(): void
+    {
+        $response = $this->apiGet('records/SiteTree/path:%2F', $this->token);
+
+        $this->assertErrorCode($response, 'PAYLOAD_INVALID', 400);
+    }
+
+    /**
+     * Refusing `/` does not mean the home page is unaddressable: it is reached
+     * by its own segment. `RelativeLink()` returns the site root for a
+     * root-level homepage, so without `fullLink()` restoring the segment the
+     * exact-path guard compares an empty string against `home` and 404s the
+     * one page every site has — which is also the page a caller most
+     * obviously reaches for by path.
+     */
+    public function testTheHomePageIsAddressedByItsOwnSegment(): void
+    {
+        $this->allowDraftPageReads();
+
+        $response = $this->apiGet('records/SiteTree/path:home', $this->token);
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+
+        $body = $this->decode($response);
+        $home = $this->objFromFixture(SiteTree::class, 'homePage');
+
+        $this->assertSame('Home', $body['data']['fields']['Title']);
+        $this->assertSame((int) $home->ID, $body['data']['id']);
+    }
+
     public function testPathAddressingFollowsTheStage(): void
     {
         $this->allowDraftPageReads();

@@ -298,7 +298,13 @@ class RecordsHandler
     {
         $link = (string) $page->RelativeLink();
 
-        return $link === '' ? RootURLController::get_homepage_link() : $link;
+        // RelativeLink() hands back the site root for a root-level homepage
+        // rather than its own URLSegment: '/' under the current signature, and
+        // '' for any extension that short-circuits `updateRelativeLink`. Both
+        // mean "restore the segment that was dropped", or the guard in
+        // fetchByPath() compares an empty path against the one asked for and
+        // 404s the site's own front page.
+        return trim($link, '/') === '' ? RootURLController::get_homepage_link() : $link;
     }
 
     private function normaliseLink(string $link): string
