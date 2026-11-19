@@ -1,6 +1,6 @@
 {
   "$comment": "MCP-style tool definitions for every content API endpoint. dynamic/silverstripe-content-api-mcp maps one tool per entry onto the REST endpoint, injecting the X-Silverstripe-Apitoken header. Class payload contracts are discovered at runtime via the schema_class tool.",
-  "version": "v1.19",
+  "version": "v1.20",
   "baseRoute": "content-api/v1",
   "tools": [
     {
@@ -91,7 +91,7 @@
     },
     {
       "name": "content_records_read",
-      "description": "Read one record by numeric id or external id (ext: prefix). Returns fields (PascalCase, round-trips into writes), relation ids (a many_many with extraFields returns {id, extraFields} per item instead of a bare id) and draft/live stage state.",
+      "description": "Read one record by numeric id, external id (ext: prefix) or URL path (path: prefix, SiteTree classes only). Returns fields (PascalCase, round-trips into writes), relation ids (a many_many with extraFields returns {id, extraFields} per item instead of a bare id) and draft/live stage state.",
       "method": "GET",
       "path": "records/{classRef}/{id}",
       "inputSchema": {
@@ -103,7 +103,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Numeric id or ext:<external-id>"
+            "description": "Numeric id, ext:<external-id>, or path:<url-path> for a SiteTree class. Pass a path as-is (path:about/our-team) and do NOT percent-encode the slash: this tool percent-encodes the id itself as one URL segment, so a pre-encoded %2F arrives double-encoded and 404s. A path must be the page's full path from the site root (a nested page is not addressable by its bare URLSegment); the home page is addressed by its own URLSegment, e.g. path:home."
           },
           "_stage": {
             "type": "string",
@@ -135,7 +135,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Numeric id or ext:<external-id>"
+            "description": "Numeric id, ext:<external-id>, or path:<url-path> (SiteTree classes only; pass the path un-encoded — see content_records_read.id)"
           },
           "include": {
             "type": "string",
@@ -193,7 +193,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Numeric id or ext:<external-id>."
+            "description": "Numeric id, ext:<external-id>, or path:<url-path> (SiteTree classes only) so a page can be published/unpublished/archived by path. Pass the path un-encoded — see content_records_read.id."
           },
           "action": {
             "type": "string",
@@ -256,7 +256,7 @@
           },
           "id": {
             "type": "string",
-            "description": "Numeric id or ext:<external-id>"
+            "description": "Numeric id, ext:<external-id>, or path:<url-path> (SiteTree classes only; pass the path un-encoded — see content_records_read.id)"
           },
           "fields": {
             "type": "object",

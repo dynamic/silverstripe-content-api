@@ -3,12 +3,14 @@
 namespace Dynamic\ContentApi\Tests\Control;
 
 use Dynamic\ContentApi\Control\Handlers\RecordUpdateHandler;
+use Dynamic\ContentApi\Registry\ClassRegistry;
 use Dynamic\ContentApi\Security\EnvironmentGate;
 use Dynamic\ContentApi\Tests\ContentApiTestCase;
 use Dynamic\ContentApi\Tests\Stub\ApiTestFingerprintRelatedDeniedSubclassObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestStageGatedObject;
 use Dynamic\ContentApi\Tests\Stub\ApiTestVersionedObject;
+use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Versioned\Versioned;
 
@@ -62,6 +64,52 @@ class RecordUpdateTest extends ContentApiTestCase
 
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame('By key', ApiTestObject::get()->filter('FixtureIdentifier', 'alpha')->first()->Title);
+    }
+
+    /**
+     * #121: `path:` is resolved by the shared `fetchRecord()`, so it addresses
+     * a write route too. That makes an exact-path miss load-bearing: a stale
+     * nested path must not fall back onto the parent page and patch it.
+     */
+    public function testAPathAddressesAPageForAnUpdate(): void
+    {
+        Config::modify()->set(SiteTree::class, 'api_access', 'read,update');
+        Config::modify()->merge(ClassRegistry::class, 'models', ['SiteTree' => SiteTree::class]);
+        $token = $this->mintTokenFor('adminUser');
+        $about = $this->objFromFixture(SiteTree::class, 'aboutPage');
+
+        $response = $this->apiPatch(
+            'records/SiteTree/path:about',
+            ['fields' => ['Title' => 'About us']],
+            $token
+        );
+
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame((int) $about->ID, $this->decode($response)['data']['id']);
+        $this->assertSame('About us', SiteTree::get()->byID($about->ID)->Title);
+
+        // A stale path whose first segment matches a *nested* page is the case
+        // the exact-path guard exists for: get_by_link()'s unique-URLSegment
+        // fallback returns that page without walking `former-child`, so without
+        // the guard this PATCH would rewrite a page the caller never named.
+        // (`about/former-child` would not prove it — the root match succeeds,
+        // the fallback is never reached, and get_by_link() returns null anyway.)
+        $team = SiteTree::create([
+            'Title' => 'Our Team',
+            'URLSegment' => 'our-team',
+            'ParentID' => (int) $about->ID,
+        ]);
+        $team->write();
+
+        $stale = $this->apiPatch(
+            'records/SiteTree/path:our-team%2Fformer-child',
+            ['fields' => ['Title' => 'Wrong page']],
+            $token
+        );
+
+        $this->assertErrorCode($stale, 'NOT_FOUND', 404);
+        $this->assertSame('Our Team', SiteTree::get()->byID($team->ID)->Title);
+        $this->assertSame('About us', SiteTree::get()->byID($about->ID)->Title);
     }
 
     public function testADisabledEnvironmentRefuses(): void
