@@ -67,6 +67,39 @@ class SchemaTest extends ContentApiTestCase
         $this->assertIsArray($crud['models']);
     }
 
+    /**
+     * #288: consumers pin a copy of schema/endpoints.json, so the site schema
+     * has to say which module build and which spec revision it is talking to.
+     */
+    public function testSiteSchemaReportsModuleAndSpecVersion(): void
+    {
+        $body = $this->decode($this->apiGet('schema', $this->token));
+
+        $this->assertNull($body['error']);
+
+        $moduleVersion = $body['data']['moduleVersion'] ?? null;
+        $specVersion = $body['data']['specVersion'] ?? null;
+
+        // The module is the root package under test, so the version string is
+        // branch-shaped ("dev-<branch>"); the contract is only that a version
+        // is reported at all.
+        $this->assertIsString($moduleVersion);
+        $this->assertNotSame('', $moduleVersion);
+
+        $this->assertIsString($specVersion);
+        $this->assertMatchesRegularExpression('/^v\d+\.\d+$/', $specVersion);
+
+        // The spec version is read from the shipped spec, not hardcoded.
+        $spec = json_decode((string) file_get_contents(dirname(__DIR__, 2) . '/schema/endpoints.json'), true);
+        $this->assertSame($spec['version'], $specVersion);
+
+        // Both route aliases serve the same site schema.
+        $aliased = $this->decode($this->apiGet('schema/site', $this->token));
+        $this->assertNull($aliased['error']);
+        $this->assertSame($moduleVersion, $aliased['data']['moduleVersion']);
+        $this->assertSame($specVersion, $aliased['data']['specVersion']);
+    }
+
     public function testSiteSchemaOmitsUnexposedClasses(): void
     {
         Config::modify()->set(ApiTestObject::class, 'api_access', false);
