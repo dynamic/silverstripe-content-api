@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **(#288)** `GET schema` / `GET schema/site` now report `moduleVersion` (Composer's version of
+  the installed module, `null` when Composer cannot report it) and `specVersion` (the top-level
+  `version` of the shipped `schema/endpoints.json`). A consumer that pins its own copy of the
+  spec can now tell which module build and which spec revision a site runs, instead of
+  discovering an older site as a bare 404 on a newer call.
 - **(#121)** `$ID` on the `records/` routes accepts `path:<url-path>`, so a caller that knows a
   page's URL but not its id can address it directly instead of searching for the record first:
   `GET records/Page/path:about`, `PATCH records/Page/path:about%2Four-team`,

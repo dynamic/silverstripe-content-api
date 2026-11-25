@@ -69,6 +69,11 @@ class SchemaService
 
         return [
             'api' => 'silverstripe-content-api/v1',
+            // #288: a consumer pins a copy of schema/endpoints.json and needs
+            // to tell which module build and which spec revision a site runs,
+            // rather than discovering it as a bare 404 on a newer call.
+            'moduleVersion' => $this->moduleVersion(),
+            'specVersion' => $this->specVersion(),
             'environment' => Director::get_environment_type(),
             // #126: the silent probe, not checkPopulationAllowed() — a
             // schema read is not itself an attempted write, and must never
@@ -85,6 +90,54 @@ class SchemaService
             'integrations' => $this->detectIntegrations(),
             'classes' => $classes,
         ];
+    }
+
+    /**
+     * Composer's pretty version of this module (e.g. "2.4.1", or "dev-<branch>"
+     * when it is the root package of a dev checkout), or null when it cannot be
+     * determined.
+     */
+    protected function moduleVersion(): ?string
+    {
+        if (!class_exists(\Composer\InstalledVersions::class)) {
+            return null;
+        }
+
+        try {
+            $version = \Composer\InstalledVersions::getPrettyVersion('dynamic/silverstripe-content-api');
+        } catch (\Throwable $e) {
+            // Not installed under that name, or no Composer data at all.
+            return null;
+        }
+
+        return $version === null ? null : (string) $version;
+    }
+
+    /**
+     * The spec revision this build ships: the top-level "version" field of
+     * schema/endpoints.json, or null when that file cannot be read or parsed.
+     */
+    protected function specVersion(): ?string
+    {
+        $path = dirname(__DIR__, 2) . '/schema/endpoints.json';
+
+        if (!is_file($path)) {
+            return null;
+        }
+
+        $contents = @file_get_contents($path);
+
+        if ($contents === false) {
+            return null;
+        }
+
+        $spec = json_decode($contents, true);
+
+        if (!is_array($spec) || !isset($spec['version']) || !is_string($spec['version'])) {
+            return null;
+        }
+
+        return $spec['version'];
     }
 
     /**

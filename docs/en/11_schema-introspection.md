@@ -12,6 +12,8 @@ Call this first. Returns:
 ```json
 {
   "api": "silverstripe-content-api/v1",
+  "moduleVersion": "2.4.1",
+  "specVersion": "v1.20",
   "environment": "dev",
   "populationEnabled": true,
   "recordUpdateEnabled": true,
@@ -31,6 +33,8 @@ Call this first. Returns:
 
 | Field | Meaning |
 |---|---|
+| `moduleVersion` | Composer's version of this module as installed (`null` when Composer cannot report it) — so a consumer that pins a copy of the spec can tell which build a site runs instead of discovering an older one as a bare 404 (#288) |
+| `specVersion` | The top-level `version` of the shipped `schema/endpoints.json` (`null` if that file cannot be read) — the spec revision this module implements |
 | `environment` | Current `Director::get_environment_type()` |
 | `populationEnabled` | Whether population endpoints would currently pass [environment gating](04_security-model.md#environment-gating) for this caller |
 | `recordUpdateEnabled` | Whether `PATCH records/$ClassRef/$ID` is open in this environment (not part of the population gate; see [Live writes](04_security-model.md#live-writes-patch-recordsclassrefid)) |
